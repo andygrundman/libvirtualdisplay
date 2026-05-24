@@ -14,6 +14,8 @@ TEST(VirtualDisplayDriverHdrCapabilities, AdvertisesWindowsHdrPrerequisites) {
   EXPECT_FALSE(capabilities.output_bits.ycbcr444);
   EXPECT_FALSE(capabilities.output_bits.ycbcr422);
   EXPECT_FALSE(capabilities.output_bits.ycbcr420);
+  EXPECT_FALSE(capabilities.dithering_bits.rgb_8bpc);
+  EXPECT_TRUE(capabilities.dithering_bits.rgb_10bpc);
   EXPECT_TRUE(vdd::supports_windows_hdr_toggle(capabilities));
 }
 

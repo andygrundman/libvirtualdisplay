@@ -56,6 +56,25 @@ TEST(VirtualDisplayDriverEdid, EmbedsBt2020ColorimetryWhenHdrRequested) {
   EXPECT_TRUE(vdd::has_bt2020_colorimetry(edid));
 }
 
+TEST(VirtualDisplayDriverEdid, EmitsWindowsHdrClassifiedCtaMetadata) {
+  const auto edid = vdd::create_edid(default_options());
+  const auto cta = vdd::kEdidBlockSize;
+
+  EXPECT_EQ(edid[cta + 2], std::byte {0x44});
+  EXPECT_EQ(edid[cta + 3], std::byte {0xf0});
+  EXPECT_EQ(edid[cta + 52], std::byte {0xe3});
+  EXPECT_EQ(edid[cta + 53], std::byte {0x05});
+  EXPECT_EQ(edid[cta + 54], std::byte {0xe0});
+  EXPECT_EQ(edid[cta + 55], std::byte {0x01});
+  EXPECT_EQ(edid[cta + 61], std::byte {0xe6});
+  EXPECT_EQ(edid[cta + 62], std::byte {0x06});
+  EXPECT_EQ(edid[cta + 63], std::byte {0x0f});
+  EXPECT_EQ(edid[cta + 64], std::byte {0x01});
+  EXPECT_EQ(edid[cta + 65], std::byte {0xc8});
+  EXPECT_EQ(edid[cta + 66], std::byte {0xc8});
+  EXPECT_EQ(edid[cta + 67], std::byte {0x00});
+}
+
 TEST(VirtualDisplayDriverEdid, OmitsHdrStaticMetadataWhenDisabled) {
   auto options = default_options();
   options.hdr_supported = false;

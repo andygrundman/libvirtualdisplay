@@ -13,7 +13,15 @@ namespace virtual_display::driver {
         false,
         false
       },
-      WireColorSupport {}
+      // Windows' HDR support check looks at target dithering in addition to
+      // mode BPC; without this it reports WCG/10-bit but leaves HDR disabled.
+      WireColorSupport {
+        false,
+        true,
+        false,
+        false,
+        false
+      }
     };
   }
 

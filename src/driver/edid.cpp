@@ -182,22 +182,33 @@ namespace virtual_display::driver {
 
     std::size_t data_offset = 4;
     if (options.hdr_supported) {
-      extension[data_offset++] = std::byte {0xe3};
-      extension[data_offset++] = std::byte {0x05};
-      extension[data_offset++] = std::byte {0xe0};
-      extension[data_offset++] = std::byte {0x00};
-
-      extension[data_offset++] = std::byte {0xe6};
-      extension[data_offset++] = std::byte {0x06};
-      extension[data_offset++] = std::byte {0x0f};
-      extension[data_offset++] = std::byte {0x01};
-      extension[data_offset++] = std::byte {0x70};
-      extension[data_offset++] = std::byte {0x60};
-      extension[data_offset++] = std::byte {0x10};
+      constexpr std::array<std::byte, 64> hdr_cta_blocks {
+        std::byte {0x51}, std::byte {0x5d}, std::byte {0x5e}, std::byte {0x5f},
+        std::byte {0x60}, std::byte {0x61}, std::byte {0x10}, std::byte {0x1f},
+        std::byte {0x22}, std::byte {0x21}, std::byte {0x20}, std::byte {0x05},
+        std::byte {0x14}, std::byte {0x04}, std::byte {0x13}, std::byte {0x12},
+        std::byte {0x03}, std::byte {0x01}, std::byte {0x23}, std::byte {0x0f},
+        std::byte {0x56}, std::byte {0x05}, std::byte {0x83}, std::byte {0x0f},
+        std::byte {0x08}, std::byte {0x00}, std::byte {0x6d}, std::byte {0x03},
+        std::byte {0x0c}, std::byte {0x00}, std::byte {0x10}, std::byte {0x00},
+        std::byte {0x38}, std::byte {0x78}, std::byte {0x20}, std::byte {0x00},
+        std::byte {0x60}, std::byte {0x01}, std::byte {0x02}, std::byte {0x03},
+        std::byte {0x67}, std::byte {0xd8}, std::byte {0x5d}, std::byte {0xc4},
+        std::byte {0x01}, std::byte {0x78}, std::byte {0x80}, std::byte {0x03},
+        std::byte {0xe3}, std::byte {0x05}, std::byte {0xe0}, std::byte {0x01},
+        std::byte {0xe4}, std::byte {0x0f}, std::byte {0x18}, std::byte {0x00},
+        std::byte {0x00}, std::byte {0xe6}, std::byte {0x06}, std::byte {0x0f},
+        std::byte {0x01}, std::byte {0xc8}, std::byte {0xc8}, std::byte {0x00}
+      };
+      // Windows ignores our minimal CTA HDR block for HDR classification; keep
+      // the complete SudoVDA CTA block collection while the base EDID remains
+      // generated per display identity and preferred timing.
+      std::copy(hdr_cta_blocks.begin(), hdr_cta_blocks.end(), extension.begin() + 4);
+      data_offset += hdr_cta_blocks.size();
+      extension[3] = std::byte {0xf0};
     }
 
     extension[2] = byte(data_offset);
-    extension[3] = std::byte {0x00};
     write_checksum(extension);
 
     return edid;
