@@ -47,14 +47,19 @@ namespace virtual_display::driver {
       return static_cast<std::uint16_t>((value + 7u) & ~7u);
     }
 
-    PreferredTiming make_preferred_timing(const EdidOptions &options) {
+    std::uint64_t preferred_pixel_clock_hz(const EdidOptions &options) {
       const auto horizontal_blanking = align8(std::clamp(options.width / 5u, 160u, 2047u));
       const auto vertical_blanking = static_cast<std::uint16_t>(std::clamp(options.height / 20u, 45u, 1023u));
       const auto total_pixels =
         static_cast<std::uint64_t>(options.width + horizontal_blanking) *
         static_cast<std::uint64_t>(options.height + vertical_blanking);
-      const auto pixel_clock_hz =
-        total_pixels * static_cast<std::uint64_t>(std::max(options.refresh_rate_millihz, 1u)) / 1000u;
+      return total_pixels * static_cast<std::uint64_t>(std::max(options.refresh_rate_millihz, 1u)) / 1000u;
+    }
+
+    PreferredTiming make_preferred_timing(const EdidOptions &options) {
+      const auto horizontal_blanking = align8(std::clamp(options.width / 5u, 160u, 2047u));
+      const auto vertical_blanking = static_cast<std::uint16_t>(std::clamp(options.height / 20u, 45u, 1023u));
+      const auto pixel_clock_hz = preferred_pixel_clock_hz(options);
 
       return PreferredTiming {
         static_cast<std::uint32_t>(std::clamp<std::uint64_t>(pixel_clock_hz / 10'000u, 1u, 0xffffu)),
@@ -65,8 +70,19 @@ namespace virtual_display::driver {
       };
     }
 
+    EdidOptions detailed_timing_options(const EdidOptions &options) {
+      constexpr auto kMaxBaseDetailedTimingPixelClockHz = 0xffffull * 10'000ull;
+      if (preferred_pixel_clock_hz(options) <= kMaxBaseDetailedTimingPixelClockHz) {
+        return options;
+      }
+
+      auto safe_options = options;
+      safe_options.refresh_rate_millihz = 60'000;
+      return safe_options;
+    }
+
     void write_detailed_timing(std::span<std::byte> data, const std::size_t offset, const EdidOptions &options) {
-      const auto timing = make_preferred_timing(options);
+      const auto timing = make_preferred_timing(detailed_timing_options(options));
       const auto h_sync_offset = std::clamp<std::uint16_t>(timing.horizontal_blanking / 3u, 8u, 255u);
       const auto h_sync_width = std::clamp<std::uint16_t>(timing.horizontal_blanking / 5u, 8u, 255u);
       const auto v_sync_offset = std::uint16_t {3};
@@ -109,6 +125,18 @@ namespace virtual_display::driver {
       data[offset + 5 + copy_size] = std::byte {'\n'};
     }
 
+    void write_edid_string_field(
+      std::span<std::byte> data,
+      const std::size_t offset,
+      const std::string_view text
+    ) {
+      constexpr std::size_t kFieldSize = 13;
+      std::fill_n(data.begin() + static_cast<std::ptrdiff_t>(offset), kFieldSize, std::byte {' '});
+      const auto copy_size = std::min<std::size_t>(text.size(), kFieldSize - 1);
+      std::memcpy(data.data() + offset, text.data(), copy_size);
+      data[offset + copy_size] = std::byte {'\n'};
+    }
+
     void write_range_descriptor(std::span<std::byte> data, const std::size_t offset, const EdidOptions &options) {
       data[offset + 0] = std::byte {0x00};
       data[offset + 1] = std::byte {0x00};
@@ -119,7 +147,10 @@ namespace virtual_display::driver {
       data[offset + 6] = byte(std::clamp(options.refresh_rate_millihz / 1000u, 60u, 240u));
       data[offset + 7] = std::byte {30};
       data[offset + 8] = std::byte {160};
-      data[offset + 9] = std::byte {30};
+      const auto max_pixel_clock_10mhz = static_cast<std::uint32_t>(
+        std::clamp<std::uint64_t>((preferred_pixel_clock_hz(options) + 9'999'999ull) / 10'000'000ull, 30ull, 255ull)
+      );
+      data[offset + 9] = byte(max_pixel_clock_10mhz);
       data[offset + 10] = std::byte {0x20};
     }
 
@@ -131,9 +162,60 @@ namespace virtual_display::driver {
 
       block[kEdidBlockSize - 1] = byte((256u - (sum & 0xffu)) & 0xffu);
     }
+
+    std::array<std::byte, kEdidSize> create_static_hdr_edid(const EdidOptions &options) {
+      std::array<std::byte, kEdidSize> edid {
+        std::byte {0x00}, std::byte {0xff}, std::byte {0xff}, std::byte {0xff}, std::byte {0xff}, std::byte {0xff}, std::byte {0xff}, std::byte {0x00},
+        std::byte {0x4d}, std::byte {0xab}, std::byte {0xce}, std::byte {0xd1}, std::byte {0xef}, std::byte {0x2d}, std::byte {0xbc}, std::byte {0x1a},
+        std::byte {0x20}, std::byte {0x22}, std::byte {0x01}, std::byte {0x03}, std::byte {0x80}, std::byte {0x46}, std::byte {0x27}, std::byte {0x78},
+        std::byte {0x0f}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00},
+        std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0xa5}, std::byte {0x6b}, std::byte {0x80}, std::byte {0xd1}, std::byte {0xc0},
+        std::byte {0xb3}, std::byte {0x00}, std::byte {0xa9}, std::byte {0xc0}, std::byte {0x81}, std::byte {0x80}, std::byte {0x81}, std::byte {0x00},
+        std::byte {0x81}, std::byte {0xc0}, std::byte {0x01}, std::byte {0x01}, std::byte {0x01}, std::byte {0x01}, std::byte {0x4d}, std::byte {0xd0},
+        std::byte {0x00}, std::byte {0xa0}, std::byte {0xf0}, std::byte {0x70}, std::byte {0x3e}, std::byte {0x80}, std::byte {0x30}, std::byte {0x20},
+        std::byte {0x35}, std::byte {0x00}, std::byte {0xba}, std::byte {0x89}, std::byte {0x21}, std::byte {0x00}, std::byte {0x00}, std::byte {0x1a},
+        std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0xff}, std::byte {0x00}, std::byte {0x31}, std::byte {0x32}, std::byte {0x33},
+        std::byte {0x34}, std::byte {0x35}, std::byte {0x36}, std::byte {0x37}, std::byte {0x38}, std::byte {0x39}, std::byte {0x41}, std::byte {0x42},
+        std::byte {0x43}, std::byte {0x44}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0xfd}, std::byte {0x00}, std::byte {0x0f},
+        std::byte {0xff}, std::byte {0x14}, std::byte {0xff}, std::byte {0xff}, std::byte {0x00}, std::byte {0x0a}, std::byte {0x20}, std::byte {0x20},
+        std::byte {0x20}, std::byte {0x20}, std::byte {0x20}, std::byte {0x20}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0xfc},
+        std::byte {0x00}, std::byte {0x53}, std::byte {0x75}, std::byte {0x64}, std::byte {0x6f}, std::byte {0x4d}, std::byte {0x61}, std::byte {0x6b},
+        std::byte {0x65}, std::byte {0x72}, std::byte {0x56}, std::byte {0x44}, std::byte {0x44}, std::byte {0x0a}, std::byte {0x01}, std::byte {0xa4},
+        std::byte {0x02}, std::byte {0x03}, std::byte {0x44}, std::byte {0xf0}, std::byte {0x51}, std::byte {0x5d}, std::byte {0x5e}, std::byte {0x5f},
+        std::byte {0x60}, std::byte {0x61}, std::byte {0x10}, std::byte {0x1f}, std::byte {0x22}, std::byte {0x21}, std::byte {0x20}, std::byte {0x05},
+        std::byte {0x14}, std::byte {0x04}, std::byte {0x13}, std::byte {0x12}, std::byte {0x03}, std::byte {0x01}, std::byte {0x23}, std::byte {0x0f},
+        std::byte {0x56}, std::byte {0x05}, std::byte {0x83}, std::byte {0x0f}, std::byte {0x08}, std::byte {0x00}, std::byte {0x6d}, std::byte {0x03},
+        std::byte {0x0c}, std::byte {0x00}, std::byte {0x10}, std::byte {0x00}, std::byte {0x38}, std::byte {0x78}, std::byte {0x20}, std::byte {0x00},
+        std::byte {0x60}, std::byte {0x01}, std::byte {0x02}, std::byte {0x03}, std::byte {0x67}, std::byte {0xd8}, std::byte {0x5d}, std::byte {0xc4},
+        std::byte {0x01}, std::byte {0x78}, std::byte {0x80}, std::byte {0x03}, std::byte {0xe3}, std::byte {0x05}, std::byte {0xe0}, std::byte {0x01},
+        std::byte {0xe4}, std::byte {0x0f}, std::byte {0x18}, std::byte {0x00}, std::byte {0x00}, std::byte {0xe6}, std::byte {0x06}, std::byte {0x0f},
+        std::byte {0x01}, std::byte {0xc8}, std::byte {0xc8}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00},
+        std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00},
+        std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00},
+        std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00},
+        std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00},
+        std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00},
+        std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x1e}
+      };
+
+      auto base = std::span<std::byte> {edid.data(), kEdidBlockSize};
+      const auto manufacturer = encode_manufacturer_id(options.manufacturer_id);
+      base[8] = byte(manufacturer >> 8);
+      base[9] = byte(manufacturer);
+      put_le16(base, 10, options.product_code);
+      put_le32(base, 12, options.serial_number);
+      write_edid_string_field(base, 0x4d, std::to_string(options.serial_number));
+      write_edid_string_field(base, 0x71, options.monitor_name);
+      write_checksum(base);
+      return edid;
+    }
   }  // namespace
 
   std::array<std::byte, kEdidSize> create_edid(const EdidOptions &options) {
+    if (options.hdr_supported) {
+      return create_static_hdr_edid(options);
+    }
+
     std::array<std::byte, kEdidSize> edid {};
     auto base = std::span<std::byte> {edid.data(), kEdidBlockSize};
     auto extension = std::span<std::byte> {edid.data() + kEdidBlockSize, kEdidBlockSize};

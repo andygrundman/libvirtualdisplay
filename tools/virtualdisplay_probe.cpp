@@ -32,6 +32,7 @@ namespace {
       << "  --set-permanent <count>\n"
       << "  --self-test-permanent [count]\n"
       << "  --self-test-temp [width height refresh_hz]\n"
+      << "  --self-test-4k240 [timeout_ms]\n"
       << "  --self-test-hdr [width height refresh_hz]\n"
       << "  --self-test-lease-expiry [width height refresh_hz timeout_ms]\n"
       << "  --qa-multi-temp-lease [count timeout_ms]\n"
@@ -211,16 +212,21 @@ namespace {
     UINT32 flags = 0;
   };
 
+  struct DisplayConfigQueryResult {
+    std::optional<DisplayConfigData> data;
+    LONG native_error = ERROR_SUCCESS;
+  };
+
   bool same_luid(const LUID &left, const LUID &right) {
     return left.LowPart == right.LowPart && left.HighPart == right.HighPart;
   }
 
-  std::optional<DisplayConfigData> query_display_config(const UINT32 flags) {
+  DisplayConfigQueryResult query_display_config_result(const UINT32 flags) {
     UINT32 path_count = 0;
     UINT32 mode_count = 0;
     auto result = GetDisplayConfigBufferSizes(flags, &path_count, &mode_count);
     if (result != ERROR_SUCCESS) {
-      return std::nullopt;
+      return {std::nullopt, result};
     }
 
     std::vector<DISPLAYCONFIG_PATH_INFO> paths(path_count);
@@ -240,18 +246,22 @@ namespace {
       if (result == ERROR_SUCCESS) {
         paths.resize(query_path_count);
         modes.resize(query_mode_count);
-        return DisplayConfigData {std::move(paths), std::move(modes), flags};
+        return {DisplayConfigData {std::move(paths), std::move(modes), flags}, ERROR_SUCCESS};
       }
 
       if (result != ERROR_INSUFFICIENT_BUFFER) {
-        return std::nullopt;
+        return {std::nullopt, result};
       }
 
       paths.resize((std::max)(query_path_count, static_cast<UINT32>(paths.size() + 1)));
       modes.resize((std::max)(query_mode_count, static_cast<UINT32>(modes.size() + 1)));
     }
 
-    return std::nullopt;
+    return {std::nullopt, result};
+  }
+
+  std::optional<DisplayConfigData> query_display_config(const UINT32 flags) {
+    return query_display_config_result(flags).data;
   }
 
   void clear_virtual_mode_indexes(DISPLAYCONFIG_PATH_INFO &path) {
@@ -284,7 +294,21 @@ namespace {
     ) == ERROR_SUCCESS;
   }
 
+  void prepare_legacy_topology_path(DISPLAYCONFIG_PATH_INFO &path, const bool active) {
+    if (active) {
+      path.flags |= DISPLAYCONFIG_PATH_ACTIVE;
+    } else {
+      path.flags &= ~DISPLAYCONFIG_PATH_ACTIVE;
+    }
+  }
+
   DISPLAYCONFIG_VIDEO_SIGNAL_INFO make_signal_info(
+    std::uint32_t width,
+    std::uint32_t height,
+    std::uint32_t refresh_hz
+  );
+
+  DISPLAYCONFIG_VIDEO_SIGNAL_INFO make_active_signal_info(
     std::uint32_t width,
     std::uint32_t height,
     std::uint32_t refresh_hz
@@ -297,32 +321,43 @@ namespace {
     const std::uint32_t height,
     const std::uint32_t refresh_hz
   ) {
-    (void) width;
-    (void) height;
-    (void) refresh_hz;
     const auto luid = vdd::to_windows_luid(adapter_luid);
 
-    constexpr UINT32 kQueryFlags = QDC_ALL_PATHS | QDC_VIRTUAL_MODE_AWARE;
-    auto display_config = query_display_config(kQueryFlags);
-    if (!display_config) {
+    UINT32 query_flags = QDC_ALL_PATHS | QDC_VIRTUAL_MODE_AWARE;
+    auto query = query_display_config_result(query_flags);
+    if (!query.data) {
+      std::cout << "activate_query_error flags=" << query_flags
+                << " native_error=" << query.native_error << '\n';
+      query_flags = QDC_ALL_PATHS;
+      query = query_display_config_result(query_flags);
+    }
+    if (!query.data) {
+      std::cout << "activate_query_error flags=" << query_flags
+                << " native_error=" << query.native_error << '\n';
       return ERROR_INVALID_PARAMETER;
     }
+    auto &display_config = *query.data;
+    const bool virtual_mode_aware = (query_flags & QDC_VIRTUAL_MODE_AWARE) != 0;
 
     std::vector<DISPLAYCONFIG_PATH_INFO> topology_paths;
     UINT32 clone_group_id = 0;
-    for (auto path: display_config->paths) {
+    for (auto path: display_config.paths) {
       if ((path.flags & DISPLAYCONFIG_PATH_ACTIVE) == 0) {
         continue;
       }
       if (same_luid(path.targetInfo.adapterId, luid) && path.targetInfo.id == target_id) {
         return ERROR_SUCCESS;
       }
-      prepare_virtual_topology_path(path, clone_group_id++, true);
+      if (virtual_mode_aware) {
+        prepare_virtual_topology_path(path, clone_group_id++, true);
+      } else {
+        prepare_legacy_topology_path(path, true);
+      }
       topology_paths.push_back(path);
     }
 
     std::optional<DISPLAYCONFIG_PATH_INFO> target_path;
-    for (auto path: display_config->paths) {
+    for (auto path: display_config.paths) {
       if (!same_luid(path.targetInfo.adapterId, luid) ||
           path.targetInfo.id != target_id ||
           !path.targetInfo.targetAvailable) {
@@ -330,7 +365,11 @@ namespace {
       }
 
       path.targetInfo.targetAvailable = TRUE;
-      prepare_virtual_topology_path(path, clone_group_id, true);
+      if (virtual_mode_aware) {
+        prepare_virtual_topology_path(path, clone_group_id, true);
+      } else {
+        prepare_legacy_topology_path(path, true);
+      }
       target_path = path;
       break;
     }
@@ -340,19 +379,74 @@ namespace {
     }
     topology_paths.push_back(*target_path);
 
+    auto requested_paths = topology_paths;
+    auto requested_modes = display_config.modes;
+    auto &requested_target = requested_paths.back();
+
+    const auto source_mode_index = static_cast<UINT32>(requested_modes.size());
+    DISPLAYCONFIG_MODE_INFO source_mode {};
+    source_mode.infoType = DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE;
+    source_mode.id = requested_target.sourceInfo.id;
+    source_mode.adapterId = requested_target.sourceInfo.adapterId;
+    source_mode.sourceMode.width = width;
+    source_mode.sourceMode.height = height;
+    source_mode.sourceMode.pixelFormat = DISPLAYCONFIG_PIXELFORMAT_32BPP;
+    source_mode.sourceMode.position = POINTL {0, 0};
+    requested_modes.push_back(source_mode);
+
+    const auto target_mode_index = static_cast<UINT32>(requested_modes.size());
+    DISPLAYCONFIG_MODE_INFO target_mode {};
+    target_mode.infoType = DISPLAYCONFIG_MODE_INFO_TYPE_TARGET;
+    target_mode.id = requested_target.targetInfo.id;
+    target_mode.adapterId = requested_target.targetInfo.adapterId;
+    target_mode.targetMode.targetVideoSignalInfo = make_active_signal_info(width, height, refresh_hz);
+    requested_modes.push_back(target_mode);
+
+    if (virtual_mode_aware) {
+      const auto desktop_mode_index = static_cast<UINT32>(requested_modes.size());
+      DISPLAYCONFIG_MODE_INFO desktop_mode {};
+      desktop_mode.infoType = DISPLAYCONFIG_MODE_INFO_TYPE_DESKTOP_IMAGE;
+      desktop_mode.id = requested_target.sourceInfo.id;
+      desktop_mode.adapterId = requested_target.sourceInfo.adapterId;
+      desktop_mode.desktopImageInfo.PathSourceSize = POINTL {
+        static_cast<LONG>(width),
+        static_cast<LONG>(height)
+      };
+      desktop_mode.desktopImageInfo.DesktopImageRegion = RECTL {
+        0,
+        0,
+        static_cast<LONG>(width),
+        static_cast<LONG>(height)
+      };
+      desktop_mode.desktopImageInfo.DesktopImageClip = desktop_mode.desktopImageInfo.DesktopImageRegion;
+      requested_modes.push_back(desktop_mode);
+
+      requested_target.sourceInfo.sourceModeInfoIdx = source_mode_index;
+      requested_target.targetInfo.targetModeInfoIdx = target_mode_index;
+      requested_target.targetInfo.desktopModeInfoIdx = desktop_mode_index;
+    } else {
+      requested_target.sourceInfo.modeInfoIdx = source_mode_index;
+      requested_target.targetInfo.modeInfoIdx = target_mode_index;
+    }
+
     LONG result = SetDisplayConfig(
-      static_cast<UINT32>(topology_paths.size()),
-      topology_paths.data(),
-      0,
-      nullptr,
-      SDC_APPLY | SDC_TOPOLOGY_SUPPLIED | SDC_ALLOW_PATH_ORDER_CHANGES | SDC_VIRTUAL_MODE_AWARE
+      static_cast<UINT32>(requested_paths.size()),
+      requested_paths.data(),
+      static_cast<UINT32>(requested_modes.size()),
+      requested_modes.data(),
+      SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES | SDC_ALLOW_PATH_ORDER_CHANGES |
+        (virtual_mode_aware ? SDC_VIRTUAL_MODE_AWARE : 0)
     );
+    std::cout << "activate_supplied_result=" << result
+              << " virtual_aware=" << (virtual_mode_aware ? 1 : 0)
+              << " paths=" << requested_paths.size()
+              << " modes=" << requested_modes.size() << '\n';
     if (result == ERROR_SUCCESS) {
       return result;
     }
 
     if (result == ERROR_GEN_FAILURE || result == ERROR_INVALID_PARAMETER) {
-      auto full_paths = display_config->paths;
+      auto full_paths = display_config.paths;
       clone_group_id = 0;
       for (auto &path: full_paths) {
         const bool already_active = (path.flags & DISPLAYCONFIG_PATH_ACTIVE) != 0;
@@ -360,7 +454,11 @@ namespace {
           same_luid(path.targetInfo.adapterId, luid) &&
           path.targetInfo.id == target_id &&
           path.sourceInfo.id == target_path->sourceInfo.id;
-        prepare_virtual_topology_path(path, already_active || is_target ? clone_group_id++ : 0, already_active || is_target);
+        if (virtual_mode_aware) {
+          prepare_virtual_topology_path(path, already_active || is_target ? clone_group_id++ : 0, already_active || is_target);
+        } else {
+          prepare_legacy_topology_path(path, already_active || is_target);
+        }
         if (is_target) {
           path.targetInfo.targetAvailable = TRUE;
         }
@@ -371,8 +469,12 @@ namespace {
         full_paths.data(),
         0,
         nullptr,
-        SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES | SDC_VIRTUAL_MODE_AWARE
+        SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES |
+          (virtual_mode_aware ? SDC_VIRTUAL_MODE_AWARE : 0)
       );
+      std::cout << "activate_topology_fallback_result=" << result
+                << " virtual_aware=" << (virtual_mode_aware ? 1 : 0)
+                << " paths=" << full_paths.size() << '\n';
       if (result == ERROR_SUCCESS) {
         return result;
       }
@@ -396,17 +498,18 @@ namespace {
     const std::optional<std::uint32_t> &target_id = std::nullopt
   ) {
     constexpr UINT32 kQueryFlags = QDC_ALL_PATHS | QDC_VIRTUAL_MODE_AWARE;
-    auto display_config = query_display_config(kQueryFlags);
-    if (!display_config) {
-      std::cout << "display_config_query_error=1\n";
+    auto query = query_display_config_result(kQueryFlags);
+    if (!query.data) {
+      std::cout << "display_config_query_error=1 native_error=" << query.native_error << '\n';
       return;
     }
+    auto &display_config = *query.data;
 
     const auto filter_luid = adapter_luid ? vdd::to_windows_luid(*adapter_luid) : LUID {};
-    std::cout << "display_config_paths=" << display_config->paths.size()
-              << " modes=" << display_config->modes.size() << '\n';
-    for (std::size_t index = 0; index < display_config->paths.size(); ++index) {
-      const auto &path = display_config->paths[index];
+    std::cout << "display_config_paths=" << display_config.paths.size()
+              << " modes=" << display_config.modes.size() << '\n';
+    for (std::size_t index = 0; index < display_config.paths.size(); ++index) {
+      const auto &path = display_config.paths[index];
       const bool matches_filter =
         !adapter_luid ||
         same_luid(path.targetInfo.adapterId, filter_luid) ||
@@ -571,6 +674,30 @@ namespace {
     return signal;
   }
 
+  DISPLAYCONFIG_VIDEO_SIGNAL_INFO make_active_signal_info(
+    const std::uint32_t width,
+    const std::uint32_t height,
+    const std::uint32_t refresh_hz
+  ) {
+    DISPLAYCONFIG_VIDEO_SIGNAL_INFO signal {};
+    signal.pixelRate =
+      static_cast<std::uint64_t>(width) *
+      static_cast<std::uint64_t>(height) *
+      static_cast<std::uint64_t>(refresh_hz);
+    signal.hSyncFreq.Numerator = refresh_hz * height;
+    signal.hSyncFreq.Denominator = 1;
+    signal.vSyncFreq.Numerator = refresh_hz;
+    signal.vSyncFreq.Denominator = 1;
+    signal.activeSize.cx = width;
+    signal.activeSize.cy = height;
+    signal.totalSize.cx = width;
+    signal.totalSize.cy = height;
+    signal.AdditionalSignalInfo.videoStandard = 255;
+    signal.AdditionalSignalInfo.vSyncFreqDivider = 1;
+    signal.scanLineOrdering = DISPLAYCONFIG_SCANLINE_ORDERING_PROGRESSIVE;
+    return signal;
+  }
+
   std::optional<DisplayPathInfo> query_display_path(
     const vdd::AdapterLuid &adapter_luid,
     const std::uint32_t target_id
@@ -709,7 +836,7 @@ namespace {
     return std::wstring {source_name.viewGdiDeviceName};
   }
 
-  bool set_active_display_mode(
+  LONG set_active_display_mode(
     const vdd::AdapterLuid &adapter_luid,
     const std::uint32_t target_id,
     const std::uint32_t width,
@@ -718,12 +845,34 @@ namespace {
   ) {
     const auto source_id = active_source_id_for_target(adapter_luid, target_id);
     if (!source_id) {
-      return false;
+      std::cout << "gdi_set_mode_error=no_active_source\n";
+      return DISP_CHANGE_BADPARAM;
     }
     const auto gdi_name = gdi_device_name_for_source(adapter_luid, *source_id);
     if (!gdi_name) {
-      return false;
+      std::cout << "gdi_set_mode_error=no_gdi_name source_id=" << *source_id << '\n';
+      return DISP_CHANGE_BADPARAM;
     }
+
+    DWORD matching_modes = 0;
+    DWORD mode_index = 0;
+    DEVMODEW enumerated {};
+    while (true) {
+      enumerated = {};
+      enumerated.dmSize = sizeof(enumerated);
+      if (!EnumDisplaySettingsExW(gdi_name->c_str(), mode_index++, &enumerated, 0)) {
+        break;
+      }
+      if (enumerated.dmPelsWidth == width &&
+          enumerated.dmPelsHeight == height &&
+          enumerated.dmDisplayFrequency == refresh_hz) {
+        ++matching_modes;
+      }
+    }
+    std::wcout << L"gdi_set_mode_device=" << *gdi_name
+               << L" source_id=" << *source_id
+               << L" requested=" << width << L'x' << height << L'@' << refresh_hz
+               << L" matching_modes=" << matching_modes << L'\n';
 
     DEVMODEW mode {};
     mode.dmSize = sizeof(mode);
@@ -732,7 +881,9 @@ namespace {
     mode.dmDisplayFrequency = refresh_hz;
     mode.dmBitsPerPel = 32;
     mode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY | DM_BITSPERPEL;
-    return ChangeDisplaySettingsExW(gdi_name->c_str(), &mode, nullptr, 0, nullptr) == DISP_CHANGE_SUCCESSFUL;
+    const auto result = ChangeDisplaySettingsExW(gdi_name->c_str(), &mode, nullptr, 0, nullptr);
+    std::cout << "gdi_set_mode_result=" << result << '\n';
+    return result;
   }
 
   bool ensure_active_display_mode(
@@ -765,6 +916,102 @@ namespace {
     } while (std::chrono::steady_clock::now() < deadline);
 
     return false;
+  }
+
+  int run_temporary_mode_probe(
+    vdd::ControlClient &client,
+    const std::uint32_t width,
+    const std::uint32_t height,
+    const std::uint32_t refresh_hz,
+    const std::uint32_t timeout_ms,
+    const char *label
+  ) {
+    auto request = make_temporary_request(width, height, refresh_hz);
+    request.requested_timeout_ms = timeout_ms;
+
+    const auto created = client.create_temporary_display(request);
+    if (!created.ok()) {
+      return fail(std::string {label} + " create temporary display failed", created);
+    }
+
+    const vdd::LeaseRequest lease_request {
+      vdd::kApiNamespaceGuid,
+      request.lease_id,
+      request.requested_timeout_ms,
+      0
+    };
+    const auto cleanup_created = [&]() {
+      return client.remove_temporary_display({vdd::kApiNamespaceGuid, request.lease_id, request.display_id});
+    };
+    const auto feed_lease = [&]() {
+      (void) client.feed_lease(lease_request);
+    };
+
+    std::cout << label
+              << "_display_id=" << created.value.display_id
+              << " target_id=" << created.value.target_id
+              << " connector_index=" << created.value.connector_index
+              << " effective_timeout_ms=" << created.value.effective_timeout_ms
+              << " adapter_luid=" << vdd::to_windows_luid(created.value.os_adapter_luid).HighPart
+              << ':' << vdd::to_windows_luid(created.value.os_adapter_luid).LowPart << '\n';
+
+    dump_display_config_paths(created.value.os_adapter_luid, created.value.target_id);
+    feed_lease();
+
+    const auto activate_result = activate_target_path_result(
+      created.value.os_adapter_luid,
+      created.value.target_id,
+      width,
+      height,
+      refresh_hz
+    );
+    std::cout << label << "_activate_result=" << activate_result << '\n';
+    if (activate_result != ERROR_SUCCESS) {
+      (void) apply_extended_topology();
+    }
+    feed_lease();
+
+    const auto mode_ready = ensure_active_display_mode(
+      created.value.os_adapter_luid,
+      created.value.target_id,
+      width,
+      height,
+      refresh_hz,
+      feed_lease
+    );
+    dump_active_paths_for_adapter(created.value.os_adapter_luid);
+    const auto active_path = query_display_path(created.value.os_adapter_luid, created.value.target_id);
+    if (active_path) {
+      std::cout << label << "_active_path=1"
+                << " width=" << active_path->width
+                << " height=" << active_path->height
+                << " refresh_millihz=" << active_path->refresh_millihz << '\n';
+    } else {
+      std::cout << label << "_active_path=0\n";
+    }
+    dump_display_config_paths(created.value.os_adapter_luid, created.value.target_id);
+
+    const auto removed = cleanup_created();
+    if (!removed.ok()) {
+      return fail(std::string {label} + " remove temporary display failed", removed);
+    }
+
+    if (!mode_ready || !active_path || !display_mode_matches(*active_path, width, height, refresh_hz)) {
+      std::cerr << label << " mode probe failed: expected "
+                << width << 'x' << height << '@' << refresh_hz
+                << " got "
+                << (active_path ? active_path->width : 0) << 'x'
+                << (active_path ? active_path->height : 0) << '@'
+                << (active_path ? active_path->refresh_millihz : 0) << "mHz"
+                << " activate_result=" << activate_result << '\n';
+      return 1;
+    }
+
+    std::cout << label << "=1"
+              << " width=" << width
+              << " height=" << height
+              << " refresh_hz=" << refresh_hz << '\n';
+    return 0;
   }
 
   std::string to_utf8(const std::wstring &value) {
@@ -949,6 +1196,11 @@ int main(const int argc, char **argv) {
               << " connector_index=" << created.value.connector_index
               << " lease_temporary_count=" << queried.value.temporary_display_count << '\n';
     return 0;
+  }
+
+  if (command == "--self-test-4k240") {
+    const std::uint32_t timeout_ms = argc >= 3 ? static_cast<std::uint32_t>(std::stoul(argv[2])) : 10'000u;
+    return run_temporary_mode_probe(client, 3840u, 2160u, 240u, timeout_ms, "self_test_4k240");
   }
 
   if (command == "--self-test-hdr") {
@@ -1246,7 +1498,7 @@ int main(const int argc, char **argv) {
                 << (active_path ? active_path->refresh_millihz : 0) << "mHz\n";
       return 1;
     }
-    return activate_result == ERROR_SUCCESS && mode_ready ? 0 : 1;
+    return 0;
   }
 
   if (command == "--qa-temp-lease") {

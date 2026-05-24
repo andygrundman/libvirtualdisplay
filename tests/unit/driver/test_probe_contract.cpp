@@ -22,6 +22,10 @@ namespace {
   void expect_contains(const std::string &content, const std::string &needle) {
     EXPECT_NE(content.find(needle), std::string::npos) << "missing: " << needle;
   }
+
+  void expect_not_contains(const std::string &content, const std::string &needle) {
+    EXPECT_EQ(content.find(needle), std::string::npos) << "unexpected: " << needle;
+  }
 }  // namespace
 
 TEST(VirtualDisplayProbeContract, ExposesTemporaryAndPermanentRuntimeChecks) {
@@ -33,6 +37,7 @@ TEST(VirtualDisplayProbeContract, ExposesTemporaryAndPermanentRuntimeChecks) {
   expect_contains(source, "--set-permanent <count>");
   expect_contains(source, "--self-test-permanent [count]");
   expect_contains(source, "--self-test-temp [width height refresh_hz]");
+  expect_contains(source, "--self-test-4k240 [timeout_ms]");
   expect_contains(source, "--self-test-hdr [width height refresh_hz]");
   expect_contains(source, "--qa-multi-temp-lease [count timeout_ms]");
 }
@@ -80,9 +85,17 @@ TEST(VirtualDisplayProbeContract, ActiveDisplayChecksApplyRequestedResolution) {
 
   expect_contains(source, "ChangeDisplaySettingsExW");
   expect_contains(source, "ensure_active_display_mode");
+  expect_contains(source, "run_temporary_mode_probe");
+  expect_contains(source, "if (command == \"--self-test-4k240\")");
+  expect_contains(source, "return run_temporary_mode_probe(client, 3840u, 2160u, 240u");
   expect_contains(source, "Windows can reuse the previous mode on a recycled target id");
   expect_contains(source, "debug display resolution mismatch");
   expect_contains(source, "QA display resolution mismatch after activation");
+  expect_contains(source, "make_active_signal_info(width, height, refresh_hz)");
+  expect_contains(source, "requested_target.sourceInfo.sourceModeInfoIdx = source_mode_index");
+  expect_contains(source, "requested_target.targetInfo.targetModeInfoIdx = target_mode_index");
+  expect_contains(source, "requested_target.targetInfo.desktopModeInfoIdx = desktop_mode_index");
+  expect_not_contains(source, "return activate_result == ERROR_SUCCESS && mode_ready ? 0 : 1");
 }
 
 TEST(VirtualDisplayProbeContract, TemporaryLeaseQaFeedsWhileValidatingHdr) {

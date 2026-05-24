@@ -70,17 +70,116 @@ namespace {
   struct ModeShape {
     std::uint32_t width {1920};
     std::uint32_t height {1080};
-    // Use standard 1080p CVT/CTA-ish totals for fallback paths; active-only totals
-    // have been rejected by IddCx during monitor arrival on some Windows builds.
+    // Use standard 1080p CVT/CTA-ish totals for fallback paths. Requested
+    // per-monitor modes are normalized to active-only timings below to match
+    // the known-good SudoVDA IddCx mode contract for high refresh displays.
     std::uint32_t total_width {2200};
     std::uint32_t total_height {1125};
     std::uint64_t pixel_rate {148'500'000ull};
+    std::uint32_t refresh_rate_millihz {60'000};
   };
+
+  struct ModeSpec {
+    std::uint32_t width;
+    std::uint32_t height;
+    std::uint32_t refresh_rate_millihz;
+  };
+
+  constexpr std::array<ModeSpec, 47> kDefaultModes {{
+    {800, 600, 30'000},
+    {800, 600, 59'940},
+    {800, 600, 60'000},
+    {800, 600, 72'000},
+    {800, 600, 90'000},
+    {800, 600, 120'000},
+    {800, 600, 144'000},
+    {800, 600, 240'000},
+    {1280, 720, 30'000},
+    {1280, 720, 59'940},
+    {1280, 720, 60'000},
+    {1280, 720, 72'000},
+    {1280, 720, 90'000},
+    {1280, 720, 120'000},
+    {1280, 720, 144'000},
+    {1366, 768, 30'000},
+    {1366, 768, 59'940},
+    {1366, 768, 60'000},
+    {1366, 768, 72'000},
+    {1366, 768, 90'000},
+    {1366, 768, 120'000},
+    {1366, 768, 144'000},
+    {1366, 768, 240'000},
+    {1920, 1080, 30'000},
+    {1920, 1080, 59'940},
+    {1920, 1080, 60'000},
+    {1920, 1080, 72'000},
+    {1920, 1080, 90'000},
+    {1920, 1080, 120'000},
+    {1920, 1080, 144'000},
+    {1920, 1080, 240'000},
+    {2560, 1440, 30'000},
+    {2560, 1440, 59'940},
+    {2560, 1440, 60'000},
+    {2560, 1440, 72'000},
+    {2560, 1440, 90'000},
+    {2560, 1440, 120'000},
+    {2560, 1440, 144'000},
+    {2560, 1440, 240'000},
+    {3840, 2160, 30'000},
+    {3840, 2160, 59'940},
+    {3840, 2160, 60'000},
+    {3840, 2160, 72'000},
+    {3840, 2160, 90'000},
+    {3840, 2160, 120'000},
+    {3840, 2160, 144'000},
+    {3840, 2160, 240'000}
+  }};
 
   std::uint32_t clamp_u32(const std::uint64_t value) {
     return static_cast<std::uint32_t>(
       (std::min<std::uint64_t>)(value, (std::numeric_limits<std::uint32_t>::max)())
     );
+  }
+
+  ModeShape active_mode_shape(
+    const std::uint32_t width,
+    const std::uint32_t height,
+    const std::uint32_t refresh_rate_millihz
+  ) {
+    return {
+      width,
+      height,
+      width,
+      height,
+      static_cast<std::uint64_t>(width) *
+        static_cast<std::uint64_t>(height) *
+        static_cast<std::uint64_t>((std::max)(refresh_rate_millihz, 1u)) /
+        1000ull,
+      refresh_rate_millihz
+    };
+  }
+
+  ModeShape mode_shape_from_spec(const ModeSpec &spec) {
+    return active_mode_shape(spec.width, spec.height, spec.refresh_rate_millihz);
+  }
+
+  std::pair<std::vector<ModeShape>, std::uint32_t> build_mode_shapes(
+    const std::optional<ModeShape> &preferred
+  ) {
+    std::vector<ModeShape> modes;
+    modes.reserve(kDefaultModes.size() + (preferred ? 1u : 0u));
+    std::uint32_t preferred_index = 1;
+
+    for (const auto &spec: kDefaultModes) {
+      modes.push_back(mode_shape_from_spec(spec));
+    }
+
+    if (preferred) {
+      preferred_index = static_cast<std::uint32_t>(modes.size());
+      modes.push_back(*preferred);
+    }
+
+    return {std::move(modes), preferred_index};
   }
 
   vdd::DisplayDescriptor make_permanent_descriptor(const std::uint32_t index) {
@@ -121,13 +220,23 @@ namespace {
       return {};
     }
 
-    return {
+    ModeShape shape {
       timing.horizontal_active,
       timing.vertical_active,
       static_cast<std::uint32_t>(timing.horizontal_active + timing.horizontal_blanking),
       static_cast<std::uint32_t>(timing.vertical_active + timing.vertical_blanking),
-      static_cast<std::uint64_t>(timing.pixel_clock_10khz) * 10'000ull
+      static_cast<std::uint64_t>(timing.pixel_clock_10khz) * 10'000ull,
+      60'000
     };
+
+    const auto total_pixels =
+      static_cast<std::uint64_t>((std::max)(shape.total_width, 1u)) *
+      static_cast<std::uint64_t>((std::max)(shape.total_height, 1u));
+    const auto derived_refresh_millihz =
+      total_pixels == 0 ? 0 : (shape.pixel_rate * 1000ull) / total_pixels;
+    shape.refresh_rate_millihz = clamp_u32(derived_refresh_millihz);
+
+    return shape;
   }
 
   ModeShape mode_shape_from_descriptor(const vdd::DisplayDescriptor &descriptor) {
@@ -135,27 +244,15 @@ namespace {
       return {};
     }
 
-    const auto horizontal_blanking = static_cast<std::uint32_t>(
-      (std::clamp)(descriptor.width / 5u, 160u, 2047u)
-    );
-    const auto vertical_blanking = static_cast<std::uint32_t>(
-      (std::clamp)(descriptor.height / 20u, 45u, 1023u)
-    );
-    const auto total_width = descriptor.width + horizontal_blanking;
-    const auto total_height = descriptor.height + vertical_blanking;
-    const auto pixel_rate =
-      static_cast<std::uint64_t>(total_width) *
-      static_cast<std::uint64_t>(total_height) *
-      static_cast<std::uint64_t>(descriptor.refresh_rate_millihz) /
-      1000ull;
+    return active_mode_shape(descriptor.width, descriptor.height, descriptor.refresh_rate_millihz);
+  }
 
-    return {
-      descriptor.width,
-      descriptor.height,
-      total_width,
-      total_height,
-      pixel_rate
-    };
+  std::optional<ModeShape> preferred_mode_shape_from_description(const IDDCX_MONITOR_DESCRIPTION &description) {
+    const auto edid_shape = mode_shape_from_description(description);
+    if (edid_shape.width == 0 || edid_shape.height == 0 || edid_shape.refresh_rate_millihz == 0) {
+      return std::nullopt;
+    }
+    return edid_shape;
   }
 
   bool has_hdr_iddcx_ddi() {
@@ -176,17 +273,6 @@ namespace {
     );
   }
 
-  IDDCX_BITS_PER_COMPONENT iddcx_rgb_bits_from_support(const vdd::WireColorSupport &support) {
-    UINT bits = 0;
-    if (support.rgb_8bpc) {
-      bits |= static_cast<UINT>(IDDCX_BITS_PER_COMPONENT_8);
-    }
-    if (support.rgb_10bpc) {
-      bits |= static_cast<UINT>(IDDCX_BITS_PER_COMPONENT_10);
-    }
-    return static_cast<IDDCX_BITS_PER_COMPONENT>(bits);
-  }
-
   void populate_rgb_wire_bits(IDDCX_WIRE_BITS_PER_COMPONENT &bits, const IDDCX_BITS_PER_COMPONENT rgb_bits) {
     bits = {};
     bits.Rgb = rgb_bits;
@@ -205,13 +291,13 @@ namespace {
     signal.activeSize.cy = shape.height;
     signal.totalSize.cx = (std::max)(shape.total_width, shape.width);
     signal.totalSize.cy = (std::max)(shape.total_height, shape.height);
-    signal.hSyncFreq.Numerator = clamp_u32(signal.pixelRate);
-    signal.hSyncFreq.Denominator = (std::max<std::uint32_t>)(signal.totalSize.cx, 1);
-    signal.vSyncFreq.Numerator = clamp_u32(signal.pixelRate);
-    signal.vSyncFreq.Denominator = (std::max<std::uint32_t>)(
-      signal.totalSize.cx * signal.totalSize.cy,
-      1
+    signal.vSyncFreq.Numerator = (std::max)(shape.refresh_rate_millihz, 1u);
+    signal.vSyncFreq.Denominator = 1000;
+    signal.hSyncFreq.Numerator = clamp_u32(
+      static_cast<std::uint64_t>(signal.vSyncFreq.Numerator) *
+      static_cast<std::uint64_t>((std::max)(signal.totalSize.cy, 1u))
     );
+    signal.hSyncFreq.Denominator = signal.vSyncFreq.Denominator;
     // DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY_OTHER is not accepted here; 255 is
     // the documented "not initialized" value Windows itself uses for EDID modes.
     signal.AdditionalSignalInfo.videoStandard = 255;
@@ -220,19 +306,25 @@ namespace {
     return signal;
   }
 
-  IDDCX_MONITOR_MODE make_monitor_mode(const IDDCX_MONITOR_DESCRIPTION &description) {
+  IDDCX_MONITOR_MODE make_monitor_mode(
+    const ModeShape &shape,
+    const IDDCX_MONITOR_MODE_ORIGIN origin
+  ) {
     IDDCX_MONITOR_MODE mode {};
     mode.Size = sizeof(mode);
-    mode.Origin = IDDCX_MONITOR_MODE_ORIGIN_MONITORDESCRIPTOR;
-    mode.MonitorVideoSignalInfo = make_signal_info(mode_shape_from_description(description), true);
+    mode.Origin = origin;
+    mode.MonitorVideoSignalInfo = make_signal_info(shape, true);
     return mode;
   }
 
-  IDDCX_MONITOR_MODE2 make_monitor_mode2(const IDDCX_MONITOR_DESCRIPTION &description) {
+  IDDCX_MONITOR_MODE2 make_monitor_mode2(
+    const ModeShape &shape,
+    const IDDCX_MONITOR_MODE_ORIGIN origin
+  ) {
     IDDCX_MONITOR_MODE2 mode {};
     mode.Size = sizeof(mode);
-    mode.Origin = IDDCX_MONITOR_MODE_ORIGIN_MONITORDESCRIPTOR;
-    mode.MonitorVideoSignalInfo = make_signal_info(mode_shape_from_description(description), true);
+    mode.Origin = origin;
+    mode.MonitorVideoSignalInfo = make_signal_info(shape, true);
     populate_rgb_wire_bits(mode.BitsPerComponent, supported_hdr_bits_per_component());
     return mode;
   }
@@ -241,9 +333,6 @@ namespace {
     IDDCX_TARGET_MODE mode {};
     mode.Size = sizeof(mode);
     mode.TargetVideoSignalInfo.targetVideoSignalInfo = make_signal_info(shape, false);
-    // The virtual adapter does not publish a finite pipeline budget; a nonzero
-    // per-mode bandwidth can make Windows reject activation with ERROR_GEN_FAILURE.
-    mode.RequiredBandwidth = 0;
     return mode;
   }
 
@@ -251,9 +340,6 @@ namespace {
     IDDCX_TARGET_MODE2 mode {};
     mode.Size = sizeof(mode);
     mode.TargetVideoSignalInfo.targetVideoSignalInfo = make_signal_info(shape, false);
-    // The virtual adapter does not publish a finite pipeline budget; a nonzero
-    // per-mode bandwidth can make Windows reject activation with ERROR_GEN_FAILURE.
-    mode.RequiredBandwidth = 0;
     populate_rgb_wire_bits(mode.BitsPerComponent, supported_hdr_bits_per_component());
     return mode;
   }
@@ -266,10 +352,17 @@ namespace {
       return STATUS_INVALID_PARAMETER;
     }
 
-    output->MonitorModeBufferOutputCount = 1;
-    output->PreferredMonitorModeIdx = 0;
-    if (input->pMonitorModes && input->MonitorModeBufferInputCount >= 1) {
-      input->pMonitorModes[0] = make_monitor_mode(input->MonitorDescription);
+    const auto [modes, preferred_index] = build_mode_shapes(preferred_mode_shape_from_description(input->MonitorDescription));
+    output->MonitorModeBufferOutputCount = static_cast<UINT>(modes.size());
+    output->PreferredMonitorModeIdx = preferred_index;
+    if (input->MonitorModeBufferInputCount == 0) {
+      return STATUS_SUCCESS;
+    }
+    if (!input->pMonitorModes || input->MonitorModeBufferInputCount < modes.size()) {
+      return STATUS_BUFFER_TOO_SMALL;
+    }
+    for (std::size_t index = 0; index < modes.size(); ++index) {
+      input->pMonitorModes[index] = make_monitor_mode(modes[index], IDDCX_MONITOR_MODE_ORIGIN_MONITORDESCRIPTOR);
     }
 
     return STATUS_SUCCESS;
@@ -283,10 +376,17 @@ namespace {
       return STATUS_INVALID_PARAMETER;
     }
 
-    output->MonitorModeBufferOutputCount = 1;
-    output->PreferredMonitorModeIdx = 0;
-    if (input->pMonitorModes && input->MonitorModeBufferInputCount >= 1) {
-      input->pMonitorModes[0] = make_monitor_mode2(input->MonitorDescription);
+    const auto [modes, preferred_index] = build_mode_shapes(preferred_mode_shape_from_description(input->MonitorDescription));
+    output->MonitorModeBufferOutputCount = static_cast<UINT>(modes.size());
+    output->PreferredMonitorModeIdx = preferred_index;
+    if (input->MonitorModeBufferInputCount == 0) {
+      return STATUS_SUCCESS;
+    }
+    if (!input->pMonitorModes || input->MonitorModeBufferInputCount < modes.size()) {
+      return STATUS_BUFFER_TOO_SMALL;
+    }
+    for (std::size_t index = 0; index < modes.size(); ++index) {
+      input->pMonitorModes[index] = make_monitor_mode2(modes[index], IDDCX_MONITOR_MODE_ORIGIN_MONITORDESCRIPTOR);
     }
 
     return STATUS_SUCCESS;
@@ -300,16 +400,17 @@ namespace {
       return STATUS_INVALID_PARAMETER;
     }
 
-    output->DefaultMonitorModeBufferOutputCount = 1;
-    output->PreferredMonitorModeIdx = 0;
-    if (input->pDefaultMonitorModes && input->DefaultMonitorModeBufferInputCount >= 1) {
-      IDDCX_MONITOR_MODE mode {};
-      mode.Size = sizeof(mode);
-      mode.Origin = IDDCX_MONITOR_MODE_ORIGIN_DRIVER;
-      // Windows can request default description modes before parsing our EDID;
-      // return a conservative fallback mode so IddCx can complete arrival.
-      mode.MonitorVideoSignalInfo = make_signal_info({}, true);
-      input->pDefaultMonitorModes[0] = mode;
+    const auto [modes, preferred_index] = build_mode_shapes(std::nullopt);
+    output->DefaultMonitorModeBufferOutputCount = static_cast<UINT>(modes.size());
+    output->PreferredMonitorModeIdx = preferred_index;
+    if (input->DefaultMonitorModeBufferInputCount == 0) {
+      return STATUS_SUCCESS;
+    }
+    if (!input->pDefaultMonitorModes || input->DefaultMonitorModeBufferInputCount < modes.size()) {
+      return STATUS_BUFFER_TOO_SMALL;
+    }
+    for (std::size_t index = 0; index < modes.size(); ++index) {
+      input->pDefaultMonitorModes[index] = make_monitor_mode(modes[index], IDDCX_MONITOR_MODE_ORIGIN_DRIVER);
     }
 
     return STATUS_SUCCESS;
@@ -324,11 +425,19 @@ namespace {
       return STATUS_INVALID_PARAMETER;
     }
 
-    output->TargetModeBufferOutputCount = 1;
-    if (input->pTargetModes && input->TargetModeBufferInputCount >= 1) {
-      input->pTargetModes[0] = make_target_mode(
-        requested_shape ? *requested_shape : mode_shape_from_description(input->MonitorDescription)
-      );
+    const auto [modes, preferred_index] = build_mode_shapes(
+      requested_shape ? std::optional<ModeShape> {*requested_shape} : std::optional<ModeShape> {mode_shape_from_description(input->MonitorDescription)}
+    );
+    (void) preferred_index;
+    output->TargetModeBufferOutputCount = static_cast<UINT>(modes.size());
+    if (input->TargetModeBufferInputCount == 0) {
+      return STATUS_SUCCESS;
+    }
+    if (!input->pTargetModes || input->TargetModeBufferInputCount < modes.size()) {
+      return STATUS_BUFFER_TOO_SMALL;
+    }
+    for (std::size_t index = 0; index < modes.size(); ++index) {
+      input->pTargetModes[index] = make_target_mode(modes[index]);
     }
 
     return STATUS_SUCCESS;
@@ -343,11 +452,19 @@ namespace {
       return STATUS_INVALID_PARAMETER;
     }
 
-    output->TargetModeBufferOutputCount = 1;
-    if (input->pTargetModes && input->TargetModeBufferInputCount >= 1) {
-      input->pTargetModes[0] = make_target_mode2(
-        requested_shape ? *requested_shape : mode_shape_from_description(input->MonitorDescription)
-      );
+    const auto [modes, preferred_index] = build_mode_shapes(
+      requested_shape ? std::optional<ModeShape> {*requested_shape} : std::optional<ModeShape> {mode_shape_from_description(input->MonitorDescription)}
+    );
+    (void) preferred_index;
+    output->TargetModeBufferOutputCount = static_cast<UINT>(modes.size());
+    if (input->TargetModeBufferInputCount == 0) {
+      return STATUS_SUCCESS;
+    }
+    if (!input->pTargetModes || input->TargetModeBufferInputCount < modes.size()) {
+      return STATUS_BUFFER_TOO_SMALL;
+    }
+    for (std::size_t index = 0; index < modes.size(); ++index) {
+      input->pTargetModes[index] = make_target_mode2(modes[index]);
     }
 
     return STATUS_SUCCESS;
@@ -649,9 +766,10 @@ namespace {
 
       IDDCX_MONITOR_INFO monitor_info {};
       monitor_info.Size = sizeof(monitor_info);
-      // Windows reports IddCx HDR-capable EDIDs as WCG-only when the target is
-      // INDIRECT_WIRED; the HDR path is classified correctly as a digital sink.
-      monitor_info.MonitorType = DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI;
+      // Use a digital sink type so Windows avoids WCG-only classification for
+      // HDR, but avoid HDMI's legacy bandwidth ceiling that rejects 4K
+      // high-refresh virtual modes.
+      monitor_info.MonitorType = DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DISPLAYPORT_EXTERNAL;
       monitor_info.ConnectorIndex = descriptor.connector_index;
       monitor_info.MonitorContainerId = vdd::to_windows_guid(descriptor.container_id);
       monitor_info.MonitorDescription.Size = sizeof(monitor_info.MonitorDescription);
@@ -1193,17 +1311,11 @@ NTSTATUS SunshineEvtAdapterQueryTargetInfo(
     return STATUS_INVALID_PARAMETER;
   }
 
-  const auto capabilities = vdd::hdr_output_capabilities();
-  UINT target_caps = IDDCX_TARGET_CAPS_NONE;
-  if (capabilities.wide_color_space) {
-    target_caps |= static_cast<UINT>(IDDCX_TARGET_CAPS_WIDE_COLOR_SPACE);
-  }
-  if (capabilities.high_color_space) {
-    target_caps |= static_cast<UINT>(IDDCX_TARGET_CAPS_HIGH_COLOR_SPACE);
-  }
-
-  output->TargetCaps = static_cast<IDDCX_TARGET_CAPS>(target_caps);
-  populate_rgb_wire_bits(output->DitheringSupport, iddcx_rgb_bits_from_support(capabilities.dithering_bits));
+  output->TargetCaps = static_cast<IDDCX_TARGET_CAPS>(
+    static_cast<UINT>(IDDCX_TARGET_CAPS_HIGH_COLOR_SPACE) |
+    static_cast<UINT>(IDDCX_TARGET_CAPS_WIDE_COLOR_SPACE)
+  );
+  populate_rgb_wire_bits(output->DitheringSupport, IDDCX_BITS_PER_COMPONENT_10);
   return STATUS_SUCCESS;
 }
 

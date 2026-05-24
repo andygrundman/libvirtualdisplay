@@ -76,7 +76,8 @@ TEST(VirtualDisplayWindowsDriverContract, AbandonsSwapChainAssignedDuringDepartu
 TEST(VirtualDisplayWindowsDriverContract, UsesDigitalSinkTechnologyForHdrClassification) {
   const auto source = read_windows_driver_source();
 
-  EXPECT_NE(source.find("DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI"), std::string::npos);
+  EXPECT_NE(source.find("DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DISPLAYPORT_EXTERNAL"), std::string::npos);
+  EXPECT_NE(source.find("legacy bandwidth ceiling"), std::string::npos);
   EXPECT_NE(source.find("WCG-only"), std::string::npos);
 }
 
@@ -100,6 +101,8 @@ TEST(VirtualDisplayWindowsDriverContract, TargetModesUseRequestedDescriptorTimin
 
   EXPECT_NE(source.find("ModeShape mode_shape_from_descriptor(const vdd::DisplayDescriptor &descriptor)"), std::string::npos);
   EXPECT_NE(source.find("descriptor.refresh_rate_millihz"), std::string::npos);
+  EXPECT_EQ(source.find("caps.MaxDisplayPipelineRate = kMaxDisplayPipelineRate;"), std::string::npos);
+  EXPECT_EQ(source.find("mode.RequiredBandwidth = shape.pixel_rate;"), std::string::npos);
 
   const auto query_target_modes = source.find("NTSTATUS query_target_modes(");
   ASSERT_NE(query_target_modes, std::string::npos);

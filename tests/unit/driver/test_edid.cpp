@@ -10,9 +10,9 @@ namespace {
     options.manufacturer_id = {'S', 'D', 'D'};
     options.product_code = 0x4101;
     options.serial_number = 0x12345678;
-    options.width = 2560;
-    options.height = 1440;
-    options.refresh_rate_millihz = 120'000;
+  options.width = 2560;
+  options.height = 1440;
+  options.refresh_rate_millihz = 120'000;
     options.monitor_name = "Sunshine HDR";
     options.hdr_supported = true;
     return options;
@@ -33,36 +33,49 @@ TEST(VirtualDisplayDriverEdid, BuildsParseableTwoBlockEdidWithStableIdentity) {
   EXPECT_EQ(vdd::read_serial_number(edid), 0x12345678u);
 }
 
-TEST(VirtualDisplayDriverEdid, EmbedsRequestedPreferredTiming) {
+TEST(VirtualDisplayDriverEdid, HdrEdidUsesReferencePreferredTiming) {
   const auto edid = vdd::create_edid(default_options());
   const auto timing = vdd::read_preferred_timing(edid);
 
-  EXPECT_EQ(timing.horizontal_active, 2560u);
-  EXPECT_EQ(timing.vertical_active, 1440u);
+  EXPECT_EQ(timing.horizontal_active, 3840u);
+  EXPECT_EQ(timing.vertical_active, 2160u);
   EXPECT_GT(timing.horizontal_blanking, 0u);
   EXPECT_GT(timing.vertical_blanking, 0u);
   EXPECT_GT(timing.pixel_clock_10khz, 0u);
 }
 
-TEST(VirtualDisplayDriverEdid, BaseDetailedTimingCannotCarryFourKHighRefreshClock) {
+TEST(VirtualDisplayDriverEdid, HdrEdidDoesNotEncodeRequestedHighRefreshInBaseTiming) {
   auto options = default_options();
   options.width = 3840;
   options.height = 2160;
-  options.refresh_rate_millihz = 120'000;
+  options.refresh_rate_millihz = 240'000;
 
   const auto edid = vdd::create_edid(options);
   const auto timing = vdd::read_preferred_timing(edid);
 
   EXPECT_EQ(timing.horizontal_active, 3840u);
   EXPECT_EQ(timing.vertical_active, 2160u);
-  EXPECT_EQ(timing.pixel_clock_10khz, 0xffffu);
+  EXPECT_NE(timing.pixel_clock_10khz, 0xffffu);
 
   const auto total_pixels =
     static_cast<std::uint64_t>(timing.horizontal_active + timing.horizontal_blanking) *
     static_cast<std::uint64_t>(timing.vertical_active + timing.vertical_blanking);
   const auto effective_millihz = static_cast<std::uint64_t>(timing.pixel_clock_10khz) * 10'000'000ull / total_pixels;
 
-  EXPECT_LT(effective_millihz, 120'000u);
+  EXPECT_NEAR(static_cast<double>(effective_millihz), 60'000.0, 10.0);
+}
+
+TEST(VirtualDisplayDriverEdid, HdrEdidUsesReferenceRangeDescriptor) {
+  auto options = default_options();
+  options.width = 3840;
+  options.height = 2160;
+  options.refresh_rate_millihz = 240'000;
+
+  const auto edid = vdd::create_edid(options);
+
+  EXPECT_EQ(edid[90 + 3], std::byte {0xfd});
+  EXPECT_EQ(edid[90 + 6], std::byte {255});
+  EXPECT_EQ(edid[90 + 9], std::byte {255});
 }
 
 TEST(VirtualDisplayDriverEdid, EmbedsHdrStaticMetadataWhenRequested) {
