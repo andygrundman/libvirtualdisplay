@@ -1,0 +1,69 @@
+#include <gtest/gtest.h>
+#include "virtual_display/driver/display_identity.h"
+
+namespace vdd = virtual_display::driver;
+
+namespace {
+
+  vdd::TemporaryDisplayRecord record_for_display_id(const std::uint64_t display_id) {
+    return vdd::TemporaryDisplayRecord {
+      100,
+      display_id,
+      3840,
+      2160,
+      120'000,
+      30'000,
+      8,
+      "Sunshine HDR",
+      std::chrono::steady_clock::now()
+    };
+  }
+}  // namespace
+
+TEST(VirtualDisplayDriverDisplayIdentity, DerivesStableNonzeroSerialFromDisplayId) {
+  EXPECT_EQ(vdd::serial_number_from_display_id(0), 1u);
+  EXPECT_EQ(
+    vdd::serial_number_from_display_id(0x1234567800000000ull),
+    vdd::serial_number_from_display_id(0x0000000012345678ull)
+  );
+  EXPECT_NE(
+    vdd::serial_number_from_display_id(0x0000000012345678ull),
+    vdd::serial_number_from_display_id(0x0000000087654321ull)
+  );
+}
+
+TEST(VirtualDisplayDriverDisplayIdentity, DerivesProductCodeFromTemporaryRange) {
+  EXPECT_EQ(vdd::product_code_from_display_id(0), vdd::kTemporaryDisplayProductCodeBase);
+  EXPECT_EQ(vdd::product_code_from_display_id(0x1234), 0x5234);
+}
+
+TEST(VirtualDisplayDriverDisplayIdentity, DerivesStableContainerGuidFromDisplayId) {
+  const auto first = vdd::container_guid_from_display_id(0x1122334455667788ull);
+  const auto second = vdd::container_guid_from_display_id(0x1122334455667788ull);
+  const auto different = vdd::container_guid_from_display_id(0x1122334455667789ull);
+
+  EXPECT_EQ(first, second);
+  EXPECT_NE(first, different);
+  EXPECT_EQ(first.data1, 0x9161d0d5u);
+  EXPECT_EQ(first.data4[6], 0x53u);
+  EXPECT_EQ(first.data4[7], 0x44u);
+}
+
+TEST(VirtualDisplayDriverDisplayIdentity, BuildsHdrEdidOptionsFromDisplayRecord) {
+  const auto record = record_for_display_id(0x12345678);
+  const auto options = vdd::edid_options_for_temporary_display(record);
+
+  EXPECT_EQ(options.manufacturer_id, vdd::kSunshineDriverManufacturerId);
+  EXPECT_EQ(options.product_code, vdd::product_code_from_display_id(record.display_id));
+  EXPECT_EQ(options.serial_number, vdd::serial_number_from_display_id(record.display_id));
+  EXPECT_EQ(options.width, record.width);
+  EXPECT_EQ(options.height, record.height);
+  EXPECT_EQ(options.refresh_rate_millihz, record.refresh_rate_millihz);
+  EXPECT_EQ(options.monitor_name, record.display_name);
+  EXPECT_TRUE(options.hdr_supported);
+
+  const auto edid = vdd::create_edid(options);
+  EXPECT_EQ(vdd::read_manufacturer_id(edid), (std::array<char, 3> {'S', 'D', 'D'}));
+  EXPECT_EQ(vdd::read_product_code(edid), 0x5678u);
+  EXPECT_TRUE(vdd::has_hdr_static_metadata(edid));
+}

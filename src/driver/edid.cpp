@@ -1,0 +1,324 @@
+#include "virtual_display/driver/edid.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <string>
+
+namespace virtual_display::driver {
+  namespace {
+    std::byte byte(const std::uint32_t value) {
+      return static_cast<std::byte>(value & 0xffu);
+    }
+
+    std::uint8_t to_u8(const std::byte value) {
+      return static_cast<std::uint8_t>(value);
+    }
+
+    void put_le16(std::span<std::byte> data, const std::size_t offset, const std::uint16_t value) {
+      data[offset] = byte(value);
+      data[offset + 1] = byte(value >> 8);
+    }
+
+    void put_le32(std::span<std::byte> data, const std::size_t offset, const std::uint32_t value) {
+      data[offset] = byte(value);
+      data[offset + 1] = byte(value >> 8);
+      data[offset + 2] = byte(value >> 16);
+      data[offset + 3] = byte(value >> 24);
+    }
+
+    std::uint16_t encode_manufacturer_id(const std::array<char, 3> &manufacturer_id) {
+      auto encode_char = [](const char ch) -> std::uint16_t {
+        if (ch < 'A' || ch > 'Z') {
+          return 1;
+        }
+
+        return static_cast<std::uint16_t>(ch - 'A' + 1);
+      };
+
+      return static_cast<std::uint16_t>(
+        (encode_char(manufacturer_id[0]) << 10) |
+        (encode_char(manufacturer_id[1]) << 5) |
+        encode_char(manufacturer_id[2])
+      );
+    }
+
+    std::uint16_t align8(const std::uint32_t value) {
+      return static_cast<std::uint16_t>((value + 7u) & ~7u);
+    }
+
+    PreferredTiming make_preferred_timing(const EdidOptions &options) {
+      const auto horizontal_blanking = align8(std::clamp(options.width / 5u, 160u, 2047u));
+      const auto vertical_blanking = static_cast<std::uint16_t>(std::clamp(options.height / 20u, 45u, 1023u));
+      const auto total_pixels =
+        static_cast<std::uint64_t>(options.width + horizontal_blanking) *
+        static_cast<std::uint64_t>(options.height + vertical_blanking);
+      const auto pixel_clock_hz =
+        total_pixels * static_cast<std::uint64_t>(std::max(options.refresh_rate_millihz, 1u)) / 1000u;
+
+      return PreferredTiming {
+        static_cast<std::uint32_t>(std::clamp<std::uint64_t>(pixel_clock_hz / 10'000u, 1u, 0xffffu)),
+        static_cast<std::uint16_t>(options.width),
+        horizontal_blanking,
+        static_cast<std::uint16_t>(options.height),
+        vertical_blanking
+      };
+    }
+
+    void write_detailed_timing(std::span<std::byte> data, const std::size_t offset, const EdidOptions &options) {
+      const auto timing = make_preferred_timing(options);
+      const auto h_sync_offset = std::clamp<std::uint16_t>(timing.horizontal_blanking / 3u, 8u, 255u);
+      const auto h_sync_width = std::clamp<std::uint16_t>(timing.horizontal_blanking / 5u, 8u, 255u);
+      const auto v_sync_offset = std::uint16_t {3};
+      const auto v_sync_width = std::uint16_t {5};
+
+      put_le16(data, offset, static_cast<std::uint16_t>(timing.pixel_clock_10khz));
+      data[offset + 2] = byte(timing.horizontal_active);
+      data[offset + 3] = byte(timing.horizontal_blanking);
+      data[offset + 4] = byte(((timing.horizontal_active >> 8) << 4) | (timing.horizontal_blanking >> 8));
+      data[offset + 5] = byte(timing.vertical_active);
+      data[offset + 6] = byte(timing.vertical_blanking);
+      data[offset + 7] = byte(((timing.vertical_active >> 8) << 4) | (timing.vertical_blanking >> 8));
+      data[offset + 8] = byte(h_sync_offset);
+      data[offset + 9] = byte(h_sync_width);
+      data[offset + 10] = byte((v_sync_offset << 4) | v_sync_width);
+      data[offset + 11] = byte(((h_sync_offset >> 8) << 6) | ((h_sync_width >> 8) << 4));
+      data[offset + 12] = byte(60);
+      data[offset + 13] = byte(34);
+      data[offset + 14] = byte(0);
+      data[offset + 15] = byte(0);
+      data[offset + 16] = byte(0);
+      data[offset + 17] = byte(0x1a);
+    }
+
+    void write_text_descriptor(
+      std::span<std::byte> data,
+      const std::size_t offset,
+      const std::byte descriptor_type,
+      const std::string_view text
+    ) {
+      data[offset + 0] = std::byte {0x00};
+      data[offset + 1] = std::byte {0x00};
+      data[offset + 2] = std::byte {0x00};
+      data[offset + 3] = descriptor_type;
+      data[offset + 4] = std::byte {0x00};
+
+      std::fill_n(data.begin() + static_cast<std::ptrdiff_t>(offset + 5), 13, std::byte {' '});
+      const auto copy_size = std::min<std::size_t>(text.size(), 12);
+      std::memcpy(data.data() + offset + 5, text.data(), copy_size);
+      data[offset + 5 + copy_size] = std::byte {'\n'};
+    }
+
+    void write_range_descriptor(std::span<std::byte> data, const std::size_t offset, const EdidOptions &options) {
+      data[offset + 0] = std::byte {0x00};
+      data[offset + 1] = std::byte {0x00};
+      data[offset + 2] = std::byte {0x00};
+      data[offset + 3] = std::byte {0xfd};
+      data[offset + 4] = std::byte {0x00};
+      data[offset + 5] = std::byte {30};
+      data[offset + 6] = byte(std::clamp(options.refresh_rate_millihz / 1000u, 60u, 240u));
+      data[offset + 7] = std::byte {30};
+      data[offset + 8] = std::byte {160};
+      data[offset + 9] = std::byte {30};
+      data[offset + 10] = std::byte {0x20};
+    }
+
+    void write_checksum(std::span<std::byte> block) {
+      unsigned int sum = 0;
+      for (std::size_t index = 0; index < kEdidBlockSize - 1; ++index) {
+        sum += to_u8(block[index]);
+      }
+
+      block[kEdidBlockSize - 1] = byte((256u - (sum & 0xffu)) & 0xffu);
+    }
+  }  // namespace
+
+  std::array<std::byte, kEdidSize> create_edid(const EdidOptions &options) {
+    std::array<std::byte, kEdidSize> edid {};
+    auto base = std::span<std::byte> {edid.data(), kEdidBlockSize};
+    auto extension = std::span<std::byte> {edid.data() + kEdidBlockSize, kEdidBlockSize};
+
+    const std::array<std::byte, 8> header {
+      std::byte {0x00}, std::byte {0xff}, std::byte {0xff}, std::byte {0xff},
+      std::byte {0xff}, std::byte {0xff}, std::byte {0xff}, std::byte {0x00}
+    };
+    std::copy(header.begin(), header.end(), base.begin());
+
+    const auto manufacturer = encode_manufacturer_id(options.manufacturer_id);
+    base[8] = byte(manufacturer >> 8);
+    base[9] = byte(manufacturer);
+    put_le16(base, 10, options.product_code);
+    put_le32(base, 12, options.serial_number);
+    base[16] = std::byte {1};
+    base[17] = std::byte {36};
+    base[18] = std::byte {1};
+    base[19] = std::byte {4};
+    base[20] = std::byte {0xa5};
+    base[21] = std::byte {60};
+    base[22] = std::byte {34};
+    base[23] = std::byte {0x78};
+    base[24] = std::byte {0x0a};
+    base[25] = std::byte {0xee};
+    base[26] = std::byte {0x91};
+    base[27] = std::byte {0xa3};
+    base[28] = std::byte {0x54};
+    base[29] = std::byte {0x4c};
+    base[30] = std::byte {0x99};
+    base[31] = std::byte {0x26};
+    base[32] = std::byte {0x0f};
+    base[33] = std::byte {0x50};
+    base[34] = std::byte {0x54};
+
+    std::fill(base.begin() + 38, base.begin() + 54, std::byte {0x01});
+    write_detailed_timing(base, 54, options);
+    write_text_descriptor(base, 72, std::byte {0xff}, std::to_string(options.serial_number));
+    write_text_descriptor(base, 90, std::byte {0xfc}, options.monitor_name);
+    write_range_descriptor(base, 108, options);
+    base[126] = std::byte {1};
+    write_checksum(base);
+
+    extension[0] = std::byte {0x02};
+    extension[1] = std::byte {0x03};
+
+    std::size_t data_offset = 4;
+    if (options.hdr_supported) {
+      extension[data_offset++] = std::byte {0xe3};
+      extension[data_offset++] = std::byte {0x05};
+      extension[data_offset++] = std::byte {0xe0};
+      extension[data_offset++] = std::byte {0x00};
+
+      extension[data_offset++] = std::byte {0xe6};
+      extension[data_offset++] = std::byte {0x06};
+      extension[data_offset++] = std::byte {0x0f};
+      extension[data_offset++] = std::byte {0x01};
+      extension[data_offset++] = std::byte {0x70};
+      extension[data_offset++] = std::byte {0x60};
+      extension[data_offset++] = std::byte {0x10};
+    }
+
+    extension[2] = byte(data_offset);
+    extension[3] = std::byte {0x00};
+    write_checksum(extension);
+
+    return edid;
+  }
+
+  bool has_valid_edid_checksums(const std::span<const std::byte, kEdidSize> edid) {
+    for (std::size_t block_index = 0; block_index < 2; ++block_index) {
+      unsigned int sum = 0;
+      for (std::size_t offset = 0; offset < kEdidBlockSize; ++offset) {
+        sum += to_u8(edid[block_index * kEdidBlockSize + offset]);
+      }
+      if ((sum & 0xffu) != 0) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  bool has_hdr_static_metadata(const std::span<const std::byte, kEdidSize> edid) {
+    const auto extension = edid.subspan(kEdidBlockSize, kEdidBlockSize);
+    if (extension[0] != std::byte {0x02}) {
+      return false;
+    }
+
+    const auto data_end = std::clamp<std::size_t>(to_u8(extension[2]), 4, kEdidBlockSize - 1);
+    for (std::size_t offset = 4; offset < data_end;) {
+      const auto header = to_u8(extension[offset]);
+      const auto tag = header >> 5;
+      const auto length = header & 0x1f;
+      if (length == 0 || offset + length >= data_end + 1) {
+        break;
+      }
+
+      if (tag == 0x07 && extension[offset + 1] == std::byte {0x06}) {
+        const auto eotf = to_u8(extension[offset + 2]);
+        return (eotf & 0x04u) != 0;
+      }
+
+      offset += length + 1;
+    }
+
+    return false;
+  }
+
+  bool has_bt2020_colorimetry(const std::span<const std::byte, kEdidSize> edid) {
+    const auto extension = edid.subspan(kEdidBlockSize, kEdidBlockSize);
+    if (extension[0] != std::byte {0x02}) {
+      return false;
+    }
+
+    const auto data_end = std::clamp<std::size_t>(to_u8(extension[2]), 4, kEdidBlockSize - 1);
+    for (std::size_t offset = 4; offset < data_end;) {
+      const auto header = to_u8(extension[offset]);
+      const auto tag = header >> 5;
+      const auto length = header & 0x1f;
+      if (length == 0 || offset + length >= data_end + 1) {
+        break;
+      }
+
+      if (tag == 0x07 && extension[offset + 1] == std::byte {0x05} && length >= 2) {
+        const auto colorimetry = to_u8(extension[offset + 2]);
+        return (colorimetry & 0xc0u) == 0xc0u;
+      }
+
+      offset += length + 1;
+    }
+
+    return false;
+  }
+
+  std::array<char, 3> read_manufacturer_id(const std::span<const std::byte, kEdidSize> edid) {
+    const auto encoded = static_cast<std::uint16_t>(
+      (static_cast<std::uint16_t>(to_u8(edid[8])) << 8) |
+      static_cast<std::uint16_t>(to_u8(edid[9]))
+    );
+
+    return {
+      static_cast<char>('A' + (((encoded >> 10) & 0x1fu) - 1u)),
+      static_cast<char>('A' + (((encoded >> 5) & 0x1fu) - 1u)),
+      static_cast<char>('A' + ((encoded & 0x1fu) - 1u))
+    };
+  }
+
+  std::uint16_t read_product_code(const std::span<const std::byte, kEdidSize> edid) {
+    return static_cast<std::uint16_t>(
+      static_cast<std::uint16_t>(to_u8(edid[10])) |
+      (static_cast<std::uint16_t>(to_u8(edid[11])) << 8)
+    );
+  }
+
+  std::uint32_t read_serial_number(const std::span<const std::byte, kEdidSize> edid) {
+    return static_cast<std::uint32_t>(to_u8(edid[12])) |
+           (static_cast<std::uint32_t>(to_u8(edid[13])) << 8) |
+           (static_cast<std::uint32_t>(to_u8(edid[14])) << 16) |
+           (static_cast<std::uint32_t>(to_u8(edid[15])) << 24);
+  }
+
+  PreferredTiming read_preferred_timing(const std::span<const std::byte, kEdidSize> edid) {
+    constexpr std::size_t offset = 54;
+
+    PreferredTiming timing {};
+    timing.pixel_clock_10khz = static_cast<std::uint32_t>(to_u8(edid[offset])) |
+                               (static_cast<std::uint32_t>(to_u8(edid[offset + 1])) << 8);
+    timing.horizontal_active = static_cast<std::uint16_t>(
+      to_u8(edid[offset + 2]) |
+      ((to_u8(edid[offset + 4]) & 0xf0u) << 4)
+    );
+    timing.horizontal_blanking = static_cast<std::uint16_t>(
+      to_u8(edid[offset + 3]) |
+      ((to_u8(edid[offset + 4]) & 0x0fu) << 8)
+    );
+    timing.vertical_active = static_cast<std::uint16_t>(
+      to_u8(edid[offset + 5]) |
+      ((to_u8(edid[offset + 7]) & 0xf0u) << 4)
+    );
+    timing.vertical_blanking = static_cast<std::uint16_t>(
+      to_u8(edid[offset + 6]) |
+      ((to_u8(edid[offset + 7]) & 0x0fu) << 8)
+    );
+
+    return timing;
+  }
+}  // namespace virtual_display::driver

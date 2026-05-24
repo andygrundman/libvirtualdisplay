@@ -1,0 +1,214 @@
+#pragma once
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <string_view>
+#include <type_traits>
+
+namespace virtual_display::driver {
+  struct Guid {
+    std::uint32_t data1 {};
+    std::uint16_t data2 {};
+    std::uint16_t data3 {};
+    std::array<std::uint8_t, 8> data4 {};
+
+    friend constexpr bool operator==(const Guid &lhs, const Guid &rhs) = default;
+  };
+
+  inline constexpr Guid kDeviceInterfaceGuid {
+    0x5f894d6c,
+    0x3a69,
+    0x48a2,
+    {0x86, 0xef, 0xe4, 0xc6, 0x71, 0x93, 0x2d, 0x63}
+  };
+
+  inline constexpr Guid kApiNamespaceGuid {
+    0xa2864284,
+    0x77fe,
+    0x4336,
+    {0xa8, 0x28, 0x00, 0xfe, 0xec, 0x89, 0xeb, 0xac}
+  };
+
+  inline constexpr std::uint16_t kProtocolVersionMajor = 1;
+  inline constexpr std::uint16_t kProtocolVersionMinor = 0;
+  inline constexpr std::uint16_t kProtocolVersionPatch = 0;
+
+  inline constexpr std::uint32_t kDisplayNameChars = 32;
+  inline constexpr std::uint32_t kDefaultLeaseTimeoutMs = 10'000;
+  inline constexpr std::uint32_t kMinLeaseTimeoutMs = 3'000;
+  inline constexpr std::uint32_t kMaxLeaseTimeoutMs = 300'000;
+
+  inline constexpr std::uint32_t kMinWidth = 320;
+  inline constexpr std::uint32_t kMinHeight = 200;
+  inline constexpr std::uint32_t kMaxWidth = 16'384;
+  inline constexpr std::uint32_t kMaxHeight = 16'384;
+  inline constexpr std::uint32_t kMinRefreshRateMilliHz = 23'000;
+  inline constexpr std::uint32_t kMaxRefreshRateMilliHz = 480'000;
+
+  enum class IoctlFunction : std::uint32_t {
+    GetProtocolVersion = 0x900,
+    CreateTemporaryDisplay = 0x901,
+    RemoveTemporaryDisplay = 0x902,
+    FeedLease = 0x903,
+    ReleaseLease = 0x904,
+    QueryLease = 0x905,
+    SetPermanentDisplayCount = 0x906,
+    QueryPermanentDisplayCount = 0x907,
+  };
+
+  enum class IoctlAccess : std::uint32_t {
+    Any = 0,
+    Read = 1,
+    Write = 2,
+    ReadWrite = 3,
+  };
+
+  inline constexpr std::uint32_t ioctl_code(IoctlFunction function, IoctlAccess access) {
+    constexpr std::uint32_t file_device_unknown = 0x00000022;
+    constexpr std::uint32_t method_buffered = 0;
+    return (file_device_unknown << 16) |
+           (static_cast<std::uint32_t>(access) << 14) |
+           (static_cast<std::uint32_t>(function) << 2) |
+           method_buffered;
+  }
+
+  inline constexpr std::uint32_t kIoctlGetProtocolVersion =
+    ioctl_code(IoctlFunction::GetProtocolVersion, IoctlAccess::Any);
+  inline constexpr std::uint32_t kIoctlCreateTemporaryDisplay =
+    ioctl_code(IoctlFunction::CreateTemporaryDisplay, IoctlAccess::ReadWrite);
+  inline constexpr std::uint32_t kIoctlRemoveTemporaryDisplay =
+    ioctl_code(IoctlFunction::RemoveTemporaryDisplay, IoctlAccess::ReadWrite);
+  inline constexpr std::uint32_t kIoctlFeedLease =
+    ioctl_code(IoctlFunction::FeedLease, IoctlAccess::ReadWrite);
+  inline constexpr std::uint32_t kIoctlReleaseLease =
+    ioctl_code(IoctlFunction::ReleaseLease, IoctlAccess::ReadWrite);
+  inline constexpr std::uint32_t kIoctlQueryLease =
+    ioctl_code(IoctlFunction::QueryLease, IoctlAccess::ReadWrite);
+  inline constexpr std::uint32_t kIoctlSetPermanentDisplayCount =
+    ioctl_code(IoctlFunction::SetPermanentDisplayCount, IoctlAccess::ReadWrite);
+  inline constexpr std::uint32_t kIoctlQueryPermanentDisplayCount =
+    ioctl_code(IoctlFunction::QueryPermanentDisplayCount, IoctlAccess::ReadWrite);
+
+  struct ProtocolVersion {
+    Guid api_namespace {kApiNamespaceGuid};
+    std::uint16_t major {kProtocolVersionMajor};
+    std::uint16_t minor {kProtocolVersionMinor};
+    std::uint16_t patch {kProtocolVersionPatch};
+    std::uint16_t reserved {};
+  };
+
+  struct AdapterLuid {
+    std::uint32_t low_part {};
+    std::int32_t high_part {};
+
+    friend constexpr bool operator==(const AdapterLuid &lhs, const AdapterLuid &rhs) = default;
+  };
+
+  struct CreateTemporaryDisplayRequest {
+    Guid api_namespace {kApiNamespaceGuid};
+    std::uint64_t lease_id {};
+    std::uint64_t display_id {};
+    std::uint32_t width {};
+    std::uint32_t height {};
+    std::uint32_t refresh_rate_millihz {};
+    std::uint32_t requested_timeout_ms {};
+    char display_name[kDisplayNameChars] {};
+    std::uint32_t flags {};
+    std::uint32_t reserved {};
+  };
+
+  struct CreateTemporaryDisplayResult {
+    Guid api_namespace {kApiNamespaceGuid};
+    std::uint64_t lease_id {};
+    std::uint64_t display_id {};
+    AdapterLuid os_adapter_luid {};
+    std::uint32_t target_id {};
+    std::uint32_t connector_index {};
+    std::uint32_t effective_timeout_ms {};
+    std::uint32_t reserved {};
+  };
+
+  struct LeaseDisplayRequest {
+    Guid api_namespace {kApiNamespaceGuid};
+    std::uint64_t lease_id {};
+    std::uint64_t display_id {};
+  };
+
+  struct LeaseRequest {
+    Guid api_namespace {kApiNamespaceGuid};
+    std::uint64_t lease_id {};
+    std::uint32_t requested_timeout_ms {};
+    std::uint32_t reserved {};
+  };
+
+  struct QueryLeaseResult {
+    Guid api_namespace {kApiNamespaceGuid};
+    std::uint64_t lease_id {};
+    std::uint32_t temporary_display_count {};
+    std::uint32_t effective_timeout_ms {};
+    std::uint32_t remaining_ms {};
+    std::uint32_t lease_exists {};
+  };
+
+  struct PermanentDisplayCountRequest {
+    Guid api_namespace {kApiNamespaceGuid};
+    std::uint32_t display_count {};
+    std::uint32_t flags {};
+    std::uint32_t reserved[2] {};
+  };
+
+  struct PermanentDisplayCountResult {
+    Guid api_namespace {kApiNamespaceGuid};
+    std::uint32_t current_display_count {};
+    std::uint32_t max_display_count {};
+    std::uint32_t temporary_display_count {};
+    std::uint32_t reserved {};
+  };
+
+  enum class ValidationError {
+    None,
+    WrongApiNamespace,
+    MissingLeaseId,
+    MissingDisplayId,
+    InvalidWidth,
+    InvalidHeight,
+    InvalidRefreshRate,
+    InvalidDisplayName,
+    PermanentDisplayCountTooHigh,
+  };
+
+  struct ValidatedCreateTemporaryDisplay {
+    CreateTemporaryDisplayRequest request {};
+    std::uint32_t effective_timeout_ms {};
+    std::string_view display_name {};
+  };
+
+  bool is_valid_api_namespace(const Guid &guid);
+  std::uint32_t normalize_timeout_ms(std::uint32_t requested_timeout_ms);
+  std::string_view trim_display_name(const char (&display_name)[kDisplayNameChars]);
+  ValidationError validate_create_temporary_display(
+    const CreateTemporaryDisplayRequest &request,
+    ValidatedCreateTemporaryDisplay *validated = nullptr
+  );
+  ValidationError validate_lease_display_request(const LeaseDisplayRequest &request);
+  ValidationError validate_lease_request(const LeaseRequest &request);
+  ValidationError validate_permanent_display_count(
+    const PermanentDisplayCountRequest &request,
+    std::uint32_t max_display_count
+  );
+  const char *to_string(ValidationError error);
+
+  static_assert(std::is_standard_layout_v<Guid>);
+  static_assert(sizeof(Guid) == 16);
+  static_assert(std::is_standard_layout_v<AdapterLuid>);
+  static_assert(sizeof(AdapterLuid) == 8);
+  static_assert(sizeof(ProtocolVersion) == 24);
+  static_assert(sizeof(CreateTemporaryDisplayRequest) == 88);
+  static_assert(sizeof(CreateTemporaryDisplayResult) == 56);
+  static_assert(sizeof(LeaseDisplayRequest) == 32);
+  static_assert(sizeof(LeaseRequest) == 32);
+  static_assert(sizeof(QueryLeaseResult) == 40);
+  static_assert(sizeof(PermanentDisplayCountRequest) == 32);
+  static_assert(sizeof(PermanentDisplayCountResult) == 32);
+}  // namespace virtual_display::driver

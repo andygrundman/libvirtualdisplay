@@ -1,0 +1,88 @@
+#pragma once
+
+#include "virtual_display/driver/control_protocol.h"
+
+#include <chrono>
+#include <cstdint>
+#include <map>
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace virtual_display::driver {
+  enum class StoreError {
+    None,
+    ValidationFailed,
+    TemporaryDisplayLimitReached,
+    DisplayAlreadyExists,
+    LeaseNotFound,
+    DisplayNotFound,
+    PermanentDisplayCountTooHigh,
+  };
+
+  struct TemporaryDisplayRecord {
+    std::uint64_t lease_id {};
+    std::uint64_t display_id {};
+    std::uint32_t width {};
+    std::uint32_t height {};
+    std::uint32_t refresh_rate_millihz {};
+    std::uint32_t timeout_ms {};
+    std::uint32_t connector_index {};
+    std::string display_name {};
+    std::chrono::steady_clock::time_point expires_at {};
+  };
+
+  struct StoreResult {
+    StoreError error {StoreError::None};
+    ValidationError validation_error {ValidationError::None};
+  };
+
+  struct CreateStoreResult {
+    StoreResult status {};
+    CreateTemporaryDisplayResult result {};
+  };
+
+  class DisplayStore {
+  public:
+    explicit DisplayStore(std::uint32_t max_permanent_displays, std::uint32_t max_temporary_displays);
+
+    [[nodiscard]] std::uint32_t max_permanent_displays() const;
+    [[nodiscard]] std::uint32_t max_temporary_displays() const;
+    [[nodiscard]] std::uint32_t permanent_display_count() const;
+    [[nodiscard]] std::uint32_t temporary_display_count() const;
+
+    CreateStoreResult create_temporary_display(
+      const CreateTemporaryDisplayRequest &request,
+      std::chrono::steady_clock::time_point now
+    );
+    StoreResult remove_temporary_display(const LeaseDisplayRequest &request);
+    StoreResult feed_lease(const LeaseRequest &request, std::chrono::steady_clock::time_point now);
+    StoreResult release_lease(const LeaseRequest &request);
+    QueryLeaseResult query_lease(std::uint64_t lease_id, std::chrono::steady_clock::time_point now) const;
+    StoreResult set_permanent_display_count(const PermanentDisplayCountRequest &request);
+    PermanentDisplayCountResult query_permanent_display_count() const;
+    std::uint32_t reap_expired(std::chrono::steady_clock::time_point now);
+
+    [[nodiscard]] std::optional<TemporaryDisplayRecord> find_temporary_display(std::uint64_t display_id) const;
+    [[nodiscard]] std::vector<TemporaryDisplayRecord> temporary_displays_for_lease(std::uint64_t lease_id) const;
+    [[nodiscard]] std::vector<TemporaryDisplayRecord> expired_temporary_displays(std::chrono::steady_clock::time_point now) const;
+
+  private:
+    struct LeaseRecord {
+      std::uint32_t timeout_ms {};
+      std::chrono::steady_clock::time_point expires_at {};
+    };
+
+    std::uint32_t next_connector_index() const;
+    bool lease_has_displays(std::uint64_t lease_id) const;
+    void remove_lease_if_empty(std::uint64_t lease_id);
+
+    std::uint32_t max_permanent_displays_ {};
+    std::uint32_t max_temporary_displays_ {};
+    std::uint32_t permanent_display_count_ {};
+    std::map<std::uint64_t, TemporaryDisplayRecord> displays_by_id_ {};
+    std::map<std::uint64_t, LeaseRecord> leases_by_id_ {};
+  };
+
+  const char *to_string(StoreError error);
+}  // namespace virtual_display::driver

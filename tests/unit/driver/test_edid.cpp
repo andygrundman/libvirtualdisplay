@@ -1,0 +1,77 @@
+#include <gtest/gtest.h>
+#include "virtual_display/driver/edid.h"
+
+namespace vdd = virtual_display::driver;
+
+namespace {
+
+  vdd::EdidOptions default_options() {
+    vdd::EdidOptions options {};
+    options.manufacturer_id = {'S', 'D', 'D'};
+    options.product_code = 0x4101;
+    options.serial_number = 0x12345678;
+    options.width = 2560;
+    options.height = 1440;
+    options.refresh_rate_millihz = 120'000;
+    options.monitor_name = "Sunshine HDR";
+    options.hdr_supported = true;
+    return options;
+  }
+}  // namespace
+
+TEST(VirtualDisplayDriverEdid, BuildsParseableTwoBlockEdidWithStableIdentity) {
+  const auto edid = vdd::create_edid(default_options());
+
+  EXPECT_EQ(edid[0], std::byte {0x00});
+  EXPECT_EQ(edid[1], std::byte {0xff});
+  EXPECT_EQ(edid[126], std::byte {0x01});
+  EXPECT_EQ(edid[128], std::byte {0x02});
+  EXPECT_TRUE(vdd::has_valid_edid_checksums(edid));
+
+  EXPECT_EQ(vdd::read_manufacturer_id(edid), (std::array<char, 3> {'S', 'D', 'D'}));
+  EXPECT_EQ(vdd::read_product_code(edid), 0x4101u);
+  EXPECT_EQ(vdd::read_serial_number(edid), 0x12345678u);
+}
+
+TEST(VirtualDisplayDriverEdid, EmbedsRequestedPreferredTiming) {
+  const auto edid = vdd::create_edid(default_options());
+  const auto timing = vdd::read_preferred_timing(edid);
+
+  EXPECT_EQ(timing.horizontal_active, 2560u);
+  EXPECT_EQ(timing.vertical_active, 1440u);
+  EXPECT_GT(timing.horizontal_blanking, 0u);
+  EXPECT_GT(timing.vertical_blanking, 0u);
+  EXPECT_GT(timing.pixel_clock_10khz, 0u);
+}
+
+TEST(VirtualDisplayDriverEdid, EmbedsHdrStaticMetadataWhenRequested) {
+  const auto edid = vdd::create_edid(default_options());
+
+  EXPECT_TRUE(vdd::has_hdr_static_metadata(edid));
+}
+
+TEST(VirtualDisplayDriverEdid, EmbedsBt2020ColorimetryWhenHdrRequested) {
+  const auto edid = vdd::create_edid(default_options());
+
+  EXPECT_TRUE(vdd::has_bt2020_colorimetry(edid));
+}
+
+TEST(VirtualDisplayDriverEdid, OmitsHdrStaticMetadataWhenDisabled) {
+  auto options = default_options();
+  options.hdr_supported = false;
+
+  const auto edid = vdd::create_edid(options);
+
+  EXPECT_TRUE(vdd::has_valid_edid_checksums(edid));
+  EXPECT_FALSE(vdd::has_hdr_static_metadata(edid));
+}
+
+TEST(VirtualDisplayDriverEdid, OmitsBt2020ColorimetryWhenHdrDisabled) {
+  auto options = default_options();
+  options.hdr_supported = false;
+
+  const auto edid = vdd::create_edid(options);
+
+  EXPECT_TRUE(vdd::has_valid_edid_checksums(edid));
+  EXPECT_FALSE(vdd::has_bt2020_colorimetry(edid));
+}
