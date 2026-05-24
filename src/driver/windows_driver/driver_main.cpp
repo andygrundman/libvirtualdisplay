@@ -61,15 +61,19 @@ namespace {
     vdd::DisplayDescriptor descriptor {};
     IDDCX_MONITOR monitor {};
     std::unique_ptr<SwapChainProcessor> swapchain_processor {};
+    std::vector<std::unique_ptr<SwapChainProcessor>> retired_swapchain_processors {};
     bool permanent {};
+    bool departing {};
   };
 
   struct ModeShape {
     std::uint32_t width {1920};
     std::uint32_t height {1080};
-    std::uint32_t total_width {1920};
-    std::uint32_t total_height {1080};
-    std::uint64_t pixel_rate {1920ull * 1080ull * 60ull};
+    // Use standard 1080p CVT/CTA-ish totals for fallback paths; active-only totals
+    // have been rejected by IddCx during monitor arrival on some Windows builds.
+    std::uint32_t total_width {2200};
+    std::uint32_t total_height {1125};
+    std::uint64_t pixel_rate {148'500'000ull};
   };
 
   std::uint32_t clamp_u32(const std::uint64_t value) {
@@ -179,7 +183,9 @@ namespace {
       signal.totalSize.cx * signal.totalSize.cy,
       1
     );
-    signal.AdditionalSignalInfo.videoStandard = 0;
+    // DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY_OTHER is not accepted here; 255 is
+    // the documented "not initialized" value Windows itself uses for EDID modes.
+    signal.AdditionalSignalInfo.videoStandard = 255;
     signal.AdditionalSignalInfo.vSyncFreqDivider = monitor_mode ? 0 : 1;
     signal.scanLineOrdering = DISPLAYCONFIG_SCANLINE_ORDERING_PROGRESSIVE;
     return signal;
@@ -207,7 +213,9 @@ namespace {
     IDDCX_TARGET_MODE mode {};
     mode.Size = sizeof(mode);
     mode.TargetVideoSignalInfo.targetVideoSignalInfo = make_signal_info(shape, false);
-    mode.RequiredBandwidth = shape.pixel_rate;
+    // The virtual adapter does not publish a finite pipeline budget; a nonzero
+    // per-mode bandwidth can make Windows reject activation with ERROR_GEN_FAILURE.
+    mode.RequiredBandwidth = 0;
     return mode;
   }
 
@@ -216,7 +224,9 @@ namespace {
     IDDCX_TARGET_MODE2 mode {};
     mode.Size = sizeof(mode);
     mode.TargetVideoSignalInfo.targetVideoSignalInfo = make_signal_info(shape, false);
-    mode.RequiredBandwidth = shape.pixel_rate;
+    // The virtual adapter does not publish a finite pipeline budget; a nonzero
+    // per-mode bandwidth can make Windows reject activation with ERROR_GEN_FAILURE.
+    mode.RequiredBandwidth = 0;
     populate_rgb_wire_bits(mode.BitsPerComponent, supported_hdr_bits_per_component());
     return mode;
   }
@@ -250,6 +260,29 @@ namespace {
     output->PreferredMonitorModeIdx = 0;
     if (input->pMonitorModes && input->MonitorModeBufferInputCount >= 1) {
       input->pMonitorModes[0] = make_monitor_mode2(input->MonitorDescription);
+    }
+
+    return STATUS_SUCCESS;
+  }
+
+  NTSTATUS fill_default_monitor_modes(
+    const IDARG_IN_GETDEFAULTDESCRIPTIONMODES *input,
+    IDARG_OUT_GETDEFAULTDESCRIPTIONMODES *output
+  ) {
+    if (!input || !output) {
+      return STATUS_INVALID_PARAMETER;
+    }
+
+    output->DefaultMonitorModeBufferOutputCount = 1;
+    output->PreferredMonitorModeIdx = 0;
+    if (input->pDefaultMonitorModes && input->DefaultMonitorModeBufferInputCount >= 1) {
+      IDDCX_MONITOR_MODE mode {};
+      mode.Size = sizeof(mode);
+      mode.Origin = IDDCX_MONITOR_MODE_ORIGIN_DRIVER;
+      // Windows can request default description modes before parsing our EDID;
+      // return a conservative fallback mode so IddCx can complete arrival.
+      mode.MonitorVideoSignalInfo = make_signal_info({}, true);
+      input->pDefaultMonitorModes[0] = mode;
     }
 
     return STATUS_SUCCESS;
@@ -341,27 +374,16 @@ namespace {
 
     ~SwapChainProcessor() {
       stop();
+      delete_swapchain();
     }
 
     SwapChainProcessor(const SwapChainProcessor &) = delete;
     SwapChainProcessor &operator=(const SwapChainProcessor &) = delete;
 
     HRESULT start(const LUID &render_adapter_luid) {
-      HRESULT hr = create_dxgi_device_for_luid(render_adapter_luid, device_, dxgi_device_);
-      if (FAILED(hr)) {
-        return hr;
-      }
-
-      IDARG_IN_SWAPCHAINSETDEVICE set_device {};
-      set_device.pDevice = dxgi_device_.Get();
-      hr = IddCxSwapChainSetDevice(swapchain_, &set_device);
-      if (FAILED(hr)) {
-        return hr;
-      }
-
       try {
-        worker_ = std::thread([this]() {
-          process_frames();
+        worker_ = std::thread([this, render_adapter_luid]() {
+          process_frames(render_adapter_luid);
         });
       } catch (...) {
         return E_OUTOFMEMORY;
@@ -382,8 +404,37 @@ namespace {
       device_.Reset();
     }
 
+    void abandon_swapchain() {
+      swapchain_ = nullptr;
+    }
+
   private:
-    void process_frames() {
+    void delete_swapchain() {
+      if (swapchain_) {
+        // Match the IddCx sample by closing the swapchain when processing
+        // stops. Waiting until after monitor departure can leave us deleting
+        // a UMDF object that IddCx has already invalidated.
+        WdfObjectDelete(reinterpret_cast<WDFOBJECT>(swapchain_));
+        swapchain_ = nullptr;
+      }
+    }
+
+    void process_frames(const LUID render_adapter_luid) {
+      HRESULT hr = create_dxgi_device_for_luid(render_adapter_luid, device_, dxgi_device_);
+      if (FAILED(hr) || stop_requested_.load(std::memory_order_acquire)) {
+        return;
+      }
+
+      IDARG_IN_SWAPCHAINSETDEVICE set_device {};
+      set_device.pDevice = dxgi_device_.Get();
+      // HandleNewSwapChain still owns IddCx's internal OPM cleanup while it
+      // invokes AssignSwapChain. Setting the DXGI device from the worker thread
+      // matches the WDK sample flow and avoids re-entering that cleanup path.
+      hr = IddCxSwapChainSetDevice(swapchain_, &set_device);
+      if (FAILED(hr)) {
+        return;
+      }
+
       while (!stop_requested_.load(std::memory_order_acquire)) {
         const DWORD wait_result = WaitForSingleObject(next_surface_available_, 1000);
         if (stop_requested_.load(std::memory_order_acquire)) {
@@ -397,8 +448,19 @@ namespace {
         }
 
         for (;;) {
-          IDARG_OUT_RELEASEANDACQUIREBUFFER acquired {};
-          const HRESULT acquire_result = IddCxSwapChainReleaseAndAcquireBuffer(swapchain_, &acquired);
+          IDXGIResource *surface_ptr = nullptr;
+          HRESULT acquire_result = E_FAIL;
+          if (IDD_IS_FUNCTION_AVAILABLE(IddCxSwapChainReleaseAndAcquireBuffer2)) {
+            IDARG_IN_RELEASEANDACQUIREBUFFER2 input {};
+            input.Size = sizeof(input);
+            IDARG_OUT_RELEASEANDACQUIREBUFFER2 acquired {};
+            acquire_result = IddCxSwapChainReleaseAndAcquireBuffer2(swapchain_, &input, &acquired);
+            surface_ptr = acquired.MetaData.pSurface;
+          } else {
+            IDARG_OUT_RELEASEANDACQUIREBUFFER acquired {};
+            acquire_result = IddCxSwapChainReleaseAndAcquireBuffer(swapchain_, &acquired);
+            surface_ptr = acquired.MetaData.pSurface;
+          }
           if (acquire_result == E_PENDING) {
             break;
           }
@@ -407,7 +469,10 @@ namespace {
           }
 
           Microsoft::WRL::ComPtr<IDXGIResource> surface;
-          surface.Attach(acquired.MetaData.pSurface);
+          surface.Attach(surface_ptr);
+          // Drop the acquired surface before reporting the frame complete so
+          // IddCx can reclaim the buffer during unassign/departure.
+          surface.Reset();
           (void) IddCxSwapChainFinishedProcessingFrame(swapchain_);
 
           if (stop_requested_.load(std::memory_order_acquire)) {
@@ -415,6 +480,7 @@ namespace {
           }
         }
       }
+
     }
 
     IDDCX_SWAPCHAIN swapchain_ {};
@@ -427,7 +493,11 @@ namespace {
 
   class IddCxBackend: public vdd::DisplayDriverBackend {
   public:
-    vdd::BackendError initialize_adapter(WDFDEVICE device) {
+    NTSTATUS initialize_adapter(WDFDEVICE device) {
+      if (adapter_) {
+        return STATUS_SUCCESS;
+      }
+
       IDDCX_ENDPOINT_VERSION endpoint_version {};
       endpoint_version.Size = sizeof(endpoint_version);
       endpoint_version.MajorVer = 1;
@@ -440,9 +510,12 @@ namespace {
         IDDCX_ADAPTER_FLAGS_CAN_PROCESS_FP16 :
         IDDCX_ADAPTER_FLAGS_NONE;
       caps.MaxMonitorsSupported = kMaxPermanentDisplays + kMaxTemporaryDisplays;
-      caps.MaxDisplayPipelineRate = (std::numeric_limits<std::uint64_t>::max)();
       caps.EndPointDiagnostics.Size = sizeof(caps.EndPointDiagnostics);
-      caps.EndPointDiagnostics.GammaSupport = IDDCX_FEATURE_IMPLEMENTATION_NONE;
+      // IddCx expects gamma support to be advertised when exposing high color
+      // space; accepting SetGammaRamp below is enough for our software path.
+      caps.EndPointDiagnostics.GammaSupport = hdr_capabilities.high_color_space ?
+        IDDCX_FEATURE_IMPLEMENTATION_SOFTWARE :
+        IDDCX_FEATURE_IMPLEMENTATION_NONE;
       caps.EndPointDiagnostics.TransmissionType = IDDCX_TRANSMISSION_TYPE_WIRED_OTHER;
       caps.EndPointDiagnostics.pEndPointFriendlyName = const_cast<PWSTR>(L"Sunshine Virtual Display Adapter");
       caps.EndPointDiagnostics.pEndPointManufacturerName = const_cast<PWSTR>(L"Sunshine");
@@ -460,14 +533,16 @@ namespace {
 
       IDARG_OUT_ADAPTER_INIT adapter_out {};
       const auto status = IddCxAdapterInitAsync(&adapter_init, &adapter_out);
+      if (NT_SUCCESS(status) && adapter_out.AdapterObject) {
+        adapter_ = adapter_out.AdapterObject;
+        auto *context = GetAdapterContext(adapter_);
+        context->backend = this;
+      }
       if (!NT_SUCCESS(status)) {
-        return vdd::BackendError::Failed;
+        return status;
       }
 
-      adapter_ = adapter_out.AdapterObject;
-      auto *context = GetAdapterContext(adapter_);
-      context->backend = this;
-      return vdd::BackendError::None;
+      return STATUS_SUCCESS;
     }
 
     vdd::BackendDisplayResult arrive_temporary_display(const vdd::DisplayDescriptor &descriptor) override {
@@ -512,12 +587,18 @@ namespace {
         return STATUS_INVALID_PARAMETER;
       }
 
-      return args->AdapterInitStatus;
+      // The async callback status is the point where IddCx says monitor arrival
+      // is legal. Keep DeviceAdd successful, but block display creation until then.
+      adapter_ready_ = NT_SUCCESS(args->AdapterInitStatus);
+      return STATUS_SUCCESS;
     }
 
   private:
     vdd::BackendDisplayResult arrive_display(const vdd::DisplayDescriptor &descriptor, const bool permanent) {
       std::lock_guard lock {mutex_};
+      if (!adapter_ready_) {
+        return {vdd::BackendError::Failed, {}, 0};
+      }
       if (!adapter_ || monitors_.contains(descriptor.display_id)) {
         return {vdd::BackendError::Failed, {}, 0};
       }
@@ -531,6 +612,8 @@ namespace {
 
       IDDCX_MONITOR_INFO monitor_info {};
       monitor_info.Size = sizeof(monitor_info);
+      // Windows reports IddCx HDR-capable EDIDs as WCG-only when the target is
+      // INDIRECT_WIRED; the HDR path is classified correctly as a digital sink.
       monitor_info.MonitorType = DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI;
       monitor_info.ConnectorIndex = descriptor.connector_index;
       monitor_info.MonitorContainerId = vdd::to_windows_guid(descriptor.container_id);
@@ -570,20 +653,69 @@ namespace {
     }
 
     vdd::BackendError depart_display(const std::uint64_t display_id) {
-      std::lock_guard lock {mutex_};
-      const auto monitor = monitors_.find(display_id);
-      if (monitor == monitors_.end()) {
-        return vdd::BackendError::None;
+      IDDCX_MONITOR monitor_handle {};
+      std::unique_ptr<SwapChainProcessor> processor_to_stop;
+      std::vector<std::unique_ptr<SwapChainProcessor>> retired_processors_to_stop;
+      {
+        std::lock_guard lock {mutex_};
+        const auto monitor = monitors_.find(display_id);
+        if (monitor == monitors_.end() || monitor->second.departing) {
+          return vdd::BackendError::None;
+        }
+
+        monitor->second.departing = true;
+        monitor_handle = monitor->second.monitor;
       }
 
-      monitor->second.swapchain_processor.reset();
+      // DisplayConfig can remove a just-activated path while IddCx is still
+      // unwinding HandleNewSwapChain. Mark departure first, then let any racing
+      // assign callback see ABANDON_SWAPCHAIN before we tear down the monitor.
+      std::this_thread::sleep_for(std::chrono::milliseconds(250));
 
-      const auto status = IddCxMonitorDeparture(monitor->second.monitor);
+      {
+        std::lock_guard lock {mutex_};
+        const auto monitor = monitors_.find(display_id);
+        if (monitor == monitors_.end() || monitor->second.monitor != monitor_handle) {
+          return vdd::BackendError::None;
+        }
+        processor_to_stop = std::move(monitor->second.swapchain_processor);
+        retired_processors_to_stop = std::move(monitor->second.retired_swapchain_processors);
+      }
+
+      // Stop frame processing and close swapchain handles before departure.
+      // IddCxMonitorDeparture can invalidate active swapchain objects before
+      // our local processors leave scope during temporary-display removal.
+      if (processor_to_stop) {
+        processor_to_stop->stop();
+        processor_to_stop.reset();
+      }
+      for (auto &retired_processor: retired_processors_to_stop) {
+        if (retired_processor) {
+          retired_processor->stop();
+          retired_processor.reset();
+        }
+      }
+
+      // IddCx can synchronously or asynchronously issue swapchain callbacks
+      // during departure. Calling it outside the backend mutex keeps those
+      // callbacks from re-entering a locked monitor map.
+      const auto status = IddCxMonitorDeparture(monitor_handle);
       if (!NT_SUCCESS(status)) {
+        std::lock_guard lock {mutex_};
+        if (const auto monitor = monitors_.find(display_id); monitor != monitors_.end()) {
+          monitor->second.departing = false;
+          monitor->second.swapchain_processor = std::move(processor_to_stop);
+          monitor->second.retired_swapchain_processors = std::move(retired_processors_to_stop);
+        }
         return vdd::BackendError::Failed;
       }
 
-      monitors_.erase(monitor);
+      std::lock_guard lock {mutex_};
+      if (const auto monitor = monitors_.find(display_id);
+          monitor != monitors_.end() &&
+          monitor->second.monitor == monitor_handle) {
+        monitors_.erase(monitor);
+      }
       return vdd::BackendError::None;
     }
 
@@ -598,10 +730,14 @@ namespace {
         return STATUS_DEVICE_NOT_READY;
       }
 
-      std::lock_guard lock {mutex_};
-      const auto record = monitors_.find(context->display_id);
-      if (record == monitors_.end()) {
-        return STATUS_NOT_FOUND;
+      {
+        std::lock_guard lock {mutex_};
+        const auto record = monitors_.find(context->display_id);
+        if (record == monitors_.end() || record->second.departing) {
+          // This status is the IddCx-approved way to decline a swapchain that
+          // races with monitor teardown; generic failures trip verifier 0x700.
+          return STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN;
+        }
       }
 
       auto processor = std::make_unique<SwapChainProcessor>(args->hSwapChain, args->hNextSurfaceAvailable);
@@ -610,7 +746,30 @@ namespace {
         return STATUS_UNSUCCESSFUL;
       }
 
-      record->second.swapchain_processor = std::move(processor);
+      {
+        std::lock_guard lock {mutex_};
+        const auto record = monitors_.find(context->display_id);
+        if (record == monitors_.end()) {
+          processor->stop();
+          processor->abandon_swapchain();
+          return STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN;
+        }
+        if (!record->second.departing) {
+          auto previous_processor = std::move(record->second.swapchain_processor);
+          if (previous_processor) {
+            // IddCx rotates swapchains inside HandleNewSwapChain. Keep the old
+            // WDF object alive until monitor teardown to avoid racing that path.
+            previous_processor->stop();
+            record->second.retired_swapchain_processors.push_back(std::move(previous_processor));
+          }
+          record->second.swapchain_processor = std::move(processor);
+        } else {
+          processor->stop();
+          processor->abandon_swapchain();
+          return STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN;
+        }
+      }
+
       return STATUS_SUCCESS;
     }
 
@@ -624,19 +783,32 @@ namespace {
         return STATUS_DEVICE_NOT_READY;
       }
 
-      std::lock_guard lock {mutex_};
-      const auto record = monitors_.find(context->display_id);
-      if (record == monitors_.end()) {
-        return STATUS_NOT_FOUND;
+      std::unique_ptr<SwapChainProcessor> processor_to_stop;
+      bool erase_departing_record = false;
+      {
+        std::lock_guard lock {mutex_};
+        const auto record = monitors_.find(context->display_id);
+        if (record == monitors_.end()) {
+          // Monitor departure may remove our bookkeeping before IddCx delivers a
+          // final unassign callback. The swapchain is already gone in that case.
+          return STATUS_SUCCESS;
+        }
+
+        processor_to_stop = std::move(record->second.swapchain_processor);
+        erase_departing_record = record->second.departing;
+        if (erase_departing_record) {
+          monitors_.erase(record);
+        }
       }
 
-      record->second.swapchain_processor.reset();
+      processor_to_stop.reset();
       return STATUS_SUCCESS;
     }
 
   private:
     std::mutex mutex_ {};
     IDDCX_ADAPTER adapter_ {};
+    bool adapter_ready_ {};
     std::uint32_t permanent_display_count_ {};
     std::map<std::uint64_t, MonitorRecord> monitors_ {};
   };
@@ -769,8 +941,10 @@ namespace {
 
 extern "C" DRIVER_INITIALIZE DriverEntry;
 EVT_WDF_DRIVER_DEVICE_ADD SunshineEvtDeviceAdd;
+EVT_WDF_DEVICE_D0_ENTRY SunshineEvtDeviceD0Entry;
 EVT_IDD_CX_DEVICE_IO_CONTROL SunshineEvtIddCxDeviceIoControl;
 EVT_IDD_CX_ADAPTER_INIT_FINISHED SunshineEvtAdapterInitFinished;
+EVT_IDD_CX_MONITOR_GET_DEFAULT_DESCRIPTION_MODES SunshineEvtGetDefaultDescriptionModes;
 EVT_IDD_CX_PARSE_MONITOR_DESCRIPTION SunshineEvtParseMonitorDescription;
 EVT_IDD_CX_MONITOR_QUERY_TARGET_MODES SunshineEvtQueryTargetModes;
 EVT_IDD_CX_ADAPTER_COMMIT_MODES SunshineEvtCommitModes;
@@ -779,6 +953,7 @@ EVT_IDD_CX_ADAPTER_QUERY_TARGET_INFO SunshineEvtAdapterQueryTargetInfo;
 EVT_IDD_CX_ADAPTER_COMMIT_MODES2 SunshineEvtCommitModes2;
 EVT_IDD_CX_MONITOR_SET_DEFAULT_HDR_METADATA SunshineEvtSetDefaultHdrMetadata;
 EVT_IDD_CX_MONITOR_QUERY_TARGET_MODES2 SunshineEvtQueryTargetModes2;
+EVT_IDD_CX_MONITOR_SET_GAMMA_RAMP SunshineEvtSetGammaRamp;
 EVT_IDD_CX_MONITOR_ASSIGN_SWAPCHAIN SunshineEvtAssignSwapChain;
 EVT_IDD_CX_MONITOR_UNASSIGN_SWAPCHAIN SunshineEvtUnassignSwapChain;
 
@@ -789,10 +964,16 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING re
 }
 
 NTSTATUS SunshineEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
+  WDF_PNPPOWER_EVENT_CALLBACKS pnp_callbacks;
+  WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&pnp_callbacks);
+  pnp_callbacks.EvtDeviceD0Entry = SunshineEvtDeviceD0Entry;
+  WdfDeviceInitSetPnpPowerEventCallbacks(device_init, &pnp_callbacks);
+
   IDD_CX_CLIENT_CONFIG idd_config;
   IDD_CX_CLIENT_CONFIG_INIT(&idd_config);
   idd_config.EvtIddCxDeviceIoControl = SunshineEvtIddCxDeviceIoControl;
   idd_config.EvtIddCxAdapterInitFinished = SunshineEvtAdapterInitFinished;
+  idd_config.EvtIddCxMonitorGetDefaultDescriptionModes = SunshineEvtGetDefaultDescriptionModes;
   idd_config.EvtIddCxMonitorAssignSwapChain = SunshineEvtAssignSwapChain;
   idd_config.EvtIddCxMonitorUnassignSwapChain = SunshineEvtUnassignSwapChain;
   if (has_hdr_iddcx_ddi()) {
@@ -801,6 +982,7 @@ NTSTATUS SunshineEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
     idd_config.EvtIddCxAdapterCommitModes2 = SunshineEvtCommitModes2;
     idd_config.EvtIddCxMonitorSetDefaultHdrMetaData = SunshineEvtSetDefaultHdrMetadata;
     idd_config.EvtIddCxMonitorQueryTargetModes2 = SunshineEvtQueryTargetModes2;
+    idd_config.EvtIddCxMonitorSetGammaRamp = SunshineEvtSetGammaRamp;
   } else {
     idd_config.EvtIddCxParseMonitorDescription = SunshineEvtParseMonitorDescription;
     idd_config.EvtIddCxMonitorQueryTargetModes = SunshineEvtQueryTargetModes;
@@ -838,11 +1020,18 @@ NTSTATUS SunshineEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
     return status;
   }
 
-  if (context->state->backend.initialize_adapter(device) != vdd::BackendError::None) {
-    return STATUS_UNSUCCESSFUL;
+  return STATUS_SUCCESS;
+}
+
+NTSTATUS SunshineEvtDeviceD0Entry(WDFDEVICE device, WDF_POWER_DEVICE_STATE) {
+  auto *context = GetDeviceContext(device);
+  if (!context || !context->state) {
+    return STATUS_DEVICE_NOT_READY;
   }
 
-  return STATUS_SUCCESS;
+  // IddCx adapter init requires the WDF device to be powered. Doing this in
+  // DeviceAdd leaves the PDO installed but the adapter unusable on restart.
+  return context->state->backend.initialize_adapter(device);
 }
 
 NTSTATUS SunshineEvtAdapterInitFinished(
@@ -862,6 +1051,14 @@ NTSTATUS SunshineEvtParseMonitorDescription(
   IDARG_OUT_PARSEMONITORDESCRIPTION *output
 ) {
   return fill_monitor_modes(input, output);
+}
+
+NTSTATUS SunshineEvtGetDefaultDescriptionModes(
+  IDDCX_MONITOR,
+  const IDARG_IN_GETDEFAULTDESCRIPTIONMODES *input,
+  IDARG_OUT_GETDEFAULTDESCRIPTIONMODES *output
+) {
+  return fill_default_monitor_modes(input, output);
 }
 
 NTSTATUS SunshineEvtQueryTargetModes(
@@ -915,6 +1112,15 @@ NTSTATUS SunshineEvtSetDefaultHdrMetadata(
   const IDARG_IN_MONITOR_SET_DEFAULT_HDR_METADATA *
 ) {
   return STATUS_SUCCESS;
+}
+
+NTSTATUS SunshineEvtSetGammaRamp(
+  IDDCX_MONITOR,
+  const IDARG_IN_SET_GAMMARAMP *args
+) {
+  // The driver does not transform pixels itself, but Windows probes this DDI
+  // after we advertise software gamma support for HDR/high-color targets.
+  return args ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
 }
 
 NTSTATUS SunshineEvtQueryTargetModes2(
