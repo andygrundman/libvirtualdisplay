@@ -628,12 +628,16 @@ namespace {
 
   private:
     vdd::BackendDisplayResult arrive_display(const vdd::DisplayDescriptor &descriptor, const bool permanent) {
-      std::lock_guard lock {mutex_};
-      if (!adapter_ready_) {
-        return {vdd::BackendError::Failed, {}, 0};
-      }
-      if (!adapter_ || monitors_.contains(descriptor.display_id)) {
-        return {vdd::BackendError::Failed, {}, 0};
+      IDDCX_ADAPTER adapter {};
+      {
+        std::lock_guard lock {mutex_};
+        if (!adapter_ready_) {
+          return {vdd::BackendError::Failed, {}, 0};
+        }
+        if (!adapter_ || monitors_.contains(descriptor.display_id)) {
+          return {vdd::BackendError::Failed, {}, 0};
+        }
+        adapter = adapter_;
       }
 
       MonitorRecord record {};
@@ -660,7 +664,7 @@ namespace {
       create_args.pMonitorInfo = &monitor_info;
 
       IDARG_OUT_MONITORCREATE create_out {};
-      auto status = IddCxMonitorCreate(adapter_, &create_args, &create_out);
+      auto status = IddCxMonitorCreate(adapter, &create_args, &create_out);
       if (!NT_SUCCESS(status)) {
         return {vdd::BackendError::Failed, {}, 0};
       }
@@ -670,14 +674,31 @@ namespace {
       monitor_context->backend = this;
       monitor_context->display_id = descriptor.display_id;
 
-      IDARG_OUT_MONITORARRIVAL arrival_out {};
-      status = IddCxMonitorArrival(record.monitor, &arrival_out);
+      {
+        std::lock_guard lock {mutex_};
+        if (!adapter_ready_ || adapter_ != adapter || monitors_.contains(descriptor.display_id)) {
+          status = STATUS_DEVICE_NOT_READY;
+        } else {
+          monitors_.emplace(descriptor.display_id, std::move(record));
+          status = STATUS_SUCCESS;
+        }
+      }
       if (!NT_SUCCESS(status)) {
-        WdfObjectDelete(record.monitor);
+        WdfObjectDelete(create_out.MonitorObject);
         return {vdd::BackendError::Failed, {}, 0};
       }
 
-      monitors_.emplace(descriptor.display_id, std::move(record));
+      IDARG_OUT_MONITORARRIVAL arrival_out {};
+      status = IddCxMonitorArrival(create_out.MonitorObject, &arrival_out);
+      if (!NT_SUCCESS(status)) {
+        {
+          std::lock_guard lock {mutex_};
+          monitors_.erase(descriptor.display_id);
+        }
+        WdfObjectDelete(create_out.MonitorObject);
+        return {vdd::BackendError::Failed, {}, 0};
+      }
+
       return {
         vdd::BackendError::None,
         vdd::from_windows_luid(arrival_out.OsAdapterLuid),
