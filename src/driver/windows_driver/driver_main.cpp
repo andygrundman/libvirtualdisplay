@@ -24,6 +24,7 @@
 #include <map>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <span>
 #include <thread>
 #include <utility>
@@ -129,6 +130,34 @@ namespace {
     };
   }
 
+  ModeShape mode_shape_from_descriptor(const vdd::DisplayDescriptor &descriptor) {
+    if (descriptor.width == 0 || descriptor.height == 0 || descriptor.refresh_rate_millihz == 0) {
+      return {};
+    }
+
+    const auto horizontal_blanking = static_cast<std::uint32_t>(
+      (std::clamp)(descriptor.width / 5u, 160u, 2047u)
+    );
+    const auto vertical_blanking = static_cast<std::uint32_t>(
+      (std::clamp)(descriptor.height / 20u, 45u, 1023u)
+    );
+    const auto total_width = descriptor.width + horizontal_blanking;
+    const auto total_height = descriptor.height + vertical_blanking;
+    const auto pixel_rate =
+      static_cast<std::uint64_t>(total_width) *
+      static_cast<std::uint64_t>(total_height) *
+      static_cast<std::uint64_t>(descriptor.refresh_rate_millihz) /
+      1000ull;
+
+    return {
+      descriptor.width,
+      descriptor.height,
+      total_width,
+      total_height,
+      pixel_rate
+    };
+  }
+
   bool has_hdr_iddcx_ddi() {
     return IDD_IS_FIELD_AVAILABLE(IDD_CX_CLIENT_CONFIG, EvtIddCxAdapterQueryTargetInfo);
   }
@@ -208,8 +237,7 @@ namespace {
     return mode;
   }
 
-  IDDCX_TARGET_MODE make_target_mode(const IDDCX_MONITOR_DESCRIPTION &description) {
-    const auto shape = mode_shape_from_description(description);
+  IDDCX_TARGET_MODE make_target_mode(const ModeShape &shape) {
     IDDCX_TARGET_MODE mode {};
     mode.Size = sizeof(mode);
     mode.TargetVideoSignalInfo.targetVideoSignalInfo = make_signal_info(shape, false);
@@ -219,8 +247,7 @@ namespace {
     return mode;
   }
 
-  IDDCX_TARGET_MODE2 make_target_mode2(const IDDCX_MONITOR_DESCRIPTION &description) {
-    const auto shape = mode_shape_from_description(description);
+  IDDCX_TARGET_MODE2 make_target_mode2(const ModeShape &shape) {
     IDDCX_TARGET_MODE2 mode {};
     mode.Size = sizeof(mode);
     mode.TargetVideoSignalInfo.targetVideoSignalInfo = make_signal_info(shape, false);
@@ -290,7 +317,8 @@ namespace {
 
   NTSTATUS fill_target_modes(
     const IDARG_IN_QUERYTARGETMODES *input,
-    IDARG_OUT_QUERYTARGETMODES *output
+    IDARG_OUT_QUERYTARGETMODES *output,
+    const ModeShape *requested_shape = nullptr
   ) {
     if (!input || !output) {
       return STATUS_INVALID_PARAMETER;
@@ -298,7 +326,9 @@ namespace {
 
     output->TargetModeBufferOutputCount = 1;
     if (input->pTargetModes && input->TargetModeBufferInputCount >= 1) {
-      input->pTargetModes[0] = make_target_mode(input->MonitorDescription);
+      input->pTargetModes[0] = make_target_mode(
+        requested_shape ? *requested_shape : mode_shape_from_description(input->MonitorDescription)
+      );
     }
 
     return STATUS_SUCCESS;
@@ -306,7 +336,8 @@ namespace {
 
   NTSTATUS fill_target_modes2(
     const IDARG_IN_QUERYTARGETMODES2 *input,
-    IDARG_OUT_QUERYTARGETMODES *output
+    IDARG_OUT_QUERYTARGETMODES *output,
+    const ModeShape *requested_shape = nullptr
   ) {
     if (!input || !output) {
       return STATUS_INVALID_PARAMETER;
@@ -314,7 +345,9 @@ namespace {
 
     output->TargetModeBufferOutputCount = 1;
     if (input->pTargetModes && input->TargetModeBufferInputCount >= 1) {
-      input->pTargetModes[0] = make_target_mode2(input->MonitorDescription);
+      input->pTargetModes[0] = make_target_mode2(
+        requested_shape ? *requested_shape : mode_shape_from_description(input->MonitorDescription)
+      );
     }
 
     return STATUS_SUCCESS;
@@ -805,7 +838,52 @@ namespace {
       return STATUS_SUCCESS;
     }
 
+    NTSTATUS query_target_modes(
+      IDDCX_MONITOR monitor,
+      const IDARG_IN_QUERYTARGETMODES *input,
+      IDARG_OUT_QUERYTARGETMODES *output
+    ) {
+      const auto requested_shape = requested_mode_shape(monitor);
+      if (requested_shape.has_value()) {
+        return fill_target_modes(input, output, &*requested_shape);
+      }
+
+      return fill_target_modes(input, output);
+    }
+
+    NTSTATUS query_target_modes2(
+      IDDCX_MONITOR monitor,
+      const IDARG_IN_QUERYTARGETMODES2 *input,
+      IDARG_OUT_QUERYTARGETMODES *output
+    ) {
+      const auto requested_shape = requested_mode_shape(monitor);
+      if (requested_shape.has_value()) {
+        return fill_target_modes2(input, output, &*requested_shape);
+      }
+
+      return fill_target_modes2(input, output);
+    }
+
   private:
+    std::optional<ModeShape> requested_mode_shape(IDDCX_MONITOR monitor) {
+      if (!monitor) {
+        return std::nullopt;
+      }
+
+      auto *context = GetMonitorContext(monitor);
+      if (!context || !context->backend) {
+        return std::nullopt;
+      }
+
+      std::lock_guard lock {mutex_};
+      const auto record = monitors_.find(context->display_id);
+      if (record == monitors_.end()) {
+        return std::nullopt;
+      }
+
+      return mode_shape_from_descriptor(record->second.descriptor);
+    }
+
     std::mutex mutex_ {};
     IDDCX_ADAPTER adapter_ {};
     bool adapter_ready_ {};
@@ -1062,10 +1140,15 @@ NTSTATUS SunshineEvtGetDefaultDescriptionModes(
 }
 
 NTSTATUS SunshineEvtQueryTargetModes(
-  IDDCX_MONITOR,
+  IDDCX_MONITOR monitor,
   const IDARG_IN_QUERYTARGETMODES *input,
   IDARG_OUT_QUERYTARGETMODES *output
 ) {
+  auto *context = GetMonitorContext(monitor);
+  if (context && context->backend) {
+    return context->backend->query_target_modes(monitor, input, output);
+  }
+
   return fill_target_modes(input, output);
 }
 
@@ -1124,10 +1207,15 @@ NTSTATUS SunshineEvtSetGammaRamp(
 }
 
 NTSTATUS SunshineEvtQueryTargetModes2(
-  IDDCX_MONITOR,
+  IDDCX_MONITOR monitor,
   const IDARG_IN_QUERYTARGETMODES2 *input,
   IDARG_OUT_QUERYTARGETMODES *output
 ) {
+  auto *context = GetMonitorContext(monitor);
+  if (context && context->backend) {
+    return context->backend->query_target_modes2(monitor, input, output);
+  }
+
   return fill_target_modes2(input, output);
 }
 

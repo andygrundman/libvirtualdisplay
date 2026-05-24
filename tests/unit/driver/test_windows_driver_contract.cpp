@@ -94,3 +94,28 @@ TEST(VirtualDisplayWindowsDriverContract, SetsSwapChainDeviceFromProcessingThrea
   ASSERT_NE(set_device, std::string::npos);
   EXPECT_NE(source.find("HandleNewSwapChain still owns IddCx's internal OPM cleanup", process_frames), std::string::npos);
 }
+
+TEST(VirtualDisplayWindowsDriverContract, TargetModesUseRequestedDescriptorTiming) {
+  const auto source = read_windows_driver_source();
+
+  EXPECT_NE(source.find("ModeShape mode_shape_from_descriptor(const vdd::DisplayDescriptor &descriptor)"), std::string::npos);
+  EXPECT_NE(source.find("descriptor.refresh_rate_millihz"), std::string::npos);
+
+  const auto query_target_modes = source.find("NTSTATUS query_target_modes(");
+  ASSERT_NE(query_target_modes, std::string::npos);
+
+  const auto requested_shape = source.find("requested_mode_shape(monitor)", query_target_modes);
+  ASSERT_NE(requested_shape, std::string::npos);
+
+  const auto fill_with_requested_shape = source.find("fill_target_modes(input, output, &*requested_shape)", requested_shape);
+  ASSERT_NE(fill_with_requested_shape, std::string::npos);
+
+  const auto query_target_modes2 = source.find("NTSTATUS query_target_modes2(");
+  ASSERT_NE(query_target_modes2, std::string::npos);
+
+  const auto requested_shape2 = source.find("requested_mode_shape(monitor)", query_target_modes2);
+  ASSERT_NE(requested_shape2, std::string::npos);
+
+  const auto fill_with_requested_shape2 = source.find("fill_target_modes2(input, output, &*requested_shape)", requested_shape2);
+  ASSERT_NE(fill_with_requested_shape2, std::string::npos);
+}

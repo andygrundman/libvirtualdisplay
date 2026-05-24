@@ -44,6 +44,27 @@ TEST(VirtualDisplayDriverEdid, EmbedsRequestedPreferredTiming) {
   EXPECT_GT(timing.pixel_clock_10khz, 0u);
 }
 
+TEST(VirtualDisplayDriverEdid, BaseDetailedTimingCannotCarryFourKHighRefreshClock) {
+  auto options = default_options();
+  options.width = 3840;
+  options.height = 2160;
+  options.refresh_rate_millihz = 120'000;
+
+  const auto edid = vdd::create_edid(options);
+  const auto timing = vdd::read_preferred_timing(edid);
+
+  EXPECT_EQ(timing.horizontal_active, 3840u);
+  EXPECT_EQ(timing.vertical_active, 2160u);
+  EXPECT_EQ(timing.pixel_clock_10khz, 0xffffu);
+
+  const auto total_pixels =
+    static_cast<std::uint64_t>(timing.horizontal_active + timing.horizontal_blanking) *
+    static_cast<std::uint64_t>(timing.vertical_active + timing.vertical_blanking);
+  const auto effective_millihz = static_cast<std::uint64_t>(timing.pixel_clock_10khz) * 10'000'000ull / total_pixels;
+
+  EXPECT_LT(effective_millihz, 120'000u);
+}
+
 TEST(VirtualDisplayDriverEdid, EmbedsHdrStaticMetadataWhenRequested) {
   const auto edid = vdd::create_edid(default_options());
 
