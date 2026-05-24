@@ -249,11 +249,19 @@ namespace virtual_display::driver {
   }
 
   std::uint32_t DisplayStore::next_connector_index() const {
-    std::uint32_t connector_index = max_permanent_displays_;
-    for (const auto &[_, display]: displays_by_id_) {
-      if (display.connector_index == connector_index) {
-        ++connector_index;
+    // Connector index maps directly to the Windows target id. When no permanent
+    // displays are active, temporary displays must be allowed to use connector 0
+    // or Windows may create a target that cannot be activated for the desktop.
+    std::uint32_t connector_index = permanent_display_count_;
+    while (connector_index < max_permanent_displays_ + max_temporary_displays_) {
+      const auto in_use = std::any_of(displays_by_id_.begin(), displays_by_id_.end(), [connector_index](const auto &entry) {
+        return entry.second.connector_index == connector_index;
+      });
+      if (!in_use) {
+        return connector_index;
       }
+
+      ++connector_index;
     }
 
     return connector_index;

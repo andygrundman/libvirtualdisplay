@@ -68,11 +68,11 @@ TEST(VirtualDisplayDriverController, CreateTemporaryDisplayArrivesBackendAndRetu
   EXPECT_TRUE(created.status.ok());
   EXPECT_EQ(created.result.os_adapter_luid, (vdd::AdapterLuid {44, 2}));
   EXPECT_EQ(created.result.target_id, 7u);
-  EXPECT_EQ(created.result.connector_index, 4u);
+  EXPECT_EQ(created.result.connector_index, 0u);
   ASSERT_EQ(backend.arrived.size(), 1u);
   EXPECT_EQ(backend.arrived[0].display_id, 0x12345678u);
   EXPECT_EQ(backend.arrived[0].container_id, vdd::container_guid_from_display_id(0x12345678u));
-  EXPECT_EQ(backend.arrived[0].connector_index, 4u);
+  EXPECT_EQ(backend.arrived[0].connector_index, 0u);
   EXPECT_EQ(backend.arrived[0].width, 2560u);
   EXPECT_TRUE(vdd::has_valid_edid_checksums(backend.arrived[0].edid));
   EXPECT_TRUE(vdd::has_hdr_static_metadata(backend.arrived[0].edid));

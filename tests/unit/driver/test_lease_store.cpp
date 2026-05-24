@@ -32,7 +32,7 @@ TEST(VirtualDisplayDriverLeaseStore, CreatesTemporaryDisplayWithConnectorIndex) 
   EXPECT_EQ(created.status.error, vdd::StoreError::None);
   EXPECT_EQ(created.result.lease_id, 100u);
   EXPECT_EQ(created.result.display_id, 200u);
-  EXPECT_EQ(created.result.connector_index, 2u);
+  EXPECT_EQ(created.result.connector_index, 0u);
   EXPECT_EQ(created.result.effective_timeout_ms, 30'000u);
   EXPECT_EQ(store.temporary_display_count(), 1u);
 
@@ -132,21 +132,24 @@ TEST(VirtualDisplayDriverLeaseStore, RemoveRejectsWrongLeaseAndMissingDisplay) {
   EXPECT_EQ(store.query_lease(100, now).lease_exists, 1u);
 }
 
-TEST(VirtualDisplayDriverLeaseStore, TemporaryConnectorIndexesStayAfterPermanentRange) {
+TEST(VirtualDisplayDriverLeaseStore, TemporaryConnectorIndexesStartAfterActivePermanentRange) {
   vdd::DisplayStore store {3, 4};
   const auto now = std::chrono::steady_clock::now();
+
+  vdd::PermanentDisplayCountRequest request {};
+  request.display_count = 2;
+  EXPECT_EQ(store.set_permanent_display_count(request).error, vdd::StoreError::None);
 
   ASSERT_EQ(store.create_temporary_display(make_create_request(1, 10), now).status.error, vdd::StoreError::None);
   ASSERT_EQ(store.create_temporary_display(make_create_request(2, 20), now).status.error, vdd::StoreError::None);
 
-  EXPECT_EQ(store.find_temporary_display(10)->connector_index, 3u);
-  EXPECT_EQ(store.find_temporary_display(20)->connector_index, 4u);
+  EXPECT_EQ(store.find_temporary_display(10)->connector_index, 2u);
+  EXPECT_EQ(store.find_temporary_display(20)->connector_index, 3u);
 
-  vdd::PermanentDisplayCountRequest request {};
   request.display_count = 0;
   EXPECT_EQ(store.set_permanent_display_count(request).error, vdd::StoreError::None);
-  EXPECT_EQ(store.find_temporary_display(10)->connector_index, 3u);
-  EXPECT_EQ(store.find_temporary_display(20)->connector_index, 4u);
+  EXPECT_EQ(store.find_temporary_display(10)->connector_index, 2u);
+  EXPECT_EQ(store.find_temporary_display(20)->connector_index, 3u);
 }
 
 TEST(VirtualDisplayDriverLeaseStore, ReusesLowestAvailableTemporaryConnectorIndex) {
@@ -164,7 +167,7 @@ TEST(VirtualDisplayDriverLeaseStore, ReusesLowestAvailableTemporaryConnectorInde
   ASSERT_EQ(store.remove_temporary_display(remove).error, vdd::StoreError::None);
 
   ASSERT_EQ(store.create_temporary_display(make_create_request(3, 30), now).status.error, vdd::StoreError::None);
-  EXPECT_EQ(store.find_temporary_display(30)->connector_index, 2u);
+  EXPECT_EQ(store.find_temporary_display(30)->connector_index, 0u);
 }
 
 TEST(VirtualDisplayDriverLeaseStore, ReleasesWholeLease) {
