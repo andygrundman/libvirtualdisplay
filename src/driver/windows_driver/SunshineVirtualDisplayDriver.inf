@@ -5,9 +5,12 @@
 Signature="$WINDOWS NT$"
 Class=Display
 ClassGuid={4d36e968-e325-11ce-bfc1-08002be10318}
+; Indirect display drivers need the WDDM display class version so Windows
+; publishes arrived monitors into the desktop display topology.
+ClassVer=2.0
 Provider=%ManufacturerName%
 CatalogFile=SunshineVirtualDisplayDriver.cat
-DriverVer=05/24/2026,0.1.0.0
+DriverVer=05/24/2026,0.1.0.13
 PnpLockdown=1
 
 [Manufacturer]
@@ -32,7 +35,9 @@ CopyFiles=UMDriverCopy
 AddReg=Device_Install_Hw_AddReg
 
 [Device_Install_Hw_AddReg]
+HKR,,"UpperFilters",0x00010000,"IndirectKmd"
 HKR,"WUDF","DeviceGroupId",0x00000000,"SunshineVirtualDisplayGroup"
+HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;WD)"
 
 [Device_Install.NT.Interfaces]
 AddInterface={5f894d6c-3a69-48a2-86ef-e4c671932d63},,ControlInterface
@@ -56,11 +61,12 @@ ServiceBinary=%12%\WUDFRd.sys
 [Device_Install.NT.Wdf]
 UmdfService=SunshineVirtualDisplayDriver,SunshineVirtualDisplayDriver_Install
 UmdfServiceOrder=SunshineVirtualDisplayDriver
-UmdfExtensions=IddCx0102
+UmdfKernelModeClientPolicy=AllowKernelModeClients
 
 [SunshineVirtualDisplayDriver_Install]
-UmdfLibraryVersion=2.25
+UmdfLibraryVersion=2.25.0
 ServiceBinary=%12%\UMDF\SunshineVirtualDisplayDriver.dll
+UmdfExtensions=IddCx0102
 
 [UMDriverCopy]
 SunshineVirtualDisplayDriver.dll

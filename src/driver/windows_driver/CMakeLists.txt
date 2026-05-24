@@ -17,6 +17,7 @@ endif()
 set(SUNSHINE_DRIVER_WDF_VERSION "2.25" CACHE STRING "UMDF version for the Sunshine virtual display driver" FORCE)
 set(SUNSHINE_DRIVER_IDDCX_VERSION "1.10" CACHE STRING "IddCx include/library version for the Sunshine virtual display driver" FORCE)
 set(SUNSHINE_DRIVER_ARCH "${CMAKE_VS_PLATFORM_NAME}")
+set(SUNSHINE_DRIVER_INF "${CMAKE_CURRENT_SOURCE_DIR}/SunshineVirtualDisplayDriver.inf")
 
 if(NOT SUNSHINE_DRIVER_ARCH)
     if(CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -33,7 +34,7 @@ endif()
 
 add_library(${SUNSHINE_DRIVER_TARGET} SHARED
         driver_main.cpp
-        SunshineVirtualDisplayDriver.inf)
+        "${SUNSHINE_DRIVER_INF}")
 
 target_link_libraries(${SUNSHINE_DRIVER_TARGET}
         PRIVATE
@@ -72,7 +73,13 @@ set_target_properties(${SUNSHINE_DRIVER_TARGET}
         OUTPUT_NAME "SunshineVirtualDisplayDriver"
         SUFFIX ".dll")
 
-add_custom_command(TARGET ${SUNSHINE_DRIVER_TARGET} POST_BUILD
+# Keep the packaged INF as a real build output. A POST_BUILD-only copy does not
+# run when only the INF changes, which can leave pnputil installing a stale driver package.
+set(SUNSHINE_DRIVER_PACKAGED_INF "${CMAKE_CURRENT_BINARY_DIR}/SunshineVirtualDisplayDriver.inf")
+add_custom_command(OUTPUT "${SUNSHINE_DRIVER_PACKAGED_INF}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/SunshineVirtualDisplayDriver.inf"
-        "$<TARGET_FILE_DIR:${SUNSHINE_DRIVER_TARGET}>/SunshineVirtualDisplayDriver.inf")
+        "${SUNSHINE_DRIVER_INF}"
+        "${SUNSHINE_DRIVER_PACKAGED_INF}"
+        DEPENDS "${SUNSHINE_DRIVER_INF}")
+add_custom_target(${SUNSHINE_DRIVER_TARGET}PackageFiles DEPENDS "${SUNSHINE_DRIVER_PACKAGED_INF}")
+add_dependencies(${SUNSHINE_DRIVER_TARGET} ${SUNSHINE_DRIVER_TARGET}PackageFiles)
