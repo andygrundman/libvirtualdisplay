@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <functional>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -473,7 +474,8 @@ namespace {
     const vdd::AdapterLuid &adapter_luid,
     const std::uint32_t target_id,
     const bool require_hdr_enabled,
-    LONG *native_error = nullptr
+    LONG *native_error = nullptr,
+    const std::function<void()> &keep_alive = {}
   ) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
     std::optional<AdvancedColorInfo> latest;
@@ -490,6 +492,9 @@ namespace {
         if (!require_hdr_enabled || hdr_ready) {
           return latest;
         }
+      }
+      if (keep_alive) {
+        keep_alive();
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     } while (std::chrono::steady_clock::now() < deadline);
@@ -634,7 +639,8 @@ namespace {
   std::optional<DisplayPathInfo> wait_for_display_path(
     const vdd::AdapterLuid &adapter_luid,
     const std::uint32_t target_id,
-    const bool present
+    const bool present,
+    const std::function<void()> &keep_alive = {}
   ) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     std::optional<DisplayPathInfo> latest;
@@ -642,6 +648,9 @@ namespace {
       latest = query_display_path(adapter_luid, target_id);
       if (present == latest.has_value()) {
         return latest;
+      }
+      if (keep_alive) {
+        keep_alive();
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     } while (std::chrono::steady_clock::now() < deadline);
@@ -731,7 +740,8 @@ namespace {
     const std::uint32_t target_id,
     const std::uint32_t width,
     const std::uint32_t height,
-    const std::uint32_t refresh_hz
+    const std::uint32_t refresh_hz,
+    const std::function<void()> &keep_alive = {}
   ) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     bool mode_set_attempted = false;
@@ -748,6 +758,9 @@ namespace {
         (void) set_active_display_mode(adapter_luid, target_id, width, height, refresh_hz);
       }
 
+      if (keep_alive) {
+        keep_alive();
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     } while (std::chrono::steady_clock::now() < deadline);
 
@@ -1258,21 +1271,24 @@ int main(const int argc, char **argv) {
       return client.remove_temporary_display({vdd::kApiNamespaceGuid, request.lease_id, request.display_id});
     };
 
-    if (!activate_target_path(created.value.os_adapter_luid, created.value.target_id, width, height, refresh_hz)) {
-      (void) apply_extended_topology();
-    }
-    if (!ensure_active_display_mode(created.value.os_adapter_luid, created.value.target_id, width, height, refresh_hz)) {
-      (void) cleanup_created();
-      std::cerr << "QA display resolution mismatch after activation\n";
-      return 1;
-    }
-
     const vdd::LeaseRequest lease_request {
       vdd::kApiNamespaceGuid,
       request.lease_id,
       request.requested_timeout_ms,
       0
     };
+    const auto feed_qa_lease = [&]() {
+      (void) client.feed_lease(lease_request);
+    };
+
+    if (!activate_target_path(created.value.os_adapter_luid, created.value.target_id, width, height, refresh_hz)) {
+      (void) apply_extended_topology();
+    }
+    if (!ensure_active_display_mode(created.value.os_adapter_luid, created.value.target_id, width, height, refresh_hz, feed_qa_lease)) {
+      (void) cleanup_created();
+      std::cerr << "QA display resolution mismatch after activation\n";
+      return 1;
+    }
 
     const auto queried = client.query_lease(lease_request);
     if (!queried.ok()) {
@@ -1285,7 +1301,10 @@ int main(const int argc, char **argv) {
       return 1;
     }
 
-    const auto path = wait_for_display_path(created.value.os_adapter_luid, created.value.target_id, true);
+    // This QA path intentionally uses very short leases. Keep the display alive
+    // while Windows converges on topology/HDR, then stop feeding below to verify expiry.
+    feed_qa_lease();
+    const auto path = wait_for_display_path(created.value.os_adapter_luid, created.value.target_id, true, feed_qa_lease);
     if (!path || !path->active) {
       (void) cleanup_created();
       std::cerr << "created display did not appear in active Windows display paths\n";
@@ -1304,7 +1323,8 @@ int main(const int argc, char **argv) {
       created.value.os_adapter_luid,
       created.value.target_id,
       false,
-      &advanced_color_error
+      &advanced_color_error,
+      feed_qa_lease
     );
     if (!before_color) {
       (void) cleanup_created();
@@ -1318,7 +1338,8 @@ int main(const int argc, char **argv) {
       created.value.os_adapter_luid,
       created.value.target_id,
       true,
-      &advanced_color_error
+      &advanced_color_error,
+      feed_qa_lease
     );
     if (!after_color) {
       (void) cleanup_created();

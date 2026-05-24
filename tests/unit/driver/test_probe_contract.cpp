@@ -85,6 +85,16 @@ TEST(VirtualDisplayProbeContract, ActiveDisplayChecksApplyRequestedResolution) {
   expect_contains(source, "QA display resolution mismatch after activation");
 }
 
+TEST(VirtualDisplayProbeContract, TemporaryLeaseQaFeedsWhileValidatingHdr) {
+  const auto source = read_probe_source();
+
+  expect_contains(source, "const auto feed_qa_lease = [&]() {");
+  expect_contains(source, "client.feed_lease(lease_request)");
+  expect_contains(source, "This QA path intentionally uses very short leases");
+  expect_contains(source, "wait_for_advanced_color(");
+  expect_contains(source, "feed_qa_lease");
+}
+
 TEST(VirtualDisplayProbeContract, MultiTemporaryLeaseQaCreatesAndExpiresSeveralDisplays) {
   const auto source = read_probe_source();
 
