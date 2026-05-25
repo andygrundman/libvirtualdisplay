@@ -183,14 +183,19 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   const auto cmake = read_driver_cmake();
 
   expect_contains(cmake, "add_executable(virtualdisplay_broker");
-  expect_contains(cmake, "target_link_libraries(virtualdisplay_broker PRIVATE libvirtualdisplay::driver advapi32)");
+  expect_contains(cmake, "target_link_libraries(virtualdisplay_broker PRIVATE libvirtualdisplay::driver advapi32 userenv wtsapi32)");
   expect_contains(source, "kPipeName[] = L\"\\\\\\\\.\\\\pipe\\\\SunshineVirtualDisplayBroker\"");
   expect_contains(source, "kPipeSecurityDescriptor[] = L\"D:P(A;;GA;;;SY)(A;;GA;;;BA)\"");
+  expect_contains(source, "kSessionHelperExecutable[] = L\"virtualdisplay_probe.exe\"");
   expect_contains(source, "ConvertStringSecurityDescriptorToSecurityDescriptorW");
   expect_contains(source, "CreateNamedPipeW");
   expect_contains(source, "open_first_control_device()");
   expect_contains(source, "query_display_state()");
   expect_contains(source, "query_display_manifest()");
+  expect_contains(source, "launch_console_helper(L\"--diagnose\")");
+  expect_contains(source, "WTSGetActiveConsoleSessionId()");
+  expect_contains(source, "WTSQueryUserToken(session_id");
+  expect_contains(source, "CreateProcessAsUserW");
   expect_contains(source, "RegisterServiceCtrlHandlerW");
   expect_contains(source, "StartServiceCtrlDispatcherW");
   expect_contains(source, "--run-console");

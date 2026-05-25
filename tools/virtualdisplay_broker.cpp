@@ -19,6 +19,8 @@
   #endif
   #include <Windows.h>
   #include <sddl.h>
+  #include <userenv.h>
+  #include <wtsapi32.h>
 #endif
 
 namespace vdd = virtual_display::driver;
@@ -27,6 +29,7 @@ namespace {
   constexpr wchar_t kServiceName[] = L"SunshineVirtualDisplayBroker";
   constexpr wchar_t kPipeName[] = L"\\\\.\\pipe\\SunshineVirtualDisplayBroker";
   constexpr wchar_t kPipeSecurityDescriptor[] = L"D:P(A;;GA;;;SY)(A;;GA;;;BA)";
+  constexpr wchar_t kSessionHelperExecutable[] = L"virtualdisplay_probe.exe";
   constexpr DWORD kPipeBufferBytes = 4096;
 
   void print_usage() {
@@ -74,6 +77,68 @@ namespace {
 
     LocalMemory(const LocalMemory &) = delete;
     LocalMemory &operator=(const LocalMemory &) = delete;
+
+    [[nodiscard]] void *get() const {
+      return value_;
+    }
+
+  private:
+    void *value_ {};
+  };
+
+  class ScopedHandle {
+  public:
+    ScopedHandle() = default;
+
+    explicit ScopedHandle(HANDLE value):
+        value_ {value} {
+    }
+
+    ~ScopedHandle() {
+      reset();
+    }
+
+    ScopedHandle(const ScopedHandle &) = delete;
+    ScopedHandle &operator=(const ScopedHandle &) = delete;
+
+    [[nodiscard]] HANDLE get() const {
+      return value_;
+    }
+
+    [[nodiscard]] HANDLE *put() {
+      reset();
+      return &value_;
+    }
+
+    [[nodiscard]] bool valid() const {
+      return value_ && value_ != INVALID_HANDLE_VALUE;
+    }
+
+    void reset(HANDLE value = nullptr) {
+      if (valid()) {
+        CloseHandle(value_);
+      }
+      value_ = value;
+    }
+
+  private:
+    HANDLE value_ {};
+  };
+
+  class EnvironmentBlock {
+  public:
+    explicit EnvironmentBlock(void *value):
+        value_ {value} {
+    }
+
+    ~EnvironmentBlock() {
+      if (value_) {
+        DestroyEnvironmentBlock(value_);
+      }
+    }
+
+    EnvironmentBlock(const EnvironmentBlock &) = delete;
+    EnvironmentBlock &operator=(const EnvironmentBlock &) = delete;
 
     [[nodiscard]] void *get() const {
       return value_;
@@ -135,6 +200,105 @@ namespace {
     (void) SetServiceStatus(g_context.service_status_handle, &g_context.service_status);
   }
 
+  std::wstring executable_directory() {
+    wchar_t path[MAX_PATH] {};
+    const DWORD length = GetModuleFileNameW(nullptr, path, static_cast<DWORD>(MAX_PATH));
+    if (length == 0 || length >= MAX_PATH) {
+      return {};
+    }
+
+    std::wstring value {path, length};
+    const auto slash = value.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) {
+      return {};
+    }
+    value.resize(slash);
+    return value;
+  }
+
+  std::wstring quote_argument(const std::wstring &value) {
+    std::wstring quoted {L"\""};
+    for (wchar_t ch: value) {
+      if (ch == L'"') {
+        quoted += L'\\';
+      }
+      quoted += ch;
+    }
+    quoted += L'"';
+    return quoted;
+  }
+
+  DWORD launch_console_helper(const std::wstring &arguments) {
+    const DWORD session_id = WTSGetActiveConsoleSessionId();
+    if (session_id == 0xffffffffu) {
+      return ERROR_NO_TOKEN;
+    }
+
+    ScopedHandle impersonation_token;
+    if (!WTSQueryUserToken(session_id, impersonation_token.put())) {
+      return GetLastError();
+    }
+
+    ScopedHandle primary_token;
+    if (!DuplicateTokenEx(
+          impersonation_token.get(),
+          TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID,
+          nullptr,
+          SecurityImpersonation,
+          TokenPrimary,
+          primary_token.put()
+        )) {
+      return GetLastError();
+    }
+
+    void *environment = nullptr;
+    if (!CreateEnvironmentBlock(&environment, primary_token.get(), FALSE)) {
+      return GetLastError();
+    }
+    EnvironmentBlock environment_block {environment};
+
+    const auto directory = executable_directory();
+    if (directory.empty()) {
+      return ERROR_FILE_NOT_FOUND;
+    }
+
+    const std::wstring helper_path = directory + L"\\" + kSessionHelperExecutable;
+    std::wstring command_line = quote_argument(helper_path);
+    if (!arguments.empty()) {
+      command_line += L" ";
+      command_line += arguments;
+    }
+
+    STARTUPINFOW startup {};
+    startup.cb = sizeof(startup);
+    startup.lpDesktop = const_cast<LPWSTR>(L"winsta0\\default");
+    PROCESS_INFORMATION process {};
+    if (!CreateProcessAsUserW(
+          primary_token.get(),
+          helper_path.c_str(),
+          command_line.data(),
+          nullptr,
+          nullptr,
+          FALSE,
+          CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
+          environment_block.get(),
+          directory.c_str(),
+          &startup,
+          &process
+        )) {
+      return GetLastError();
+    }
+
+    CloseHandle(process.hThread);
+    WaitForSingleObject(process.hProcess, INFINITE);
+    DWORD exit_code = ERROR_SUCCESS;
+    if (!GetExitCodeProcess(process.hProcess, &exit_code)) {
+      exit_code = GetLastError();
+    }
+    CloseHandle(process.hProcess);
+    return exit_code;
+  }
+
   std::string handle_command(vdd::ControlClient &client, const std::string_view command) {
     if (command == "protocol") {
       const auto result = client.query_protocol_version();
@@ -164,6 +328,14 @@ namespace {
       return "ok version=" + std::to_string(result.value.version) +
              " profiles=" + std::to_string(result.value.profile_count) +
              " max_profiles=" + std::to_string(result.value.max_profile_count) + "\n";
+    }
+
+    if (command == "helper-diagnose") {
+      const DWORD helper_result = launch_console_helper(L"--diagnose");
+      if (helper_result != ERROR_SUCCESS) {
+        return "error helper_result=" + std::to_string(helper_result) + "\n";
+      }
+      return "ok helper_result=0\n";
     }
 
     return "error unknown_command\n";
