@@ -10,6 +10,7 @@
 #include <avrt.h>
 #include <d3d11.h>
 #include <dxgi1_4.h>
+#include <TraceLoggingProvider.h>
 #include <wdf.h>
 #include <IddCx.h>
 #include <wrl/client.h>
@@ -34,6 +35,12 @@
 #include <vector>
 
 namespace vdd = virtual_display::driver;
+
+TRACELOGGING_DEFINE_PROVIDER(
+  g_trace_provider,
+  "Sunshine.VirtualDisplayDriver",
+  (0x3d5d3bd9, 0x8500, 0x4523, 0x93, 0x34, 0x58, 0x3f, 0x4b, 0x5e, 0x6f, 0x80)
+);
 
 namespace {
   constexpr std::uint32_t kMaxPermanentDisplays = 4;
@@ -870,8 +877,18 @@ namespace {
       }
     }
 
+    TraceLoggingWrite(
+      g_trace_provider,
+      "RenderDeviceFallback",
+      TraceLoggingUInt32(static_cast<std::uint32_t>(hr), "AdapterHResult")
+    );
     hr = create_device(nullptr, D3D_DRIVER_TYPE_WARP);
     if (FAILED(hr)) {
+      TraceLoggingWrite(
+        g_trace_provider,
+        "RenderDeviceFallbackFailed",
+        TraceLoggingUInt32(static_cast<std::uint32_t>(hr), "HResult")
+      );
       return hr;
     }
 
@@ -978,10 +995,23 @@ namespace {
 
       HRESULT hr = create_dxgi_device_for_luid(render_adapter_luid, device_, dxgi_device_);
       if (FAILED(hr)) {
+        TraceLoggingWrite(
+          g_trace_provider,
+          "RenderDeviceCreateFailed",
+          TraceLoggingUInt32(static_cast<std::uint32_t>(hr), "HResult")
+        );
         return hr;
       }
 
-      return assign_swapchain_device();
+      hr = assign_swapchain_device();
+      if (FAILED(hr)) {
+        TraceLoggingWrite(
+          g_trace_provider,
+          "SwapChainSetDeviceFailed",
+          TraceLoggingUInt32(static_cast<std::uint32_t>(hr), "HResult")
+        );
+      }
+      return hr;
     }
 
     void process_frames(const LUID render_adapter_luid) {
@@ -1023,6 +1053,11 @@ namespace {
           }
           if (FAILED(acquire_result)) {
             if (is_device_lost_hresult(acquire_result)) {
+              TraceLoggingWrite(
+                g_trace_provider,
+                "RenderDeviceLost",
+                TraceLoggingUInt32(static_cast<std::uint32_t>(acquire_result), "HResult")
+              );
               if (FAILED(reset_render_device(render_adapter_luid))) {
                 return;
               }
@@ -1619,6 +1654,7 @@ namespace {
 }  // namespace
 
 extern "C" DRIVER_INITIALIZE DriverEntry;
+EVT_WDF_DRIVER_UNLOAD SunshineEvtDriverUnload;
 EVT_WDF_DRIVER_DEVICE_ADD SunshineEvtDeviceAdd;
 EVT_WDF_DEVICE_D0_ENTRY SunshineEvtDeviceD0Entry;
 EVT_IDD_CX_DEVICE_IO_CONTROL SunshineEvtIddCxDeviceIoControl;
@@ -1637,12 +1673,39 @@ EVT_IDD_CX_MONITOR_ASSIGN_SWAPCHAIN SunshineEvtAssignSwapChain;
 EVT_IDD_CX_MONITOR_UNASSIGN_SWAPCHAIN SunshineEvtUnassignSwapChain;
 
 extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING registry_path) {
+  TraceLoggingRegister(g_trace_provider);
+  TraceLoggingWrite(g_trace_provider, "DriverEntry");
+
   WDF_DRIVER_CONFIG config;
   WDF_DRIVER_CONFIG_INIT(&config, SunshineEvtDeviceAdd);
-  return WdfDriverCreate(driver_object, registry_path, WDF_NO_OBJECT_ATTRIBUTES, &config, WDF_NO_HANDLE);
+  config.EvtDriverUnload = SunshineEvtDriverUnload;
+
+  const NTSTATUS status = WdfDriverCreate(
+    driver_object,
+    registry_path,
+    WDF_NO_OBJECT_ATTRIBUTES,
+    &config,
+    WDF_NO_HANDLE
+  );
+  TraceLoggingWrite(
+    g_trace_provider,
+    "DriverEntryResult",
+    TraceLoggingInt32(status, "Status")
+  );
+  if (!NT_SUCCESS(status)) {
+    TraceLoggingUnregister(g_trace_provider);
+  }
+  return status;
+}
+
+void SunshineEvtDriverUnload(WDFDRIVER) {
+  TraceLoggingWrite(g_trace_provider, "DriverUnload");
+  TraceLoggingUnregister(g_trace_provider);
 }
 
 NTSTATUS SunshineEvtDeviceAdd(WDFDRIVER driver, PWDFDEVICE_INIT device_init) {
+  TraceLoggingWrite(g_trace_provider, "DeviceAdd");
+
   WDF_PNPPOWER_EVENT_CALLBACKS pnp_callbacks;
   WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&pnp_callbacks);
   pnp_callbacks.EvtDeviceD0Entry = SunshineEvtDeviceD0Entry;
@@ -1670,6 +1733,7 @@ NTSTATUS SunshineEvtDeviceAdd(WDFDRIVER driver, PWDFDEVICE_INIT device_init) {
 
   NTSTATUS status = IddCxDeviceInitConfig(device_init, &idd_config);
   if (!NT_SUCCESS(status)) {
+    TraceLoggingWrite(g_trace_provider, "DeviceAddFailed", TraceLoggingInt32(status, "Status"));
     return status;
   }
 
@@ -1680,25 +1744,34 @@ NTSTATUS SunshineEvtDeviceAdd(WDFDRIVER driver, PWDFDEVICE_INIT device_init) {
   WDFDEVICE device = nullptr;
   status = WdfDeviceCreate(&device_init, &device_attributes, &device);
   if (!NT_SUCCESS(status)) {
+    TraceLoggingWrite(g_trace_provider, "DeviceAddFailed", TraceLoggingInt32(status, "Status"));
     return status;
   }
 
   auto *context = GetDeviceContext(device);
   context->state = new (std::nothrow) DeviceState(driver, device);
   if (!context->state) {
+    TraceLoggingWrite(
+      g_trace_provider,
+      "DeviceAddFailed",
+      TraceLoggingInt32(STATUS_INSUFFICIENT_RESOURCES, "Status")
+    );
     return STATUS_INSUFFICIENT_RESOURCES;
   }
 
   status = WdfDeviceCreateDeviceInterface(device, &kControlInterfaceGuid, nullptr);
   if (!NT_SUCCESS(status)) {
+    TraceLoggingWrite(g_trace_provider, "DeviceAddFailed", TraceLoggingInt32(status, "Status"));
     return status;
   }
 
   status = IddCxDeviceInitialize(device);
   if (!NT_SUCCESS(status)) {
+    TraceLoggingWrite(g_trace_provider, "DeviceAddFailed", TraceLoggingInt32(status, "Status"));
     return status;
   }
 
+  TraceLoggingWrite(g_trace_provider, "DeviceAddSucceeded");
   return STATUS_SUCCESS;
 }
 
@@ -1867,10 +1940,19 @@ void SunshineEvtIddCxDeviceIoControl(
     output_buffer_length,
     std::chrono::steady_clock::now()
   );
+  const auto completion_status = ntstatus_from_ioctl_status(result.status);
+  TraceLoggingWrite(
+    g_trace_provider,
+    "DeviceIoControl",
+    TraceLoggingUInt32(io_control_code, "IoControlCode"),
+    TraceLoggingUInt32(static_cast<std::uint32_t>(result.status), "DispatchStatus"),
+    TraceLoggingUInt64(result.bytes_returned, "BytesReturned"),
+    TraceLoggingInt32(completion_status, "Status")
+  );
 
   WdfRequestCompleteWithInformation(
     request,
-    ntstatus_from_ioctl_status(result.status),
+    completion_status,
     result.bytes_returned
   );
 }

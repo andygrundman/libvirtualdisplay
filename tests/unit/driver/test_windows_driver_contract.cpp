@@ -170,6 +170,31 @@ TEST(VirtualDisplayWindowsDriverContract, RecoversRenderDeviceBeforeAbandoningSw
   EXPECT_LT(reset, abandon);
 }
 
+TEST(VirtualDisplayWindowsDriverContract, RegistersTraceLoggingProvider) {
+  const auto source = read_windows_driver_source();
+
+  EXPECT_NE(source.find("#include <TraceLoggingProvider.h>"), std::string::npos);
+  EXPECT_NE(source.find("TRACELOGGING_DEFINE_PROVIDER("), std::string::npos);
+  EXPECT_NE(source.find("TraceLoggingRegister(g_trace_provider);"), std::string::npos);
+  EXPECT_NE(source.find("config.EvtDriverUnload = SunshineEvtDriverUnload;"), std::string::npos);
+  EXPECT_NE(source.find("TraceLoggingUnregister(g_trace_provider);"), std::string::npos);
+  EXPECT_NE(source.find("TraceLoggingWrite("), std::string::npos);
+  EXPECT_NE(source.find("\"DeviceIoControl\""), std::string::npos);
+  EXPECT_NE(source.find("\"RenderDeviceLost\""), std::string::npos);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, LinksTraceLoggingRuntime) {
+  const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
+                    "src/driver/windows_driver/CMakeLists.txt";
+  std::ifstream file {path, std::ios::binary};
+  ASSERT_TRUE(file.is_open()) << path.string();
+
+  std::ostringstream buffer;
+  buffer << file.rdbuf();
+  const auto cmake = buffer.str();
+  EXPECT_NE(cmake.find("advapi32"), std::string::npos);
+}
+
 TEST(VirtualDisplayWindowsDriverContract, AbandonsInvalidatedSwapchainHandlesDuringTeardown) {
   const auto source = read_windows_driver_source();
 

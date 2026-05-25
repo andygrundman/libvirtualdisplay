@@ -48,6 +48,7 @@ add_library(${SUNSHINE_DRIVER_TARGET} SHARED
 target_link_libraries(${SUNSHINE_DRIVER_TARGET}
         PRIVATE
         libvirtualdisplay::driver
+        advapi32
         avrt
         d3d11
         dxgi
