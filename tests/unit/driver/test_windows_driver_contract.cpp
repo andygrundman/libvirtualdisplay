@@ -122,9 +122,14 @@ TEST(VirtualDisplayWindowsDriverContract, SetsSwapChainDeviceFromProcessingThrea
 
   const auto process_frames = source.find("void process_frames(const LUID render_adapter_luid)");
   ASSERT_NE(process_frames, std::string::npos);
-  const auto set_device = source.find("IddCxSwapChainSetDevice(swapchain_, &set_device);", process_frames);
+  const auto reset = source.find("reset_render_device(render_adapter_luid);", process_frames);
+  ASSERT_NE(reset, std::string::npos);
+
+  const auto assign = source.find("HRESULT assign_swapchain_device()");
+  ASSERT_NE(assign, std::string::npos);
+  const auto set_device = source.find("IddCxSwapChainSetDevice(swapchain_, &set_device);", assign);
   ASSERT_NE(set_device, std::string::npos);
-  EXPECT_NE(source.find("HandleNewSwapChain still owns IddCx's internal OPM cleanup", process_frames), std::string::npos);
+  EXPECT_NE(source.find("HandleNewSwapChain still owns IddCx's internal OPM cleanup", assign), std::string::npos);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, RegistersSwapChainWorkerWithMmcss) {
@@ -139,9 +144,30 @@ TEST(VirtualDisplayWindowsDriverContract, RegistersSwapChainWorkerWithMmcss) {
   ASSERT_NE(process_frames, std::string::npos);
   const auto mmcss = source.find("MmcssRegistration mmcss {kSwapchainMmcssTask};", process_frames);
   ASSERT_NE(mmcss, std::string::npos);
-  const auto create_device = source.find("create_dxgi_device_for_luid(render_adapter_luid", process_frames);
+  const auto create_device = source.find("reset_render_device(render_adapter_luid);", process_frames);
   ASSERT_NE(create_device, std::string::npos);
   EXPECT_LT(mmcss, create_device);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, RecoversRenderDeviceBeforeAbandoningSwapChain) {
+  const auto source = read_windows_driver_source();
+
+  EXPECT_NE(source.find("D3D_DRIVER_TYPE_WARP"), std::string::npos);
+  EXPECT_NE(source.find("is_device_lost_hresult"), std::string::npos);
+  EXPECT_NE(source.find("DXGI_ERROR_DEVICE_REMOVED"), std::string::npos);
+  EXPECT_NE(source.find("DXGI_ERROR_DEVICE_RESET"), std::string::npos);
+
+  const auto process_frames = source.find("void process_frames(const LUID render_adapter_luid)");
+  ASSERT_NE(process_frames, std::string::npos);
+  const auto acquire_failure = source.find("if (FAILED(acquire_result))", process_frames);
+  ASSERT_NE(acquire_failure, std::string::npos);
+  const auto device_lost = source.find("is_device_lost_hresult(acquire_result)", acquire_failure);
+  ASSERT_NE(device_lost, std::string::npos);
+  const auto reset = source.find("reset_render_device(render_adapter_luid)", device_lost);
+  ASSERT_NE(reset, std::string::npos);
+  const auto abandon = source.find("return;", reset);
+  ASSERT_NE(abandon, std::string::npos);
+  EXPECT_LT(reset, abandon);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, AbandonsInvalidatedSwapchainHandlesDuringTeardown) {

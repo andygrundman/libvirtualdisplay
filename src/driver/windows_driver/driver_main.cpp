@@ -825,18 +825,6 @@ namespace {
     Microsoft::WRL::ComPtr<ID3D11Device> &device,
     Microsoft::WRL::ComPtr<IDXGIDevice> &dxgi_device
   ) {
-    Microsoft::WRL::ComPtr<IDXGIFactory4> factory;
-    HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
-    if (FAILED(hr)) {
-      return hr;
-    }
-
-    Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
-    hr = factory->EnumAdapterByLuid(adapter_luid, IID_PPV_ARGS(&adapter));
-    if (FAILED(hr)) {
-      return hr;
-    }
-
     static constexpr D3D_FEATURE_LEVEL kFeatureLevels[] {
       D3D_FEATURE_LEVEL_11_1,
       D3D_FEATURE_LEVEL_11_0,
@@ -844,25 +832,57 @@ namespace {
       D3D_FEATURE_LEVEL_10_0
     };
 
-    D3D_FEATURE_LEVEL selected_feature_level {};
-    Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
-    hr = D3D11CreateDevice(
-      adapter.Get(),
-      D3D_DRIVER_TYPE_UNKNOWN,
-      nullptr,
-      D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-      kFeatureLevels,
-      static_cast<UINT>(std::size(kFeatureLevels)),
-      D3D11_SDK_VERSION,
-      &device,
-      &selected_feature_level,
-      &context
-    );
+    const auto create_device = [&](IDXGIAdapter *adapter, const D3D_DRIVER_TYPE driver_type) {
+      D3D_FEATURE_LEVEL selected_feature_level {};
+      Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
+      device.Reset();
+      dxgi_device.Reset();
+      const HRESULT hr = D3D11CreateDevice(
+        adapter,
+        driver_type,
+        nullptr,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        kFeatureLevels,
+        static_cast<UINT>(std::size(kFeatureLevels)),
+        D3D11_SDK_VERSION,
+        &device,
+        &selected_feature_level,
+        &context
+      );
+      if (FAILED(hr)) {
+        device.Reset();
+        return hr;
+      }
+
+      return device.As(&dxgi_device);
+    };
+
+    Microsoft::WRL::ComPtr<IDXGIFactory4> factory;
+    HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
+    if (SUCCEEDED(hr)) {
+      Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
+      hr = factory->EnumAdapterByLuid(adapter_luid, IID_PPV_ARGS(&adapter));
+      if (SUCCEEDED(hr)) {
+        hr = create_device(adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN);
+        if (SUCCEEDED(hr)) {
+          return hr;
+        }
+      }
+    }
+
+    hr = create_device(nullptr, D3D_DRIVER_TYPE_WARP);
     if (FAILED(hr)) {
       return hr;
     }
 
-    return device.As(&dxgi_device);
+    return S_OK;
+  }
+
+  bool is_device_lost_hresult(const HRESULT hr) {
+    return hr == DXGI_ERROR_DEVICE_REMOVED ||
+           hr == DXGI_ERROR_DEVICE_RESET ||
+           hr == DXGI_ERROR_DEVICE_HUNG ||
+           hr == DXGI_ERROR_DRIVER_INTERNAL_ERROR;
   }
 
   class SwapChainProcessor {
@@ -939,12 +959,9 @@ namespace {
       }
     }
 
-    void process_frames(const LUID render_adapter_luid) {
-      MmcssRegistration mmcss {kSwapchainMmcssTask};
-
-      HRESULT hr = create_dxgi_device_for_luid(render_adapter_luid, device_, dxgi_device_);
-      if (FAILED(hr) || stop_requested_.load(std::memory_order_acquire)) {
-        return;
+    HRESULT assign_swapchain_device() {
+      if (!dxgi_device_) {
+        return E_FAIL;
       }
 
       IDARG_IN_SWAPCHAINSETDEVICE set_device {};
@@ -952,8 +969,26 @@ namespace {
       // HandleNewSwapChain still owns IddCx's internal OPM cleanup while it
       // invokes AssignSwapChain. Setting the DXGI device from the worker thread
       // matches the WDK sample flow and avoids re-entering that cleanup path.
-      hr = IddCxSwapChainSetDevice(swapchain_, &set_device);
+      return IddCxSwapChainSetDevice(swapchain_, &set_device);
+    }
+
+    HRESULT reset_render_device(const LUID &render_adapter_luid) {
+      dxgi_device_.Reset();
+      device_.Reset();
+
+      HRESULT hr = create_dxgi_device_for_luid(render_adapter_luid, device_, dxgi_device_);
       if (FAILED(hr)) {
+        return hr;
+      }
+
+      return assign_swapchain_device();
+    }
+
+    void process_frames(const LUID render_adapter_luid) {
+      MmcssRegistration mmcss {kSwapchainMmcssTask};
+
+      HRESULT hr = reset_render_device(render_adapter_luid);
+      if (FAILED(hr) || stop_requested_.load(std::memory_order_acquire)) {
         return;
       }
 
@@ -987,6 +1022,12 @@ namespace {
             break;
           }
           if (FAILED(acquire_result)) {
+            if (is_device_lost_hresult(acquire_result)) {
+              if (FAILED(reset_render_device(render_adapter_luid))) {
+                return;
+              }
+              continue;
+            }
             return;
           }
 
