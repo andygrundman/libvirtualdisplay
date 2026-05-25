@@ -1,0 +1,91 @@
+---
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, for example v0.1.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: false
+
+jobs:
+  windows-release:
+    name: Windows Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          $version = '${{ github.event.inputs.version }}'
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            $version = '${{ github.ref_name }}'
+          }
+          $packageVersion = $version.TrimStart('v')
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "package_version=$packageVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Verify WDK paths
+        shell: pwsh
+        run: |
+          $defaultKitRoot = 'C:\Program Files (x86)\Windows Kits\10\'
+          $kitRoot = if ($env:WindowsSdkDir) { $env:WindowsSdkDir } else { $defaultKitRoot }
+          $sdkVersion = if ($env:WindowsSDKVersion) { $env:WindowsSDKVersion.TrimEnd('\') } else {
+            Get-ChildItem (Join-Path $defaultKitRoot 'Lib') -Directory |
+              Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
+              Sort-Object Name -Descending |
+              Select-Object -First 1 -ExpandProperty Name
+          }
+          $iddcxPath = "Lib\$sdkVersion\um\x64\iddcx\1.10\IddCxStub.lib"
+          if (-not (Test-Path (Join-Path $kitRoot $iddcxPath)) -and
+              (Test-Path (Join-Path $defaultKitRoot $iddcxPath))) {
+            $kitRoot = $defaultKitRoot
+          }
+          $required = @(
+            Join-Path $kitRoot 'Include\wdf\umdf\2.25'
+            Join-Path $kitRoot 'Lib\wdf\umdf\x64\2.25\WdfDriverStubUm.lib'
+            Join-Path $kitRoot $iddcxPath
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path $path)) {
+              throw "Required WDK path is missing: $path"
+            }
+          }
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-driver -G Ninja
+          -DBUILD_TESTS=OFF
+          -DBUILD_SUNSHINE_VIRTUAL_DISPLAY_DRIVER=ON
+          -DBUILD_VIRTUALDISPLAY_PROBE=ON
+          '-DLIBVIRTUALDISPLAY_PACKAGE_VERSION=${{ steps.version.outputs.package_version }}'
+
+      - name: Build release package
+        run: cmake --build build-driver --target package --parallel
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: libvirtualdisplay ${{ steps.version.outputs.version }}
+          files: build-driver/libvirtualdisplay-*-windows-x64.zip

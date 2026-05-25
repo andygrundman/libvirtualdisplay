@@ -46,6 +46,25 @@ cmake -S . -B build-driver -G Ninja -DBUILD_TESTS=OFF -DBUILD_SUNSHINE_VIRTUAL_D
 cmake --build build-driver --target SunshineVirtualDisplayDriver virtualdisplay virtualdisplay_probe -j 10
 ```
 
+To build the release ZIP locally:
+
+```powershell
+cmake -S . -B build-driver -G Ninja -DBUILD_TESTS=OFF -DBUILD_SUNSHINE_VIRTUAL_DISPLAY_DRIVER=ON -DBUILD_VIRTUALDISPLAY_PROBE=ON -DLIBVIRTUALDISPLAY_PACKAGE_VERSION=0.1.0
+cmake --build build-driver --target package -j 10
+```
+
+The ZIP contains:
+
+- `driver/SunshineVirtualDisplayDriver.inf`
+- `driver/SunshineVirtualDisplayDriver.cat`
+- `driver/SunshineVirtualDisplayDriver.dll`
+- `tools/virtualdisplay.exe`
+- `tools/virtualdisplay_probe.exe`
+- `README.md` and `LICENSE`
+
+GitHub Actions publishes the same Windows x64 ZIP when a `v*` tag is pushed,
+for example `v0.1.0`.
+
 The commands below assume the driver package has already been installed and
 Windows has started the Sunshine virtual display device.
 
@@ -53,6 +72,21 @@ Windows has started the Sunshine virtual display device.
 
 `virtualdisplay.exe` is the user-facing command line tool. It talks to the
 installed driver through the same control interface Sunshine uses.
+
+Install the driver from the release ZIP:
+
+```powershell
+.\tools\virtualdisplay.exe driver install
+```
+
+`driver install` self-elevates through the Windows UAC prompt when it is not
+already running as administrator. By default it installs
+`driver\SunshineVirtualDisplayDriver.inf` from the same extracted release
+directory. To install a different INF:
+
+```powershell
+.\tools\virtualdisplay.exe driver install --inf C:\path\to\SunshineVirtualDisplayDriver.inf
+```
 
 Query the current permanent-display state:
 
