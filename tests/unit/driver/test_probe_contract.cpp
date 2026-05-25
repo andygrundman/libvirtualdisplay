@@ -81,6 +81,27 @@ TEST(VirtualDisplayProbeContract, HdrSelfTestVerifiesWindowsAdvancedColorState) 
   expect_contains(source, "temporary display did not enter HDR 10-bit mode after request");
 }
 
+TEST(VirtualDisplayProbeContract, DisplayConfigCommandsRequireInteractiveSession) {
+  const auto source = read_probe_source();
+
+  expect_contains(source, "command_uses_display_config");
+  expect_contains(source, "--self-test-4k240");
+  expect_contains(source, "--self-test-hdr");
+  expect_contains(source, "--qa-temp-identity-retention");
+  expect_contains(source, "--qa-temp-lease");
+  expect_contains(source, "--debug-temp-config");
+  expect_contains(source, "WTSGetActiveConsoleSessionId()");
+  expect_contains(source, "ProcessIdToSessionId(GetCurrentProcessId(), &current_session_id)");
+  expect_contains(source, "requires an active console session for DisplayConfig and color APIs");
+  expect_contains(source, "must run in the active console session for DisplayConfig and color APIs");
+
+  const auto guard = source.find("if (command_uses_display_config(command))");
+  const auto hdr = source.find("if (command == \"--self-test-hdr\")");
+  ASSERT_NE(guard, std::string::npos);
+  ASSERT_NE(hdr, std::string::npos);
+  EXPECT_LT(guard, hdr);
+}
+
 TEST(VirtualDisplayProbeContract, ActiveDisplayChecksApplyRequestedResolution) {
   const auto source = read_probe_source();
 

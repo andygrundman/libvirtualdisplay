@@ -9,6 +9,7 @@
 #include <iostream>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -220,6 +221,38 @@ namespace {
 
   bool same_luid(const LUID &left, const LUID &right) {
     return left.LowPart == right.LowPart && left.HighPart == right.HighPart;
+  }
+
+  bool command_uses_display_config(const std::string_view command) {
+    return command == "--self-test-4k240" ||
+           command == "--self-test-hdr" ||
+           command == "--qa-temp-identity-retention" ||
+           command == "--qa-temp-lease" ||
+           command == "--debug-temp-config";
+  }
+
+  int require_active_console_session(const std::string_view command) {
+    const DWORD active_session_id = WTSGetActiveConsoleSessionId();
+    if (active_session_id == 0xffffffffu) {
+      std::cerr << command << " requires an active console session for DisplayConfig and color APIs\n";
+      return 1;
+    }
+
+    DWORD current_session_id = 0;
+    if (!ProcessIdToSessionId(GetCurrentProcessId(), &current_session_id)) {
+      std::cerr << command << " could not determine the current process session"
+                << " native_error=" << GetLastError() << '\n';
+      return 1;
+    }
+
+    if (current_session_id != active_session_id) {
+      std::cerr << command << " must run in the active console session for DisplayConfig and color APIs"
+                << " current_session=" << current_session_id
+                << " active_session=" << active_session_id << '\n';
+      return 1;
+    }
+
+    return 0;
   }
 
   DisplayConfigQueryResult query_display_config_result(const UINT32 flags) {
@@ -1088,6 +1121,12 @@ int main(const int argc, char **argv) {
     std::cout << "protocol=" << protocol.value.major << '.'
               << protocol.value.minor << '.' << protocol.value.patch << '\n';
     return 0;
+  }
+
+  if (command_uses_display_config(command)) {
+    if (const int session_status = require_active_console_session(command); session_status != 0) {
+      return session_status;
+    }
   }
 
   if (command == "--query-permanent") {
