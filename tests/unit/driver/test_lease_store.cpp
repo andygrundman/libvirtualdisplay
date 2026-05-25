@@ -152,7 +152,25 @@ TEST(VirtualDisplayDriverLeaseStore, TemporaryConnectorIndexesStartAfterActivePe
   EXPECT_EQ(store.find_temporary_display(20)->connector_index, 3u);
 }
 
-TEST(VirtualDisplayDriverLeaseStore, ReusesLowestAvailableTemporaryConnectorIndex) {
+TEST(VirtualDisplayDriverLeaseStore, ReusesReservedConnectorIndexForSameDisplayId) {
+  vdd::DisplayStore store {2, 4};
+  const auto now = std::chrono::steady_clock::now();
+
+  ASSERT_EQ(store.create_temporary_display(make_create_request(1, 10), now).status.error, vdd::StoreError::None);
+  ASSERT_EQ(store.find_temporary_display(10)->connector_index, 0u);
+
+  const vdd::LeaseDisplayRequest remove {
+    vdd::kApiNamespaceGuid,
+    1,
+    10
+  };
+  ASSERT_EQ(store.remove_temporary_display(remove).error, vdd::StoreError::None);
+
+  ASSERT_EQ(store.create_temporary_display(make_create_request(2, 10), now).status.error, vdd::StoreError::None);
+  EXPECT_EQ(store.find_temporary_display(10)->connector_index, 0u);
+}
+
+TEST(VirtualDisplayDriverLeaseStore, DoesNotReuseReservedConnectorIndexForDifferentDisplayId) {
   vdd::DisplayStore store {2, 4};
   const auto now = std::chrono::steady_clock::now();
 
@@ -167,7 +185,27 @@ TEST(VirtualDisplayDriverLeaseStore, ReusesLowestAvailableTemporaryConnectorInde
   ASSERT_EQ(store.remove_temporary_display(remove).error, vdd::StoreError::None);
 
   ASSERT_EQ(store.create_temporary_display(make_create_request(3, 30), now).status.error, vdd::StoreError::None);
-  EXPECT_EQ(store.find_temporary_display(30)->connector_index, 0u);
+  EXPECT_EQ(store.find_temporary_display(30)->connector_index, 2u);
+
+  ASSERT_EQ(store.create_temporary_display(make_create_request(4, 10), now).status.error, vdd::StoreError::None);
+  EXPECT_EQ(store.find_temporary_display(10)->connector_index, 0u);
+}
+
+TEST(VirtualDisplayDriverLeaseStore, ReservedConnectorIndexesCanExhaustTemporaryPool) {
+  vdd::DisplayStore store {0, 2};
+  const auto now = std::chrono::steady_clock::now();
+
+  ASSERT_EQ(store.create_temporary_display(make_create_request(1, 10), now).status.error, vdd::StoreError::None);
+  ASSERT_EQ(store.create_temporary_display(make_create_request(2, 20), now).status.error, vdd::StoreError::None);
+
+  EXPECT_EQ(
+    store.remove_temporary_display({vdd::kApiNamespaceGuid, 1, 10}).error,
+    vdd::StoreError::None
+  );
+  EXPECT_EQ(
+    store.create_temporary_display(make_create_request(3, 30), now).status.error,
+    vdd::StoreError::TemporaryDisplayLimitReached
+  );
 }
 
 TEST(VirtualDisplayDriverLeaseStore, ReleasesWholeLease) {

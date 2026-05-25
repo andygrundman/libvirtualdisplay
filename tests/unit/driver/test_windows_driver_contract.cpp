@@ -24,13 +24,13 @@ namespace {
 TEST(VirtualDisplayWindowsDriverContract, DeletesMonitorObjectWhenArrivalFails) {
   const auto source = read_windows_driver_source();
 
-  const auto arrival = source.find("status = IddCxMonitorArrival(record.monitor, &arrival_out);");
+  const auto arrival = source.find("status = IddCxMonitorArrival(create_out.MonitorObject, &arrival_out);");
   ASSERT_NE(arrival, std::string::npos);
 
   const auto failure = source.find("if (!NT_SUCCESS(status))", arrival);
   ASSERT_NE(failure, std::string::npos);
 
-  const auto cleanup = source.find("WdfObjectDelete(record.monitor);", failure);
+  const auto cleanup = source.find("WdfObjectDelete(create_out.MonitorObject);", failure);
   ASSERT_NE(cleanup, std::string::npos);
 
   const auto backend_failure = source.find("return {vdd::BackendError::Failed", failure);

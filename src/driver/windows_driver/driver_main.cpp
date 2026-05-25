@@ -20,12 +20,14 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cwchar>
 #include <limits>
 #include <map>
 #include <mutex>
 #include <new>
 #include <optional>
 #include <span>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -36,6 +38,7 @@ namespace {
   constexpr std::uint32_t kMaxPermanentDisplays = 4;
   constexpr std::uint32_t kMaxTemporaryDisplays = 8;
   constexpr std::uint64_t kPermanentDisplayIdBase = 0x7000000000000000ull;
+  constexpr wchar_t kTemporaryDisplayProfilesKey[] = L"SOFTWARE\\Sunshine\\VirtualDisplayDriver\\TemporaryDisplays";
   const GUID kControlInterfaceGuid = vdd::to_windows_guid(vdd::kDeviceInterfaceGuid);
 
   class IddCxBackend;
@@ -180,6 +183,125 @@ namespace {
     }
 
     return {std::move(modes), preferred_index};
+  }
+
+  std::wstring temporary_profile_key_name(const std::uint64_t display_id) {
+    wchar_t key_name[32] {};
+    swprintf_s(key_name, L"%016llX", static_cast<unsigned long long>(display_id));
+    return key_name;
+  }
+
+  std::map<std::uint64_t, std::uint32_t> load_temporary_connector_reservations() {
+    std::map<std::uint64_t, std::uint32_t> reservations;
+    HKEY profiles_key {};
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, kTemporaryDisplayProfilesKey, 0, KEY_READ, &profiles_key) != ERROR_SUCCESS) {
+      return reservations;
+    }
+
+    for (DWORD index = 0;; ++index) {
+      wchar_t key_name[256] {};
+      DWORD key_name_length = static_cast<DWORD>(std::size(key_name));
+      const auto enum_status = RegEnumKeyExW(
+        profiles_key,
+        index,
+        key_name,
+        &key_name_length,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr
+      );
+      if (enum_status == ERROR_NO_MORE_ITEMS) {
+        break;
+      }
+      if (enum_status != ERROR_SUCCESS) {
+        continue;
+      }
+
+      HKEY profile_key {};
+      if (RegOpenKeyExW(profiles_key, key_name, 0, KEY_READ, &profile_key) != ERROR_SUCCESS) {
+        continue;
+      }
+
+      std::uint64_t display_id {};
+      std::uint32_t connector_index {};
+      DWORD display_id_size = sizeof(display_id);
+      DWORD connector_index_size = sizeof(connector_index);
+      if (RegGetValueW(profile_key, nullptr, L"DisplayId", RRF_RT_REG_QWORD, nullptr, &display_id, &display_id_size) == ERROR_SUCCESS &&
+          RegGetValueW(profile_key, nullptr, L"ConnectorIndex", RRF_RT_REG_DWORD, nullptr, &connector_index, &connector_index_size) == ERROR_SUCCESS &&
+          display_id != 0 &&
+          connector_index < kMaxPermanentDisplays + kMaxTemporaryDisplays) {
+        reservations.emplace(display_id, connector_index);
+      }
+
+      RegCloseKey(profile_key);
+    }
+
+    RegCloseKey(profiles_key);
+    return reservations;
+  }
+
+  template <typename T>
+  void write_registry_value_if_success(
+    HKEY key,
+    const wchar_t *value_name,
+    const DWORD type,
+    const T &value,
+    LSTATUS &status
+  ) {
+    if (status == ERROR_SUCCESS) {
+      status = RegSetValueExW(key, value_name, 0, type, reinterpret_cast<const BYTE *>(&value), sizeof(value));
+    }
+  }
+
+  vdd::BackendError save_temporary_display_profile(const vdd::DisplayDescriptor &descriptor) {
+    HKEY profiles_key {};
+    LSTATUS status = RegCreateKeyExW(
+      HKEY_LOCAL_MACHINE,
+      kTemporaryDisplayProfilesKey,
+      0,
+      nullptr,
+      REG_OPTION_NON_VOLATILE,
+      KEY_WRITE,
+      nullptr,
+      &profiles_key,
+      nullptr
+    );
+    if (status != ERROR_SUCCESS) {
+      return vdd::BackendError::None;
+    }
+
+    HKEY profile_key {};
+    const auto key_name = temporary_profile_key_name(descriptor.display_id);
+    status = RegCreateKeyExW(
+      profiles_key,
+      key_name.c_str(),
+      0,
+      nullptr,
+      REG_OPTION_NON_VOLATILE,
+      KEY_WRITE,
+      nullptr,
+      &profile_key,
+      nullptr
+    );
+    RegCloseKey(profiles_key);
+    if (status != ERROR_SUCCESS) {
+      return vdd::BackendError::None;
+    }
+
+    const DWORD connector_index = descriptor.connector_index;
+    const GUID container_id = vdd::to_windows_guid(descriptor.container_id);
+    const DWORD edid_product_code = vdd::read_product_code(descriptor.edid);
+    const DWORD edid_serial_number = vdd::read_serial_number(descriptor.edid);
+
+    write_registry_value_if_success(profile_key, L"DisplayId", REG_QWORD, descriptor.display_id, status);
+    write_registry_value_if_success(profile_key, L"ConnectorIndex", REG_DWORD, connector_index, status);
+    write_registry_value_if_success(profile_key, L"ContainerId", REG_BINARY, container_id, status);
+    write_registry_value_if_success(profile_key, L"EdidProductCode", REG_DWORD, edid_product_code, status);
+    write_registry_value_if_success(profile_key, L"EdidSerialNumber", REG_DWORD, edid_serial_number, status);
+
+    RegCloseKey(profile_key);
+    return vdd::BackendError::None;
   }
 
   vdd::DisplayDescriptor make_permanent_descriptor(const std::uint32_t index) {
@@ -699,6 +821,10 @@ namespace {
       return arrive_display(descriptor, false);
     }
 
+    vdd::BackendError reserve_temporary_display_identity(const vdd::DisplayDescriptor &descriptor) override {
+      return save_temporary_display_profile(descriptor);
+    }
+
     vdd::BackendError depart_temporary_display(const std::uint64_t display_id) override {
       return depart_display(display_id);
     }
@@ -1033,7 +1159,14 @@ namespace {
   class DeviceState {
   public:
     DeviceState():
-        controller {vdd::DisplayStore {kMaxPermanentDisplays, kMaxTemporaryDisplays}, backend},
+        controller {
+          vdd::DisplayStore {
+            kMaxPermanentDisplays,
+            kMaxTemporaryDisplays,
+            load_temporary_connector_reservations()
+          },
+          backend
+        },
         dispatcher {controller} {
       start_reaper();
     }

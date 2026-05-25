@@ -1,6 +1,7 @@
 #include "virtual_display/driver/lease_store.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace virtual_display::driver {
   namespace {
@@ -12,9 +13,14 @@ namespace virtual_display::driver {
     }
   }  // namespace
 
-  DisplayStore::DisplayStore(const std::uint32_t max_permanent_displays, const std::uint32_t max_temporary_displays):
+  DisplayStore::DisplayStore(
+    const std::uint32_t max_permanent_displays,
+    const std::uint32_t max_temporary_displays,
+    std::map<std::uint64_t, std::uint32_t> connector_reservations_by_display_id
+  ):
       max_permanent_displays_ {max_permanent_displays},
-      max_temporary_displays_ {max_temporary_displays} {
+      max_temporary_displays_ {max_temporary_displays},
+      connector_reservations_by_display_id_ {std::move(connector_reservations_by_display_id)} {
   }
 
   std::uint32_t DisplayStore::max_permanent_displays() const {
@@ -51,7 +57,12 @@ namespace virtual_display::driver {
       return CreateStoreResult {{StoreError::TemporaryDisplayLimitReached, ValidationError::None}, {}};
     }
 
-    const auto connector_index = next_connector_index();
+    const auto connector_index = connector_index_for_display(request.display_id);
+    if (!is_temporary_connector_index(connector_index)) {
+      return CreateStoreResult {{StoreError::TemporaryDisplayLimitReached, ValidationError::None}, {}};
+    }
+
+    connector_reservations_by_display_id_[request.display_id] = connector_index;
     const auto expires_at = now + std::chrono::milliseconds(validated.effective_timeout_ms);
 
     displays_by_id_.emplace(
@@ -248,23 +259,51 @@ namespace virtual_display::driver {
     return displays;
   }
 
-  std::uint32_t DisplayStore::next_connector_index() const {
+  bool DisplayStore::is_temporary_connector_index(const std::uint32_t connector_index) const {
     // Connector index maps directly to the Windows target id. When no permanent
     // displays are active, temporary displays must be allowed to use connector 0
     // or Windows may create a target that cannot be activated for the desktop.
-    std::uint32_t connector_index = permanent_display_count_;
-    while (connector_index < max_permanent_displays_ + max_temporary_displays_) {
-      const auto in_use = std::any_of(displays_by_id_.begin(), displays_by_id_.end(), [connector_index](const auto &entry) {
-        return entry.second.connector_index == connector_index;
-      });
-      if (!in_use) {
-        return connector_index;
-      }
+    return connector_index >= permanent_display_count_ &&
+           connector_index < permanent_display_count_ + max_temporary_displays_;
+  }
 
-      ++connector_index;
+  bool DisplayStore::connector_index_is_active(const std::uint32_t connector_index) const {
+    return std::any_of(displays_by_id_.begin(), displays_by_id_.end(), [connector_index](const auto &entry) {
+      return entry.second.connector_index == connector_index;
+    });
+  }
+
+  bool DisplayStore::connector_index_is_reserved_for_other_display(
+    const std::uint32_t connector_index,
+    const std::uint64_t display_id
+  ) const {
+    return std::any_of(
+      connector_reservations_by_display_id_.begin(),
+      connector_reservations_by_display_id_.end(),
+      [connector_index, display_id](const auto &entry) {
+        return entry.first != display_id && entry.second == connector_index;
+      }
+    );
+  }
+
+  std::uint32_t DisplayStore::connector_index_for_display(const std::uint64_t display_id) const {
+    if (const auto reservation = connector_reservations_by_display_id_.find(display_id);
+        reservation != connector_reservations_by_display_id_.end() &&
+        is_temporary_connector_index(reservation->second) &&
+        !connector_index_is_active(reservation->second)) {
+      return reservation->second;
     }
 
-    return connector_index;
+    for (std::uint32_t connector_index = permanent_display_count_;
+         connector_index < permanent_display_count_ + max_temporary_displays_;
+         ++connector_index) {
+      if (!connector_index_is_active(connector_index) &&
+          !connector_index_is_reserved_for_other_display(connector_index, display_id)) {
+        return connector_index;
+      }
+    }
+
+    return permanent_display_count_ + max_temporary_displays_;
   }
 
   bool DisplayStore::lease_has_displays(const std::uint64_t lease_id) const {

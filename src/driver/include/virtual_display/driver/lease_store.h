@@ -44,7 +44,11 @@ namespace virtual_display::driver {
 
   class DisplayStore {
   public:
-    explicit DisplayStore(std::uint32_t max_permanent_displays, std::uint32_t max_temporary_displays);
+    explicit DisplayStore(
+      std::uint32_t max_permanent_displays,
+      std::uint32_t max_temporary_displays,
+      std::map<std::uint64_t, std::uint32_t> connector_reservations_by_display_id = {}
+    );
 
     [[nodiscard]] std::uint32_t max_permanent_displays() const;
     [[nodiscard]] std::uint32_t max_temporary_displays() const;
@@ -73,7 +77,13 @@ namespace virtual_display::driver {
       std::chrono::steady_clock::time_point expires_at {};
     };
 
-    std::uint32_t next_connector_index() const;
+    bool is_temporary_connector_index(std::uint32_t connector_index) const;
+    bool connector_index_is_active(std::uint32_t connector_index) const;
+    bool connector_index_is_reserved_for_other_display(
+      std::uint32_t connector_index,
+      std::uint64_t display_id
+    ) const;
+    std::uint32_t connector_index_for_display(std::uint64_t display_id) const;
     bool lease_has_displays(std::uint64_t lease_id) const;
     void remove_lease_if_empty(std::uint64_t lease_id);
 
@@ -82,6 +92,7 @@ namespace virtual_display::driver {
     std::uint32_t permanent_display_count_ {};
     std::map<std::uint64_t, TemporaryDisplayRecord> displays_by_id_ {};
     std::map<std::uint64_t, LeaseRecord> leases_by_id_ {};
+    std::map<std::uint64_t, std::uint32_t> connector_reservations_by_display_id_ {};
   };
 
   const char *to_string(StoreError error);

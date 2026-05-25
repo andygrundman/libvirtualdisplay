@@ -2,6 +2,7 @@
 #include "virtual_display/driver/driver_controller.h"
 
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace vdd = virtual_display::driver;
@@ -10,7 +11,14 @@ namespace {
 
   class FakeBackend: public vdd::DisplayDriverBackend {
   public:
+    vdd::BackendError reserve_temporary_display_identity(const vdd::DisplayDescriptor &descriptor) override {
+      reserved.push_back(descriptor);
+      events.push_back("reserve");
+      return fail_reserve ? vdd::BackendError::Failed : vdd::BackendError::None;
+    }
+
     vdd::BackendDisplayResult arrive_temporary_display(const vdd::DisplayDescriptor &descriptor) override {
+      events.push_back("arrive");
       arrived.push_back(descriptor);
       if (fail_arrive) {
         return {vdd::BackendError::Failed, 0, 0};
@@ -32,11 +40,14 @@ namespace {
     bool fail_arrive {};
     bool fail_depart {};
     bool fail_permanent {};
+    bool fail_reserve {};
     vdd::AdapterLuid adapter_luid {44, 2};
     std::uint32_t next_target_id {7};
+    std::vector<vdd::DisplayDescriptor> reserved {};
     std::vector<vdd::DisplayDescriptor> arrived {};
     std::vector<std::uint64_t> departed {};
     std::vector<std::uint32_t> permanent_counts {};
+    std::vector<std::string> events {};
   };
 
   vdd::CreateTemporaryDisplayRequest make_create_request(
@@ -76,6 +87,37 @@ TEST(VirtualDisplayDriverController, CreateTemporaryDisplayArrivesBackendAndRetu
   EXPECT_EQ(backend.arrived[0].width, 2560u);
   EXPECT_TRUE(vdd::has_valid_edid_checksums(backend.arrived[0].edid));
   EXPECT_TRUE(vdd::has_hdr_static_metadata(backend.arrived[0].edid));
+}
+
+TEST(VirtualDisplayDriverController, CreateTemporaryDisplayReservesIdentityBeforeArrival) {
+  FakeBackend backend;
+  auto controller = make_controller(backend);
+
+  const auto created = controller.create_temporary_display(make_create_request(), std::chrono::steady_clock::now());
+
+  EXPECT_TRUE(created.status.ok());
+  ASSERT_EQ(backend.reserved.size(), 1u);
+  ASSERT_EQ(backend.arrived.size(), 1u);
+  EXPECT_EQ(backend.reserved[0].display_id, 0x12345678u);
+  EXPECT_EQ(backend.reserved[0].connector_index, 0u);
+  EXPECT_EQ(backend.reserved[0].container_id, vdd::container_guid_from_display_id(0x12345678u));
+  EXPECT_EQ(backend.events, (std::vector<std::string> {"reserve", "arrive"}));
+}
+
+TEST(VirtualDisplayDriverController, CreateTemporaryDisplayRollsBackStoreWhenIdentityReserveFails) {
+  FakeBackend backend;
+  backend.fail_reserve = true;
+  auto controller = make_controller(backend);
+
+  const auto created = controller.create_temporary_display(make_create_request(), std::chrono::steady_clock::now());
+
+  EXPECT_FALSE(created.status.ok());
+  EXPECT_EQ(created.status.backend_error, vdd::BackendError::Failed);
+  EXPECT_EQ(controller.store().temporary_display_count(), 0u);
+  EXPECT_FALSE(controller.store().find_temporary_display(0x12345678));
+  EXPECT_EQ(backend.reserved.size(), 1u);
+  EXPECT_TRUE(backend.arrived.empty());
+  EXPECT_EQ(backend.events, (std::vector<std::string> {"reserve"}));
 }
 
 TEST(VirtualDisplayDriverController, CreateTemporaryDisplayRollsBackStoreWhenBackendFails) {

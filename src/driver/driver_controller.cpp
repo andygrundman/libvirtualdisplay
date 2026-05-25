@@ -31,7 +31,20 @@ namespace virtual_display::driver {
       };
     }
 
-    const auto backend_result = backend_.arrive_temporary_display(descriptor_from_record(*record));
+    const auto descriptor = descriptor_from_record(*record);
+    if (const auto backend_error = backend_.reserve_temporary_display_identity(descriptor);
+        backend_error != BackendError::None) {
+      LeaseDisplayRequest rollback {};
+      rollback.lease_id = request.lease_id;
+      rollback.display_id = request.display_id;
+      (void) store_.remove_temporary_display(rollback);
+      return {
+        {StoreError::None, ValidationError::None, backend_error},
+        {}
+      };
+    }
+
+    const auto backend_result = backend_.arrive_temporary_display(descriptor);
     if (backend_result.error != BackendError::None) {
       LeaseDisplayRequest rollback {};
       rollback.lease_id = request.lease_id;
@@ -145,6 +158,10 @@ namespace virtual_display::driver {
 
   const DisplayStore &DriverController::store() const {
     return store_;
+  }
+
+  BackendError DisplayDriverBackend::reserve_temporary_display_identity(const DisplayDescriptor &) {
+    return BackendError::None;
   }
 
   ControllerStatus DriverController::from_store_result(const StoreResult &result) {
