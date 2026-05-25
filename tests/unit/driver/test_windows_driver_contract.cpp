@@ -52,32 +52,28 @@ TEST(VirtualDisplayWindowsDriverContract, DeletesMonitorObjectWhenArrivalFails) 
   EXPECT_LT(cleanup, backend_failure);
 }
 
-TEST(VirtualDisplayWindowsDriverContract, StopsAndDeletesSwapChainBeforeDeparture) {
+TEST(VirtualDisplayWindowsDriverContract, StopsAndAbandonsSwapChainBeforeDeparture) {
   const auto source = read_windows_driver_source();
 
   const auto depart = source.find("vdd::BackendError depart_display");
   ASSERT_NE(depart, std::string::npos);
 
-  const auto stop = source.find("processor_to_stop->stop();", depart);
+  const auto stop = source.find("stop_swapchain_processor_without_delete(processor_to_stop);", depart);
   ASSERT_NE(stop, std::string::npos);
 
   const auto departure = source.find("IddCxMonitorDeparture(monitor_handle);", stop);
   ASSERT_NE(departure, std::string::npos);
   EXPECT_LT(stop, departure);
+  EXPECT_NE(source.find("IddCxMonitorDeparture can invalidate swapchain objects", depart), std::string::npos);
 
-  const auto cleanup = source.find("processor_to_stop.reset();", stop);
+  const auto helper = source.find("void stop_swapchain_processor_without_delete");
+  ASSERT_NE(helper, std::string::npos);
+  const auto abandon = source.find("processor->abandon_swapchain();", helper);
+  ASSERT_NE(abandon, std::string::npos);
+
+  const auto cleanup = source.find("processor.reset();", abandon);
   ASSERT_NE(cleanup, std::string::npos);
-  EXPECT_LT(cleanup, departure);
-  EXPECT_NE(source.find("IddCxMonitorDeparture can invalidate active swapchain objects", depart), std::string::npos);
-
-  const auto cleanup_owner = source.find("void delete_swapchain()");
-  ASSERT_NE(cleanup_owner, std::string::npos);
-
-  const auto delete_call = source.find("WdfObjectDelete(reinterpret_cast<WDFOBJECT>(swapchain_));", cleanup_owner);
-  ASSERT_NE(delete_call, std::string::npos);
-
-  const auto clear = source.find("swapchain_ = nullptr;", delete_call);
-  ASSERT_NE(clear, std::string::npos);
+  EXPECT_LT(abandon, cleanup);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, AbandonsSwapChainAssignedDuringDeparture) {
@@ -130,6 +126,31 @@ TEST(VirtualDisplayWindowsDriverContract, SetsSwapChainDeviceFromProcessingThrea
   EXPECT_NE(source.find("HandleNewSwapChain still owns IddCx's internal OPM cleanup", process_frames), std::string::npos);
 }
 
+TEST(VirtualDisplayWindowsDriverContract, AbandonsInvalidatedSwapchainHandlesDuringTeardown) {
+  const auto source = read_windows_driver_source();
+
+  const auto helper = source.find("void stop_swapchain_processor_without_delete");
+  ASSERT_NE(helper, std::string::npos);
+  EXPECT_NE(source.find("processor->stop();", helper), std::string::npos);
+  EXPECT_NE(source.find("processor->abandon_swapchain();", helper), std::string::npos);
+
+  const auto depart_display = source.find("vdd::BackendError depart_display");
+  ASSERT_NE(depart_display, std::string::npos);
+  EXPECT_NE(source.find("stop_swapchain_processor_without_delete(processor_to_stop);", depart_display), std::string::npos);
+  EXPECT_NE(source.find("stop_swapchain_processors_without_delete(retired_processors_to_stop);", depart_display), std::string::npos);
+
+  const auto unassign_swapchain = source.find("NTSTATUS unassign_swapchain");
+  ASSERT_NE(unassign_swapchain, std::string::npos);
+  EXPECT_NE(
+    source.find("retired_processors_to_stop = std::move(record->second.retired_swapchain_processors);", unassign_swapchain),
+    std::string::npos
+  );
+  EXPECT_NE(source.find("stop_swapchain_processor_without_delete(processor_to_stop);", unassign_swapchain), std::string::npos);
+  EXPECT_NE(
+    source.find("stop_swapchain_processors_without_delete(retired_processors_to_stop);", unassign_swapchain),
+    std::string::npos
+  );
+}
 
 TEST(VirtualDisplayWindowsDriverContract, TargetModesUseRequestedDescriptorTiming) {
   const auto source = read_windows_driver_source();

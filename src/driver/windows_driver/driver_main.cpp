@@ -973,6 +973,22 @@ namespace {
     Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device_;
   };
 
+  void stop_swapchain_processor_without_delete(std::unique_ptr<SwapChainProcessor> &processor) {
+    if (!processor) {
+      return;
+    }
+
+    processor->stop();
+    processor->abandon_swapchain();
+    processor.reset();
+  }
+
+  void stop_swapchain_processors_without_delete(std::vector<std::unique_ptr<SwapChainProcessor>> &processors) {
+    for (auto &processor: processors) {
+      stop_swapchain_processor_without_delete(processor);
+    }
+    processors.clear();
+  }
 
   class IddCxBackend: public vdd::DisplayDriverBackend {
   public:
@@ -1196,19 +1212,12 @@ namespace {
         retired_processors_to_stop = std::move(monitor->second.retired_swapchain_processors);
       }
 
-      // Stop frame processing and close swapchain handles before departure.
-      // IddCxMonitorDeparture can invalidate active swapchain objects before
-      // our local processors leave scope during temporary-display removal.
-      if (processor_to_stop) {
-        processor_to_stop->stop();
-        processor_to_stop.reset();
-      }
-      for (auto &retired_processor: retired_processors_to_stop) {
-        if (retired_processor) {
-          retired_processor->stop();
-          retired_processor.reset();
-        }
-      }
+      // Stop frame processing and release local swapchain references before
+      // departure.
+      // IddCxMonitorDeparture can invalidate swapchain objects before local
+      // processors leave scope during temporary-display removal.
+      stop_swapchain_processor_without_delete(processor_to_stop);
+      stop_swapchain_processors_without_delete(retired_processors_to_stop);
 
       // IddCx can synchronously or asynchronously issue swapchain callbacks
       // during departure. Calling it outside the backend mutex keeps those
@@ -1298,6 +1307,7 @@ namespace {
       }
 
       std::unique_ptr<SwapChainProcessor> processor_to_stop;
+      std::vector<std::unique_ptr<SwapChainProcessor>> retired_processors_to_stop;
       bool erase_departing_record = false;
       {
         std::lock_guard lock {mutex_};
@@ -1309,14 +1319,17 @@ namespace {
         }
 
         processor_to_stop = std::move(record->second.swapchain_processor);
+        retired_processors_to_stop = std::move(record->second.retired_swapchain_processors);
         erase_departing_record = record->second.departing;
         if (erase_departing_record) {
           monitors_.erase(record);
         }
       }
 
-      processor_to_stop.reset();
-
+      // IddCx calls UnassignSwapChain after the associated swapchain is no
+      // longer valid. Do not WdfObjectDelete that handle from our destructor.
+      stop_swapchain_processor_without_delete(processor_to_stop);
+      stop_swapchain_processors_without_delete(retired_processors_to_stop);
       return STATUS_SUCCESS;
     }
 
