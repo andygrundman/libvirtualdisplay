@@ -1,6 +1,14 @@
 #include "virtual_display/driver/display_identity.h"
 
 namespace virtual_display::driver {
+  std::uint64_t permanent_display_id(const std::uint32_t index) {
+    return kPermanentDisplayIdBase | static_cast<std::uint64_t>(index + 1);
+  }
+
+  std::uint16_t permanent_product_code(const std::uint32_t index) {
+    return static_cast<std::uint16_t>(kPermanentDisplayProductCodeBase | (index & 0x0fffu));
+  }
+
   std::uint32_t serial_number_from_display_id(const std::uint64_t display_id) {
     const auto folded = static_cast<std::uint32_t>(display_id) ^
                         static_cast<std::uint32_t>(display_id >> 32);

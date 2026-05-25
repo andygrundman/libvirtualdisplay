@@ -69,6 +69,7 @@ namespace virtual_display::driver {
     QueryLeaseResult query_lease(std::uint64_t lease_id, std::chrono::steady_clock::time_point now) const;
     ControllerStatus set_permanent_display_count(const PermanentDisplayCountRequest &request);
     PermanentDisplayCountResult query_permanent_display_count() const;
+    QueryDisplayStateResult query_display_state() const;
     std::uint32_t reap_expired(std::chrono::steady_clock::time_point now);
 
     [[nodiscard]] const DisplayStore &store() const;
@@ -76,6 +77,7 @@ namespace virtual_display::driver {
   private:
     static ControllerStatus from_store_result(const StoreResult &result);
     DisplayDescriptor descriptor_from_record(const TemporaryDisplayRecord &record) const;
+    static DisplayStateEntry state_entry_from_record(const TemporaryDisplayRecord &record);
 
     DisplayStore store_;
     DisplayDriverBackend &backend_;

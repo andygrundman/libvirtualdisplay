@@ -35,6 +35,7 @@ TEST(VirtualDisplayDriverControlProtocol, ComputesBufferedUnknownDeviceIoctlCode
   EXPECT_EQ(vdd::kIoctlQueryLease, 0x0022e414u);
   EXPECT_EQ(vdd::kIoctlSetPermanentDisplayCount, 0x0022e418u);
   EXPECT_EQ(vdd::kIoctlQueryPermanentDisplayCount, 0x0022e41cu);
+  EXPECT_EQ(vdd::kIoctlQueryDisplayState, 0x00226420u);
 }
 
 TEST(VirtualDisplayDriverControlProtocol, ProtocolVersionUsesDedicatedNamespace) {

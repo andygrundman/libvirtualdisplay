@@ -307,3 +307,43 @@ TEST(VirtualDisplayDriverController, SetPermanentDisplayCountKeepsStoreUnchanged
   EXPECT_EQ(status.backend_error, vdd::BackendError::Failed);
   EXPECT_EQ(controller.query_permanent_display_count().current_display_count, 0u);
 }
+
+TEST(VirtualDisplayDriverController, QueryDisplayStateReportsPermanentAndTemporaryIdentity) {
+  FakeBackend backend;
+  auto controller = make_controller(backend);
+
+  vdd::PermanentDisplayCountRequest permanent {};
+  permanent.display_count = 1;
+  permanent.width = 3840;
+  permanent.height = 2160;
+  permanent.physical_width_mm = 700;
+  permanent.physical_height_mm = 390;
+  permanent.refresh_rate_millihz = 144'000;
+  std::memcpy(permanent.display_name, "Desk Display", 13);
+  ASSERT_TRUE(controller.set_permanent_display_count(permanent).ok());
+
+  auto temporary = make_create_request(100, 0x12345678);
+  temporary.flags = vdd::kCreateTemporaryDisplayFlagEphemeralIdentity;
+  ASSERT_TRUE(controller.create_temporary_display(temporary, std::chrono::steady_clock::now()).status.ok());
+
+  const auto state = controller.query_display_state();
+
+  EXPECT_EQ(state.permanent_display_count, 1u);
+  EXPECT_EQ(state.temporary_display_count, 1u);
+  ASSERT_EQ(state.entry_count, 2u);
+  EXPECT_EQ(state.entries[0].kind, vdd::kDisplayStateKindPermanent);
+  EXPECT_EQ(state.entries[0].display_id, vdd::permanent_display_id(0));
+  EXPECT_EQ(state.entries[0].connector_index, 0u);
+  EXPECT_EQ(state.entries[0].product_code, vdd::permanent_product_code(0));
+  EXPECT_EQ(state.entries[0].serial_number, vdd::serial_number_from_display_id(vdd::permanent_display_id(0)));
+  EXPECT_EQ(state.entries[0].flags & vdd::kDisplayStateFlagRetainIdentity, vdd::kDisplayStateFlagRetainIdentity);
+  EXPECT_EQ(vdd::trim_display_name(state.entries[0].display_name), "Desk Display");
+
+  EXPECT_EQ(state.entries[1].kind, vdd::kDisplayStateKindTemporary);
+  EXPECT_EQ(state.entries[1].display_id, 0x12345678u);
+  EXPECT_EQ(state.entries[1].lease_id, 100u);
+  EXPECT_EQ(state.entries[1].container_id, vdd::container_guid_from_display_id(0x12345678u));
+  EXPECT_EQ(state.entries[1].product_code, vdd::product_code_from_display_id(0x12345678u));
+  EXPECT_EQ(state.entries[1].flags & vdd::kDisplayStateFlagRetainIdentity, 0u);
+  EXPECT_EQ(state.entries[1].physical_width_mm, temporary.physical_width_mm);
+}

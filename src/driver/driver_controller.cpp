@@ -1,5 +1,7 @@
 #include "virtual_display/driver/driver_controller.h"
 
+#include <algorithm>
+#include <cstring>
 #include <utility>
 
 namespace virtual_display::driver {
@@ -142,6 +144,46 @@ namespace virtual_display::driver {
     return store_.query_permanent_display_count();
   }
 
+  QueryDisplayStateResult DriverController::query_display_state() const {
+    QueryDisplayStateResult result {};
+    const auto &settings = store_.permanent_display_settings();
+    result.permanent_display_count = store_.permanent_display_count();
+    result.temporary_display_count = store_.temporary_display_count();
+
+    for (std::uint32_t index = 0;
+         index < store_.permanent_display_count() && result.entry_count < kMaxDisplayStateEntries;
+         ++index) {
+      const auto display_id = permanent_display_id(index);
+      auto &entry = result.entries[result.entry_count++];
+      entry.kind = kDisplayStateKindPermanent;
+      entry.flags = kDisplayStateFlagHdrSupported | kDisplayStateFlagRetainIdentity;
+      entry.display_id = display_id;
+      entry.container_id = container_guid_from_display_id(display_id);
+      entry.connector_index = index;
+      entry.product_code = permanent_product_code(index);
+      entry.serial_number = serial_number_from_display_id(display_id);
+      entry.width = settings.width;
+      entry.height = settings.height;
+      entry.physical_width_mm = settings.physical_width_mm;
+      entry.physical_height_mm = settings.physical_height_mm;
+      entry.refresh_rate_millihz = settings.refresh_rate_millihz;
+      std::copy(
+        std::begin(settings.display_name),
+        std::end(settings.display_name),
+        std::begin(entry.display_name)
+      );
+    }
+
+    for (const auto &display: store_.temporary_displays()) {
+      if (result.entry_count >= kMaxDisplayStateEntries) {
+        break;
+      }
+      result.entries[result.entry_count++] = state_entry_from_record(display);
+    }
+
+    return result;
+  }
+
   std::uint32_t DriverController::reap_expired(const std::chrono::steady_clock::time_point now) {
     const auto expired = store_.expired_temporary_displays(now);
     std::uint32_t removed = 0;
@@ -186,6 +228,29 @@ namespace virtual_display::driver {
     descriptor.edid = create_edid(edid_options_for_temporary_display(record));
     descriptor.retain_identity = record.retain_identity;
     return descriptor;
+  }
+
+  DisplayStateEntry DriverController::state_entry_from_record(const TemporaryDisplayRecord &record) {
+    DisplayStateEntry entry {};
+    entry.kind = kDisplayStateKindTemporary;
+    entry.flags = kDisplayStateFlagHdrSupported;
+    if (record.retain_identity) {
+      entry.flags |= kDisplayStateFlagRetainIdentity;
+    }
+    entry.lease_id = record.lease_id;
+    entry.display_id = record.display_id;
+    entry.container_id = container_guid_from_display_id(record.display_id);
+    entry.connector_index = record.connector_index;
+    entry.product_code = product_code_from_display_id(record.display_id);
+    entry.serial_number = serial_number_from_display_id(record.display_id);
+    entry.width = record.width;
+    entry.height = record.height;
+    entry.physical_width_mm = record.physical_width_mm;
+    entry.physical_height_mm = record.physical_height_mm;
+    entry.refresh_rate_millihz = record.refresh_rate_millihz;
+    const auto copy_size = (std::min)(record.display_name.size(), static_cast<std::size_t>(kDisplayNameChars - 1));
+    std::memcpy(entry.display_name, record.display_name.data(), copy_size);
+    return entry;
   }
 
   const char *to_string(const BackendError error) {

@@ -55,6 +55,10 @@ namespace virtual_display::driver {
     return ioctl_out<PermanentDisplayCountResult>(kIoctlQueryPermanentDisplayCount, nullptr, 0);
   }
 
+  ControlResult<QueryDisplayStateResult> ControlClient::query_display_state() {
+    return ioctl_out<QueryDisplayStateResult>(kIoctlQueryDisplayState, nullptr, 0);
+  }
+
   ControlOperationResult ControlClient::ioctl_no_out(
     const std::uint32_t ioctl_code,
     const void *input,

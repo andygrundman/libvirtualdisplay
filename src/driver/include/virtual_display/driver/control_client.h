@@ -63,6 +63,7 @@ namespace virtual_display::driver {
     ControlResult<QueryLeaseResult> query_lease(const LeaseRequest &request);
     ControlResult<PermanentDisplayCountResult> set_permanent_display_count(const PermanentDisplayCountRequest &request);
     ControlResult<PermanentDisplayCountResult> query_permanent_display_count();
+    ControlResult<QueryDisplayStateResult> query_display_state();
 
   private:
     template<class T>

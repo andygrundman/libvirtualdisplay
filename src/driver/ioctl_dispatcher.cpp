@@ -177,6 +177,15 @@ namespace virtual_display::driver {
         return {IoctlStatus::Success, bytes_returned, {}};
       }
 
+      case kIoctlQueryDisplayState: {
+        const auto result = controller_.query_display_state();
+        if (!write_output(output, output_size, result, bytes_returned)) {
+          return {IoctlStatus::InvalidOutputBuffer, 0, {}};
+        }
+
+        return {IoctlStatus::Success, bytes_returned, {}};
+      }
+
       default:
         return {IoctlStatus::InvalidIoctl, 0, {}};
     }

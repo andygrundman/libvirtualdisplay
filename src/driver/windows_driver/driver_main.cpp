@@ -38,7 +38,6 @@ namespace vdd = virtual_display::driver;
 namespace {
   constexpr std::uint32_t kMaxPermanentDisplays = 4;
   constexpr std::uint32_t kMaxTemporaryDisplays = 8;
-  constexpr std::uint64_t kPermanentDisplayIdBase = 0x7000000000000000ull;
   constexpr std::uint32_t kPersistentStateSchemaVersion = 1;
   constexpr wchar_t kSwapchainMmcssTask[] = L"DisplayPostProcessing";
   constexpr wchar_t kTemporaryDisplayProfilesValue[] = L"TemporaryDisplayProfiles";
@@ -526,19 +525,15 @@ namespace {
     return NT_SUCCESS(status) ? vdd::BackendError::None : vdd::BackendError::Failed;
   }
 
-  std::uint64_t permanent_display_id(const std::uint32_t index) {
-    return kPermanentDisplayIdBase | static_cast<std::uint64_t>(index + 1);
-  }
-
   vdd::DisplayDescriptor make_permanent_descriptor(
     const std::uint32_t index,
     const vdd::PermanentDisplayCountRequest &settings
   ) {
-    const auto display_id = permanent_display_id(index);
+    const auto display_id = vdd::permanent_display_id(index);
 
     vdd::EdidOptions options {};
     options.manufacturer_id = vdd::kSunshineDriverManufacturerId;
-    options.product_code = static_cast<std::uint16_t>(0x4000u | (index & 0x0fffu));
+    options.product_code = vdd::permanent_product_code(index);
     options.serial_number = vdd::serial_number_from_display_id(display_id);
     options.width = settings.width;
     options.height = settings.height;
@@ -1129,14 +1124,14 @@ namespace {
       }
 
       for (auto index = permanent_display_count_; index > display_count; --index) {
-        const auto display_id = permanent_display_id(index - 1);
+        const auto display_id = vdd::permanent_display_id(index - 1);
         if (depart_display(display_id) != vdd::BackendError::None) {
           return vdd::BackendError::Failed;
         }
       }
 
       for (auto index = 0u; index < (std::min)(previous_display_count, display_count); ++index) {
-        const auto display_id = permanent_display_id(index);
+        const auto display_id = vdd::permanent_display_id(index);
         if (depart_display(display_id) != vdd::BackendError::None) {
           return vdd::BackendError::Failed;
         }

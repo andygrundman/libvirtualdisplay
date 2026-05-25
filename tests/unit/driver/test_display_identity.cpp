@@ -34,6 +34,13 @@ TEST(VirtualDisplayDriverDisplayIdentity, DerivesStableNonzeroSerialFromDisplayI
   );
 }
 
+TEST(VirtualDisplayDriverDisplayIdentity, DerivesPermanentDisplayIdentityFromSlot) {
+  EXPECT_EQ(vdd::permanent_display_id(0), 0x7000000000000001ull);
+  EXPECT_EQ(vdd::permanent_display_id(3), 0x7000000000000004ull);
+  EXPECT_EQ(vdd::permanent_product_code(0), 0x4000u);
+  EXPECT_EQ(vdd::permanent_product_code(3), 0x4003u);
+}
+
 TEST(VirtualDisplayDriverDisplayIdentity, DerivesProductCodeFromTemporaryRange) {
   EXPECT_EQ(vdd::product_code_from_display_id(0), vdd::kTemporaryDisplayProductCodeBase);
   EXPECT_EQ(vdd::product_code_from_display_id(0x1234), 0x5234);

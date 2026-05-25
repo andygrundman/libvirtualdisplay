@@ -72,6 +72,7 @@ namespace virtual_display::driver {
     std::uint32_t reap_expired(std::chrono::steady_clock::time_point now);
 
     [[nodiscard]] std::optional<TemporaryDisplayRecord> find_temporary_display(std::uint64_t display_id) const;
+    [[nodiscard]] std::vector<TemporaryDisplayRecord> temporary_displays() const;
     [[nodiscard]] std::vector<TemporaryDisplayRecord> temporary_displays_for_lease(std::uint64_t lease_id) const;
     [[nodiscard]] std::vector<TemporaryDisplayRecord> expired_temporary_displays(std::chrono::steady_clock::time_point now) const;
 

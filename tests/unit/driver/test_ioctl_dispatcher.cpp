@@ -367,6 +367,59 @@ TEST(VirtualDisplayDriverIoctlDispatcher, SetAndQueryPermanentDisplayCountUsePer
   EXPECT_EQ(output.physical_width_mm, 590u);
 }
 
+TEST(VirtualDisplayDriverIoctlDispatcher, QueryDisplayStateReturnsActiveIdentities) {
+  Harness harness;
+  vdd::PermanentDisplayCountRequest permanent {};
+  permanent.display_count = 1;
+  vdd::PermanentDisplayCountResult permanent_output {};
+  ASSERT_EQ(
+    harness.dispatcher.dispatch(
+      vdd::kIoctlSetPermanentDisplayCount,
+      &permanent,
+      sizeof(permanent),
+      &permanent_output,
+      sizeof(permanent_output),
+      std::chrono::steady_clock::now()
+    ).status,
+    vdd::IoctlStatus::Success
+  );
+
+  auto temporary = make_create_request();
+  temporary.flags = vdd::kCreateTemporaryDisplayFlagEphemeralIdentity;
+  vdd::CreateTemporaryDisplayResult created {};
+  ASSERT_EQ(
+    harness.dispatcher.dispatch(
+      vdd::kIoctlCreateTemporaryDisplay,
+      &temporary,
+      sizeof(temporary),
+      &created,
+      sizeof(created),
+      std::chrono::steady_clock::now()
+    ).status,
+    vdd::IoctlStatus::Success
+  );
+
+  vdd::QueryDisplayStateResult state {};
+  const auto result = harness.dispatcher.dispatch(
+    vdd::kIoctlQueryDisplayState,
+    nullptr,
+    0,
+    &state,
+    sizeof(state),
+    std::chrono::steady_clock::now()
+  );
+
+  EXPECT_EQ(result.status, vdd::IoctlStatus::Success);
+  EXPECT_EQ(result.bytes_returned, sizeof(state));
+  EXPECT_EQ(state.api_namespace, vdd::kApiNamespaceGuid);
+  EXPECT_EQ(state.permanent_display_count, 1u);
+  EXPECT_EQ(state.temporary_display_count, 1u);
+  ASSERT_EQ(state.entry_count, 2u);
+  EXPECT_EQ(state.entries[0].kind, vdd::kDisplayStateKindPermanent);
+  EXPECT_EQ(state.entries[1].kind, vdd::kDisplayStateKindTemporary);
+  EXPECT_EQ(state.entries[1].flags & vdd::kDisplayStateFlagRetainIdentity, 0u);
+}
+
 TEST(VirtualDisplayDriverIoctlDispatcher, SetPermanentDisplayCountRejectsShortOutputBeforeBackendMutation) {
   Harness harness;
   vdd::PermanentDisplayCountRequest request {};

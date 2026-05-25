@@ -259,6 +259,16 @@ namespace virtual_display::driver {
     return display->second;
   }
 
+  std::vector<TemporaryDisplayRecord> DisplayStore::temporary_displays() const {
+    std::vector<TemporaryDisplayRecord> displays;
+    displays.reserve(displays_by_id_.size());
+    for (const auto &[_, display]: displays_by_id_) {
+      displays.push_back(display);
+    }
+
+    return displays;
+  }
+
   std::vector<TemporaryDisplayRecord> DisplayStore::temporary_displays_for_lease(const std::uint64_t lease_id) const {
     std::vector<TemporaryDisplayRecord> displays;
     for (const auto &[_, display]: displays_by_id_) {

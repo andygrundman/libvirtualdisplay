@@ -52,6 +52,11 @@ namespace virtual_display::driver {
   inline constexpr std::uint32_t kCreateTemporaryDisplayFlagEphemeralIdentity = 0x00000001u;
   inline constexpr std::uint32_t kCreateTemporaryDisplayKnownFlags =
     kCreateTemporaryDisplayFlagEphemeralIdentity;
+  inline constexpr std::uint32_t kMaxDisplayStateEntries = 16;
+  inline constexpr std::uint32_t kDisplayStateKindPermanent = 1;
+  inline constexpr std::uint32_t kDisplayStateKindTemporary = 2;
+  inline constexpr std::uint32_t kDisplayStateFlagHdrSupported = 0x00000001u;
+  inline constexpr std::uint32_t kDisplayStateFlagRetainIdentity = 0x00000002u;
 
   enum class IoctlFunction : std::uint32_t {
     GetProtocolVersion = 0x900,
@@ -62,6 +67,7 @@ namespace virtual_display::driver {
     QueryLease = 0x905,
     SetPermanentDisplayCount = 0x906,
     QueryPermanentDisplayCount = 0x907,
+    QueryDisplayState = 0x908,
   };
 
   enum class IoctlAccess : std::uint32_t {
@@ -96,6 +102,8 @@ namespace virtual_display::driver {
     ioctl_code(IoctlFunction::SetPermanentDisplayCount, IoctlAccess::ReadWrite);
   inline constexpr std::uint32_t kIoctlQueryPermanentDisplayCount =
     ioctl_code(IoctlFunction::QueryPermanentDisplayCount, IoctlAccess::ReadWrite);
+  inline constexpr std::uint32_t kIoctlQueryDisplayState =
+    ioctl_code(IoctlFunction::QueryDisplayState, IoctlAccess::Read);
 
   struct ProtocolVersion {
     Guid api_namespace {kApiNamespaceGuid};
@@ -185,6 +193,32 @@ namespace virtual_display::driver {
     char display_name[kDisplayNameChars] {"Sunshine Display"};
   };
 
+  struct DisplayStateEntry {
+    std::uint32_t kind {};
+    std::uint32_t flags {};
+    std::uint64_t lease_id {};
+    std::uint64_t display_id {};
+    Guid container_id {};
+    std::uint32_t connector_index {};
+    std::uint32_t product_code {};
+    std::uint32_t serial_number {};
+    std::uint32_t width {};
+    std::uint32_t height {};
+    std::uint32_t physical_width_mm {};
+    std::uint32_t physical_height_mm {};
+    std::uint32_t refresh_rate_millihz {};
+    char display_name[kDisplayNameChars] {};
+  };
+
+  struct QueryDisplayStateResult {
+    Guid api_namespace {kApiNamespaceGuid};
+    std::uint32_t permanent_display_count {};
+    std::uint32_t temporary_display_count {};
+    std::uint32_t entry_count {};
+    std::uint32_t reserved {};
+    DisplayStateEntry entries[kMaxDisplayStateEntries] {};
+  };
+
   enum class ValidationError {
     None,
     WrongApiNamespace,
@@ -233,4 +267,6 @@ namespace virtual_display::driver {
   static_assert(sizeof(QueryLeaseResult) == 40);
   static_assert(sizeof(PermanentDisplayCountRequest) == 76);
   static_assert(sizeof(PermanentDisplayCountResult) == 80);
+  static_assert(sizeof(DisplayStateEntry) == 104);
+  static_assert(sizeof(QueryDisplayStateResult) == 1696);
 }  // namespace virtual_display::driver

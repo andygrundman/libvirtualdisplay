@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "virtual_display/driver/control_client.h"
+#include "virtual_display/driver/display_identity.h"
 
 #include <cstring>
 #include <vector>
@@ -214,6 +215,24 @@ TEST(VirtualDisplayDriverControlClient, PermanentDisplayOperationsReturnCounts) 
   EXPECT_EQ(transport.calls[1].ioctl_code, vdd::kIoctlQueryPermanentDisplayCount);
   EXPECT_EQ(input_as<vdd::PermanentDisplayCountRequest>(transport.calls[0]).display_count, 2u);
   EXPECT_EQ(input_as<vdd::PermanentDisplayCountRequest>(transport.calls[0]).physical_width_mm, 530u);
+}
+
+TEST(VirtualDisplayDriverControlClient, QueryDisplayStateUsesDisplayStateIoctl) {
+  FakeTransport transport;
+  vdd::QueryDisplayStateResult expected {};
+  expected.entry_count = 1;
+  expected.entries[0].kind = vdd::kDisplayStateKindPermanent;
+  expected.entries[0].display_id = vdd::permanent_display_id(0);
+  transport.set_output(expected);
+  vdd::ControlClient client {transport};
+
+  const auto result = client.query_display_state();
+
+  ASSERT_TRUE(result.ok());
+  EXPECT_EQ(result.value.entry_count, 1u);
+  EXPECT_EQ(result.value.entries[0].display_id, vdd::permanent_display_id(0));
+  ASSERT_EQ(transport.calls.size(), 1u);
+  EXPECT_EQ(transport.calls[0].ioctl_code, vdd::kIoctlQueryDisplayState);
 }
 
 TEST(VirtualDisplayDriverControlClient, DetectsShortOutput) {

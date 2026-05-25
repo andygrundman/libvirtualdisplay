@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstdio>
 #include <cwchar>
 #include <cstring>
 #include <filesystem>
@@ -30,6 +31,7 @@ namespace {
       << "virtualdisplay commands:\n"
       << "  driver install [--inf PATH]\n"
       << "  status\n"
+      << "  display query\n"
       << "  spawn [--width N] [--height N] [--physical-width-mm N] [--physical-height-mm N] [--refresh HZ] [--name TEXT]\n"
       << "  permanent query\n"
       << "  permanent set --count N [--width N] [--height N] [--physical-width-mm N] [--physical-height-mm N] [--refresh HZ] [--name TEXT]\n"
@@ -390,6 +392,37 @@ namespace {
     return std::string {vdd::trim_display_name(value)};
   }
 
+  std::string guid_string(const vdd::Guid &guid) {
+    char text[37] {};
+    std::snprintf(
+      text,
+      sizeof(text),
+      "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+      guid.data1,
+      guid.data2,
+      guid.data3,
+      guid.data4[0],
+      guid.data4[1],
+      guid.data4[2],
+      guid.data4[3],
+      guid.data4[4],
+      guid.data4[5],
+      guid.data4[6],
+      guid.data4[7]
+    );
+    return text;
+  }
+
+  const char *display_kind(const std::uint32_t kind) {
+    if (kind == vdd::kDisplayStateKindPermanent) {
+      return "permanent";
+    }
+    if (kind == vdd::kDisplayStateKindTemporary) {
+      return "temporary";
+    }
+    return "unknown";
+  }
+
   void print_permanent_state(const vdd::PermanentDisplayCountResult &state) {
     std::cout
       << "permanent_displays=" << state.current_display_count << '\n'
@@ -399,6 +432,34 @@ namespace {
       << (state.refresh_rate_millihz / 1000.0) << "Hz\n"
       << "physical_size_mm=" << state.physical_width_mm << 'x' << state.physical_height_mm << '\n'
       << "name=" << display_name(state.display_name) << '\n';
+  }
+
+  void print_display_state(const vdd::QueryDisplayStateResult &state) {
+    std::cout
+      << "permanent_displays=" << state.permanent_display_count << '\n'
+      << "temporary_displays=" << state.temporary_display_count << '\n'
+      << "display_entries=" << state.entry_count << '\n';
+
+    for (std::uint32_t index = 0; index < state.entry_count && index < vdd::kMaxDisplayStateEntries; ++index) {
+      const auto &entry = state.entries[index];
+      std::cout
+        << "display." << index << ".kind=" << display_kind(entry.kind) << '\n'
+        << "display." << index << ".display_id=" << entry.display_id << '\n'
+        << "display." << index << ".lease_id=" << entry.lease_id << '\n'
+        << "display." << index << ".connector_index=" << entry.connector_index << '\n'
+        << "display." << index << ".container_id=" << guid_string(entry.container_id) << '\n'
+        << "display." << index << ".product_code=" << entry.product_code << '\n'
+        << "display." << index << ".serial_number=" << entry.serial_number << '\n'
+        << "display." << index << ".mode=" << entry.width << 'x' << entry.height << '@'
+        << (entry.refresh_rate_millihz / 1000.0) << "Hz\n"
+        << "display." << index << ".physical_size_mm=" << entry.physical_width_mm << 'x'
+        << entry.physical_height_mm << '\n'
+        << "display." << index << ".hdr_supported="
+        << ((entry.flags & vdd::kDisplayStateFlagHdrSupported) ? 1 : 0) << '\n'
+        << "display." << index << ".retain_identity="
+        << ((entry.flags & vdd::kDisplayStateFlagRetainIdentity) ? 1 : 0) << '\n'
+        << "display." << index << ".name=" << display_name(entry.display_name) << '\n';
+    }
   }
 
   struct PermanentOptions {
@@ -549,6 +610,15 @@ int main(int argc, char **argv) {
       return fail("query permanent display failed", result);
     }
     print_permanent_state(result.value);
+    return 0;
+  }
+
+  if (args[0] == "display" && args.size() >= 2 && args[1] == "query") {
+    const auto result = client.query_display_state();
+    if (!result.ok()) {
+      return fail("query display state failed", result);
+    }
+    print_display_state(result.value);
     return 0;
   }
 

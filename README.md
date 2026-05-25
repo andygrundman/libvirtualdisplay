@@ -113,6 +113,12 @@ Query the current permanent-display state:
 .\tools\virtualdisplay.exe permanent query
 ```
 
+Query active display identity and profile details:
+
+```powershell
+.\tools\virtualdisplay.exe display query
+```
+
 Create one permanent display with the default settings:
 
 ```powershell
