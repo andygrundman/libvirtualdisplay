@@ -31,7 +31,7 @@ namespace {
     std::cout
       << "virtualdisplay commands:\n"
       << "  driver install [--inf PATH]\n"
-      << "  broker protocol|query-state|query-manifest\n"
+      << "  broker protocol|query-state|query-manifest|helper-diagnose|helper-apply-extended-topology\n"
       << "  status\n"
       << "  display query\n"
       << "  spawn [--width N] [--height N] [--physical-width-mm N] [--physical-height-mm N] [--refresh HZ] [--name TEXT]\n"
@@ -647,7 +647,11 @@ int main(int argc, char **argv) {
 
   if (args[0] == "broker") {
     if (args.size() == 2 &&
-        (args[1] == "protocol" || args[1] == "query-state" || args[1] == "query-manifest")) {
+        (args[1] == "protocol" ||
+         args[1] == "query-state" ||
+         args[1] == "query-manifest" ||
+         args[1] == "helper-diagnose" ||
+         args[1] == "helper-apply-extended-topology")) {
 #ifdef _WIN32
       return query_broker(args[1]);
 #else

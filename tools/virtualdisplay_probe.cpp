@@ -28,6 +28,7 @@ namespace {
     std::cout
       << "virtualdisplay_probe commands:\n"
       << "  --diagnose\n"
+      << "  --apply-extended-topology\n"
       << "  --check\n"
       << "  --query-permanent\n"
       << "  --set-permanent <count>\n"
@@ -224,7 +225,8 @@ namespace {
   }
 
   bool command_uses_display_config(const std::string_view command) {
-    return command == "--self-test-4k240" ||
+    return command == "--apply-extended-topology" ||
+           command == "--self-test-4k240" ||
            command == "--self-test-hdr" ||
            command == "--qa-temp-identity-retention" ||
            command == "--qa-temp-lease" ||
@@ -318,14 +320,18 @@ namespace {
     }
   }
 
-  bool apply_extended_topology() {
+  LONG apply_extended_topology_result() {
     return SetDisplayConfig(
       0,
       nullptr,
       0,
       nullptr,
       SDC_APPLY | SDC_TOPOLOGY_EXTEND
-    ) == ERROR_SUCCESS;
+    );
+  }
+
+  bool apply_extended_topology() {
+    return apply_extended_topology_result() == ERROR_SUCCESS;
   }
 
   void prepare_legacy_topology_path(DISPLAYCONFIG_PATH_INFO &path, const bool active) {
@@ -1104,6 +1110,21 @@ int main(const int argc, char **argv) {
   const std::string command {argv[1]};
   if (command == "--diagnose") {
     return diagnose_control_devices();
+  }
+
+  if (command == "--apply-extended-topology") {
+    if (const int session_status = require_active_console_session(command); session_status != 0) {
+      return session_status;
+    }
+
+    const LONG result = apply_extended_topology_result();
+    if (result != ERROR_SUCCESS) {
+      std::cerr << "apply extended topology failed native_error=" << result << '\n';
+      return 1;
+    }
+
+    std::cout << "extended_topology_applied=1\n";
+    return 0;
   }
 
   auto opened = vdd::open_first_control_device();

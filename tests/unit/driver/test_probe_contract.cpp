@@ -58,6 +58,7 @@ TEST(VirtualDisplayProbeContract, ExposesTemporaryAndPermanentRuntimeChecks) {
   const auto source = read_probe_source();
 
   expect_contains(source, "--diagnose");
+  expect_contains(source, "--apply-extended-topology");
   expect_contains(source, "--check");
   expect_contains(source, "--query-permanent");
   expect_contains(source, "--set-permanent <count>");
@@ -75,15 +76,20 @@ TEST(VirtualDisplayProbeContract, DiagnoseRunsBeforeControlDeviceOpen) {
   expect_contains(source, "vdd::enumerate_control_devices(&enumerate_error)");
   expect_contains(source, "control_interface_count=");
   expect_contains(source, "if (command == \"--diagnose\")");
+  expect_contains(source, "if (command == \"--apply-extended-topology\")");
+  expect_contains(source, "apply_extended_topology_result()");
 
   const auto command_pos = source.find("const std::string command {argv[1]}");
   const auto diagnose_pos = source.find("if (command == \"--diagnose\")");
+  const auto topology_pos = source.find("if (command == \"--apply-extended-topology\")");
   const auto open_pos = source.find("auto opened = vdd::open_first_control_device()");
   ASSERT_NE(command_pos, std::string::npos);
   ASSERT_NE(diagnose_pos, std::string::npos);
+  ASSERT_NE(topology_pos, std::string::npos);
   ASSERT_NE(open_pos, std::string::npos);
   EXPECT_LT(command_pos, open_pos);
   EXPECT_LT(diagnose_pos, open_pos);
+  EXPECT_LT(topology_pos, open_pos);
 }
 
 TEST(VirtualDisplayProbeContract, PermanentSelfTestRestoresOriginalCount) {
@@ -111,6 +117,7 @@ TEST(VirtualDisplayProbeContract, DisplayConfigCommandsRequireInteractiveSession
   const auto source = read_probe_source();
 
   expect_contains(source, "command_uses_display_config");
+  expect_contains(source, "--apply-extended-topology");
   expect_contains(source, "--self-test-4k240");
   expect_contains(source, "--self-test-hdr");
   expect_contains(source, "--qa-temp-identity-retention");
@@ -192,7 +199,10 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "open_first_control_device()");
   expect_contains(source, "query_display_state()");
   expect_contains(source, "query_display_manifest()");
-  expect_contains(source, "launch_console_helper(L\"--diagnose\")");
+  expect_contains(source, "helper_arguments_for_broker_command");
+  expect_contains(source, "return L\"--diagnose\"");
+  expect_contains(source, "return L\"--apply-extended-topology\"");
+  expect_contains(source, "launch_console_helper(*helper_arguments)");
   expect_contains(source, "WTSGetActiveConsoleSessionId()");
   expect_contains(source, "WTSQueryUserToken(session_id");
   expect_contains(source, "CreateProcessAsUserW");

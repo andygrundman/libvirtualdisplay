@@ -299,6 +299,16 @@ namespace {
     return exit_code;
   }
 
+  std::optional<std::wstring> helper_arguments_for_broker_command(const std::string_view command) {
+    if (command == "helper-diagnose") {
+      return L"--diagnose";
+    }
+    if (command == "helper-apply-extended-topology") {
+      return L"--apply-extended-topology";
+    }
+    return std::nullopt;
+  }
+
   std::string handle_command(vdd::ControlClient &client, const std::string_view command) {
     if (command == "protocol") {
       const auto result = client.query_protocol_version();
@@ -330,8 +340,8 @@ namespace {
              " max_profiles=" + std::to_string(result.value.max_profile_count) + "\n";
     }
 
-    if (command == "helper-diagnose") {
-      const DWORD helper_result = launch_console_helper(L"--diagnose");
+    if (const auto helper_arguments = helper_arguments_for_broker_command(command)) {
+      const DWORD helper_result = launch_console_helper(*helper_arguments);
       if (helper_result != ERROR_SUCCESS) {
         return "error helper_result=" + std::to_string(helper_result) + "\n";
       }
