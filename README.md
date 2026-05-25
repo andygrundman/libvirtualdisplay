@@ -68,6 +68,9 @@ The ZIP contains:
 GitHub Actions publishes the same Windows x64 ZIP when a `v*` tag is pushed,
 for example `v0.1.0`.
 
+Production driver releases must satisfy the gates in
+`docs/release-validation.md` before they are treated as supported builds.
+
 For C++ integration, consume the source tree and CMake target. The release ZIP
 is intended for the driver, CLI, and probe tools.
 
