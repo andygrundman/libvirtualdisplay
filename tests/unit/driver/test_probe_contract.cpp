@@ -19,6 +19,32 @@ namespace {
     return buffer.str();
   }
 
+  std::string read_broker_source() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} / "tools/virtualdisplay_broker.cpp";
+    std::ifstream file {path, std::ios::binary};
+    if (!file) {
+      ADD_FAILURE() << "Failed to open " << path.string();
+      return {};
+    }
+
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+  }
+
+  std::string read_driver_cmake() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} / "src/driver/CMakeLists.txt";
+    std::ifstream file {path, std::ios::binary};
+    if (!file) {
+      ADD_FAILURE() << "Failed to open " << path.string();
+      return {};
+    }
+
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+  }
+
   void expect_contains(const std::string &content, const std::string &needle) {
     EXPECT_NE(content.find(needle), std::string::npos) << "missing: " << needle;
   }
@@ -150,4 +176,23 @@ TEST(VirtualDisplayProbeContract, TemporaryIdentityRetentionQaRequiresRestoredHd
   expect_contains(source, "filler display reused retained identity connector");
   expect_contains(source, "HDR profile was not retained for recreated temporary display");
   expect_contains(source, "qa_temp_identity_retention=1");
+}
+
+TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
+  const auto source = read_broker_source();
+  const auto cmake = read_driver_cmake();
+
+  expect_contains(cmake, "add_executable(virtualdisplay_broker");
+  expect_contains(cmake, "target_link_libraries(virtualdisplay_broker PRIVATE libvirtualdisplay::driver advapi32)");
+  expect_contains(source, "kPipeName[] = L\"\\\\\\\\.\\\\pipe\\\\SunshineVirtualDisplayBroker\"");
+  expect_contains(source, "kPipeSecurityDescriptor[] = L\"D:P(A;;GA;;;SY)(A;;GA;;;BA)\"");
+  expect_contains(source, "ConvertStringSecurityDescriptorToSecurityDescriptorW");
+  expect_contains(source, "CreateNamedPipeW");
+  expect_contains(source, "open_first_control_device()");
+  expect_contains(source, "query_display_state()");
+  expect_contains(source, "query_display_manifest()");
+  expect_contains(source, "RegisterServiceCtrlHandlerW");
+  expect_contains(source, "StartServiceCtrlDispatcherW");
+  expect_contains(source, "--run-console");
+  expect_contains(source, "--service");
 }
