@@ -33,6 +33,14 @@ jobs:
         with:
           arch: x64
 
+      - name: Install WDK
+        shell: pwsh
+        run: |
+          $wdfPath = 'C:\Program Files (x86)\Windows Kits\10\Include\wdf\umdf\2.25'
+          if (-not (Test-Path $wdfPath)) {
+            winget install --id Microsoft.WindowsWDK.10.0.26100 --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+          }
+
       - name: Resolve release version
         id: version
         shell: pwsh
