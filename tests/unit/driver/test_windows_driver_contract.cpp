@@ -19,6 +19,20 @@ namespace {
     buffer << file.rdbuf();
     return buffer.str();
   }
+
+  std::string read_windows_driver_inf() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
+                      "src/driver/windows_driver/SunshineVirtualDisplayDriver.inf";
+    std::ifstream file {path, std::ios::binary};
+    if (!file) {
+      ADD_FAILURE() << "Failed to open " << path.string();
+      return {};
+    }
+
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+  }
 }  // namespace
 
 TEST(VirtualDisplayWindowsDriverContract, DeletesMonitorObjectWhenArrivalFails) {
@@ -81,6 +95,26 @@ TEST(VirtualDisplayWindowsDriverContract, UsesDigitalSinkTechnologyForHdrClassif
   EXPECT_NE(source.find("WCG-only"), std::string::npos);
 }
 
+TEST(VirtualDisplayWindowsDriverContract, StoresTemporaryIdentityInWdfPersistentState) {
+  const auto source = read_windows_driver_source();
+  const auto inf = read_windows_driver_inf();
+
+  EXPECT_NE(source.find("WdfDriverOpenPersistentStateRegistryKey(driver, desired_access"), std::string::npos);
+  EXPECT_NE(source.find("WdfDeviceOpenRegistryKey("), std::string::npos);
+  EXPECT_NE(source.find("KEY_READ"), std::string::npos);
+  EXPECT_NE(source.find("KEY_SET_VALUE"), std::string::npos);
+  EXPECT_NE(source.find("kPersistentStateSchemaVersion"), std::string::npos);
+  EXPECT_NE(source.find("TemporaryDisplayProfiles"), std::string::npos);
+  EXPECT_NE(source.find("REG_BINARY"), std::string::npos);
+  EXPECT_EQ(source.find("KEY_ALL_ACCESS"), std::string::npos);
+  EXPECT_EQ(source.find("KEY_WRITE"), std::string::npos);
+  EXPECT_EQ(source.find("WdfRegistryCreateKey"), std::string::npos);
+  EXPECT_EQ(source.find("RegEnumKeyExW"), std::string::npos);
+  EXPECT_EQ(source.find("SOFTWARE\\\\Sunshine\\\\VirtualDisplayDriver"), std::string::npos);
+  EXPECT_EQ(source.find("RegCreateKeyExW"), std::string::npos);
+  EXPECT_NE(inf.find("HKR,,\"ConfigVersion\",0x00010001,1"), std::string::npos);
+}
+
 TEST(VirtualDisplayWindowsDriverContract, SetsSwapChainDeviceFromProcessingThread) {
   const auto source = read_windows_driver_source();
 
@@ -95,6 +129,7 @@ TEST(VirtualDisplayWindowsDriverContract, SetsSwapChainDeviceFromProcessingThrea
   ASSERT_NE(set_device, std::string::npos);
   EXPECT_NE(source.find("HandleNewSwapChain still owns IddCx's internal OPM cleanup", process_frames), std::string::npos);
 }
+
 
 TEST(VirtualDisplayWindowsDriverContract, TargetModesUseRequestedDescriptorTiming) {
   const auto source = read_windows_driver_source();

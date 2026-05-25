@@ -38,7 +38,12 @@ namespace {
   constexpr std::uint32_t kMaxPermanentDisplays = 4;
   constexpr std::uint32_t kMaxTemporaryDisplays = 8;
   constexpr std::uint64_t kPermanentDisplayIdBase = 0x7000000000000000ull;
-  constexpr wchar_t kTemporaryDisplayProfilesKey[] = L"SOFTWARE\\Sunshine\\VirtualDisplayDriver\\TemporaryDisplays";
+  constexpr std::uint32_t kPersistentStateSchemaVersion = 1;
+  constexpr wchar_t kTemporaryDisplayProfilesValue[] = L"TemporaryDisplayProfiles";
+  constexpr std::size_t kTemporaryDisplayProfileBytes = 36;
+  constexpr std::size_t kTemporaryDisplayProfilesHeaderBytes = 8;
+  constexpr std::size_t kTemporaryDisplayProfilesMaxBytes =
+    kTemporaryDisplayProfilesHeaderBytes + kTemporaryDisplayProfileBytes * kMaxTemporaryDisplays;
   const GUID kControlInterfaceGuid = vdd::to_windows_guid(vdd::kDeviceInterfaceGuid);
 
   class IddCxBackend;
@@ -185,123 +190,328 @@ namespace {
     return {std::move(modes), preferred_index};
   }
 
-  std::wstring temporary_profile_key_name(const std::uint64_t display_id) {
-    wchar_t key_name[32] {};
-    swprintf_s(key_name, L"%016llX", static_cast<unsigned long long>(display_id));
-    return key_name;
+  UNICODE_STRING unicode_string(const wchar_t *value) {
+    UNICODE_STRING result {};
+    RtlInitUnicodeString(&result, value);
+    return result;
   }
 
-  std::map<std::uint64_t, std::uint32_t> load_temporary_connector_reservations() {
+  struct TemporaryDisplayProfile {
+    std::uint64_t display_id {};
+    std::uint32_t connector_index {};
+    GUID container_id {};
+    std::uint32_t edid_product_code {};
+    std::uint32_t edid_serial_number {};
+  };
+
+  void append_u32(std::vector<std::uint8_t> &blob, const std::uint32_t value) {
+    blob.push_back(static_cast<std::uint8_t>(value & 0xffu));
+    blob.push_back(static_cast<std::uint8_t>((value >> 8u) & 0xffu));
+    blob.push_back(static_cast<std::uint8_t>((value >> 16u) & 0xffu));
+    blob.push_back(static_cast<std::uint8_t>((value >> 24u) & 0xffu));
+  }
+
+  void append_u64(std::vector<std::uint8_t> &blob, const std::uint64_t value) {
+    append_u32(blob, static_cast<std::uint32_t>(value & 0xffffffffull));
+    append_u32(blob, static_cast<std::uint32_t>((value >> 32ull) & 0xffffffffull));
+  }
+
+  void append_guid(std::vector<std::uint8_t> &blob, const GUID &value) {
+    append_u32(blob, value.Data1);
+    blob.push_back(static_cast<std::uint8_t>(value.Data2 & 0xffu));
+    blob.push_back(static_cast<std::uint8_t>((value.Data2 >> 8u) & 0xffu));
+    blob.push_back(static_cast<std::uint8_t>(value.Data3 & 0xffu));
+    blob.push_back(static_cast<std::uint8_t>((value.Data3 >> 8u) & 0xffu));
+    blob.insert(blob.end(), std::begin(value.Data4), std::end(value.Data4));
+  }
+
+  bool read_u32(const std::vector<std::uint8_t> &blob, std::size_t &offset, std::uint32_t &value) {
+    if (blob.size() - offset < sizeof(std::uint32_t)) {
+      return false;
+    }
+
+    value =
+      static_cast<std::uint32_t>(blob[offset]) |
+      (static_cast<std::uint32_t>(blob[offset + 1]) << 8u) |
+      (static_cast<std::uint32_t>(blob[offset + 2]) << 16u) |
+      (static_cast<std::uint32_t>(blob[offset + 3]) << 24u);
+    offset += sizeof(std::uint32_t);
+    return true;
+  }
+
+  bool read_u64(const std::vector<std::uint8_t> &blob, std::size_t &offset, std::uint64_t &value) {
+    std::uint32_t low {};
+    std::uint32_t high {};
+    if (!read_u32(blob, offset, low) || !read_u32(blob, offset, high)) {
+      return false;
+    }
+
+    value = static_cast<std::uint64_t>(low) | (static_cast<std::uint64_t>(high) << 32ull);
+    return true;
+  }
+
+  bool read_guid(const std::vector<std::uint8_t> &blob, std::size_t &offset, GUID &value) {
+    if (blob.size() - offset < sizeof(GUID)) {
+      return false;
+    }
+
+    std::uint32_t data1 {};
+    std::uint32_t data2 {};
+    std::uint32_t data3 {};
+    if (!read_u32(blob, offset, data1)) {
+      return false;
+    }
+    if (blob.size() - offset < 12) {
+      return false;
+    }
+
+    data2 = static_cast<std::uint32_t>(blob[offset]) | (static_cast<std::uint32_t>(blob[offset + 1]) << 8u);
+    offset += sizeof(std::uint16_t);
+    data3 = static_cast<std::uint32_t>(blob[offset]) | (static_cast<std::uint32_t>(blob[offset + 1]) << 8u);
+    offset += sizeof(std::uint16_t);
+
+    value.Data1 = data1;
+    value.Data2 = static_cast<unsigned short>(data2);
+    value.Data3 = static_cast<unsigned short>(data3);
+    std::copy_n(blob.begin() + static_cast<std::ptrdiff_t>(offset), std::size(value.Data4), std::begin(value.Data4));
+    offset += std::size(value.Data4);
+    return true;
+  }
+
+  class RegistryKey {
+  public:
+    RegistryKey() = default;
+    explicit RegistryKey(WDFKEY key):
+        key_ {key} {
+    }
+    RegistryKey(const RegistryKey &) = delete;
+    RegistryKey &operator=(const RegistryKey &) = delete;
+    RegistryKey(RegistryKey &&other) noexcept:
+        key_ {std::exchange(other.key_, nullptr)} {
+    }
+    RegistryKey &operator=(RegistryKey &&other) noexcept {
+      if (this != &other) {
+        reset(std::exchange(other.key_, nullptr));
+      }
+      return *this;
+    }
+    ~RegistryKey() {
+      reset();
+    }
+
+    WDFKEY get() const {
+      return key_;
+    }
+
+    WDFKEY *put() {
+      reset();
+      return &key_;
+    }
+
+    void reset(WDFKEY key = nullptr) {
+      if (key_) {
+        WdfRegistryClose(key_);
+      }
+      key_ = key;
+    }
+
+  private:
+    WDFKEY key_ {};
+  };
+
+  NTSTATUS open_driver_state_key(WDFDRIVER driver, WDFDEVICE device, ACCESS_MASK desired_access, RegistryKey &key) {
+    if (!driver && !device) {
+      return STATUS_INVALID_PARAMETER;
+    }
+
+    if (driver) {
+      const auto status = WdfDriverOpenPersistentStateRegistryKey(driver, desired_access, WDF_NO_OBJECT_ATTRIBUTES, key.put());
+      if (NT_SUCCESS(status)) {
+        return status;
+      }
+    }
+
+    if (!device) {
+      return STATUS_INVALID_PARAMETER;
+    }
+
+    return WdfDeviceOpenRegistryKey(
+      device,
+      PLUGPLAY_REGKEY_DEVICE | WDF_REGKEY_DEVICE_SUBKEY,
+      desired_access,
+      WDF_NO_OBJECT_ATTRIBUTES,
+      key.put()
+    );
+  }
+
+  template <typename T>
+  bool query_registry_value(
+    WDFKEY key,
+    const wchar_t *value_name,
+    const ULONG expected_type,
+    T &value
+  ) {
+    auto name = unicode_string(value_name);
+    ULONG value_length {};
+    ULONG value_type {};
+    const auto status = WdfRegistryQueryValue(key, &name, sizeof(value), &value, &value_length, &value_type);
+    return NT_SUCCESS(status) && value_type == expected_type && value_length == sizeof(value);
+  }
+
+  bool valid_temporary_profile(const std::uint64_t display_id, const std::uint32_t connector_index) {
+    return display_id != 0 && connector_index < kMaxPermanentDisplays + kMaxTemporaryDisplays;
+  }
+
+  std::vector<TemporaryDisplayProfile> load_temporary_display_profiles(WDFDRIVER driver, WDFDEVICE device) {
+    std::vector<TemporaryDisplayProfile> profiles;
+    RegistryKey state_key;
+    if (!NT_SUCCESS(open_driver_state_key(driver, device, KEY_READ, state_key))) {
+      return profiles;
+    }
+
+    std::vector<std::uint8_t> blob(kTemporaryDisplayProfilesMaxBytes);
+    auto value_name = unicode_string(kTemporaryDisplayProfilesValue);
+    ULONG value_length {};
+    ULONG value_type {};
+    const auto status = WdfRegistryQueryValue(
+      state_key.get(),
+      &value_name,
+      static_cast<ULONG>(blob.size()),
+      blob.data(),
+      &value_length,
+      &value_type
+    );
+    if (!NT_SUCCESS(status) || value_type != REG_BINARY || value_length < kTemporaryDisplayProfilesHeaderBytes ||
+        value_length > blob.size()) {
+      return profiles;
+    }
+
+    blob.resize(value_length);
+
+    std::size_t offset {};
+    std::uint32_t schema_version {};
+    std::uint32_t profile_count {};
+    if (!read_u32(blob, offset, schema_version) ||
+        !read_u32(blob, offset, profile_count) ||
+        schema_version != kPersistentStateSchemaVersion ||
+        profile_count > kMaxTemporaryDisplays ||
+        blob.size() != kTemporaryDisplayProfilesHeaderBytes + profile_count * kTemporaryDisplayProfileBytes) {
+      return {};
+    }
+
+    profiles.reserve(profile_count);
+    for (std::uint32_t index = 0; index < profile_count; ++index) {
+      TemporaryDisplayProfile profile {};
+      if (!read_u64(blob, offset, profile.display_id) ||
+          !read_u32(blob, offset, profile.connector_index) ||
+          !read_guid(blob, offset, profile.container_id) ||
+          !read_u32(blob, offset, profile.edid_product_code) ||
+          !read_u32(blob, offset, profile.edid_serial_number) ||
+          !valid_temporary_profile(profile.display_id, profile.connector_index)) {
+        return {};
+      }
+
+      profiles.push_back(profile);
+    }
+
+    return profiles;
+  }
+
+  std::map<std::uint64_t, std::uint32_t> load_temporary_connector_reservations(WDFDRIVER driver, WDFDEVICE device) {
     std::map<std::uint64_t, std::uint32_t> reservations;
-    HKEY profiles_key {};
-    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, kTemporaryDisplayProfilesKey, 0, KEY_READ, &profiles_key) != ERROR_SUCCESS) {
-      return reservations;
+    for (const auto &profile: load_temporary_display_profiles(driver, device)) {
+      reservations.emplace(profile.display_id, profile.connector_index);
     }
-
-    for (DWORD index = 0;; ++index) {
-      wchar_t key_name[256] {};
-      DWORD key_name_length = static_cast<DWORD>(std::size(key_name));
-      const auto enum_status = RegEnumKeyExW(
-        profiles_key,
-        index,
-        key_name,
-        &key_name_length,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr
-      );
-      if (enum_status == ERROR_NO_MORE_ITEMS) {
-        break;
-      }
-      if (enum_status != ERROR_SUCCESS) {
-        continue;
-      }
-
-      HKEY profile_key {};
-      if (RegOpenKeyExW(profiles_key, key_name, 0, KEY_READ, &profile_key) != ERROR_SUCCESS) {
-        continue;
-      }
-
-      std::uint64_t display_id {};
-      std::uint32_t connector_index {};
-      DWORD display_id_size = sizeof(display_id);
-      DWORD connector_index_size = sizeof(connector_index);
-      if (RegGetValueW(profile_key, nullptr, L"DisplayId", RRF_RT_REG_QWORD, nullptr, &display_id, &display_id_size) == ERROR_SUCCESS &&
-          RegGetValueW(profile_key, nullptr, L"ConnectorIndex", RRF_RT_REG_DWORD, nullptr, &connector_index, &connector_index_size) == ERROR_SUCCESS &&
-          display_id != 0 &&
-          connector_index < kMaxPermanentDisplays + kMaxTemporaryDisplays) {
-        reservations.emplace(display_id, connector_index);
-      }
-
-      RegCloseKey(profile_key);
-    }
-
-    RegCloseKey(profiles_key);
     return reservations;
   }
 
   template <typename T>
   void write_registry_value_if_success(
-    HKEY key,
+    WDFKEY key,
     const wchar_t *value_name,
-    const DWORD type,
+    const ULONG type,
     const T &value,
-    LSTATUS &status
+    NTSTATUS &status
   ) {
-    if (status == ERROR_SUCCESS) {
-      status = RegSetValueExW(key, value_name, 0, type, reinterpret_cast<const BYTE *>(&value), sizeof(value));
+    if (NT_SUCCESS(status)) {
+      auto name = unicode_string(value_name);
+      auto value_copy = value;
+      status = WdfRegistryAssignValue(key, &name, type, sizeof(value_copy), &value_copy);
     }
   }
 
-  vdd::BackendError save_temporary_display_profile(const vdd::DisplayDescriptor &descriptor) {
-    HKEY profiles_key {};
-    LSTATUS status = RegCreateKeyExW(
-      HKEY_LOCAL_MACHINE,
-      kTemporaryDisplayProfilesKey,
-      0,
-      nullptr,
-      REG_OPTION_NON_VOLATILE,
-      KEY_WRITE,
-      nullptr,
-      &profiles_key,
-      nullptr
-    );
-    if (status != ERROR_SUCCESS) {
-      return vdd::BackendError::None;
+  void write_registry_ulong_if_success(WDFKEY key, const wchar_t *value_name, const ULONG value, NTSTATUS &status) {
+    if (NT_SUCCESS(status)) {
+      auto name = unicode_string(value_name);
+      status = WdfRegistryAssignULong(key, &name, value);
+    }
+  }
+
+  vdd::BackendError save_temporary_display_profile(
+    WDFDRIVER driver,
+    WDFDEVICE device,
+    const vdd::DisplayDescriptor &descriptor
+  ) {
+    if (!valid_temporary_profile(descriptor.display_id, descriptor.connector_index)) {
+      return vdd::BackendError::Failed;
     }
 
-    HKEY profile_key {};
-    const auto key_name = temporary_profile_key_name(descriptor.display_id);
-    status = RegCreateKeyExW(
-      profiles_key,
-      key_name.c_str(),
-      0,
-      nullptr,
-      REG_OPTION_NON_VOLATILE,
-      KEY_WRITE,
-      nullptr,
-      &profile_key,
-      nullptr
-    );
-    RegCloseKey(profiles_key);
-    if (status != ERROR_SUCCESS) {
-      return vdd::BackendError::None;
+    RegistryKey state_key;
+    auto status = open_driver_state_key(driver, device, KEY_READ | KEY_SET_VALUE, state_key);
+    if (!NT_SUCCESS(status)) {
+      return vdd::BackendError::Failed;
     }
 
-    const DWORD connector_index = descriptor.connector_index;
-    const GUID container_id = vdd::to_windows_guid(descriptor.container_id);
-    const DWORD edid_product_code = vdd::read_product_code(descriptor.edid);
-    const DWORD edid_serial_number = vdd::read_serial_number(descriptor.edid);
+    auto profiles = load_temporary_display_profiles(driver, device);
+    const TemporaryDisplayProfile profile {
+      descriptor.display_id,
+      descriptor.connector_index,
+      vdd::to_windows_guid(descriptor.container_id),
+      vdd::read_product_code(descriptor.edid),
+      vdd::read_serial_number(descriptor.edid)
+    };
 
-    write_registry_value_if_success(profile_key, L"DisplayId", REG_QWORD, descriptor.display_id, status);
-    write_registry_value_if_success(profile_key, L"ConnectorIndex", REG_DWORD, connector_index, status);
-    write_registry_value_if_success(profile_key, L"ContainerId", REG_BINARY, container_id, status);
-    write_registry_value_if_success(profile_key, L"EdidProductCode", REG_DWORD, edid_product_code, status);
-    write_registry_value_if_success(profile_key, L"EdidSerialNumber", REG_DWORD, edid_serial_number, status);
+    const auto existing = std::find_if(
+      profiles.begin(),
+      profiles.end(),
+      [&](const TemporaryDisplayProfile &entry) {
+        return entry.display_id == descriptor.display_id;
+      }
+    );
+    if (existing != profiles.end()) {
+      *existing = profile;
+    } else {
+      if (profiles.size() >= kMaxTemporaryDisplays) {
+        return vdd::BackendError::Failed;
+      }
+      profiles.push_back(profile);
+    }
 
-    RegCloseKey(profile_key);
-    return vdd::BackendError::None;
+    std::vector<std::uint8_t> blob;
+    blob.reserve(kTemporaryDisplayProfilesHeaderBytes + profiles.size() * kTemporaryDisplayProfileBytes);
+    append_u32(blob, kPersistentStateSchemaVersion);
+    append_u32(blob, static_cast<std::uint32_t>(profiles.size()));
+    for (const auto &entry: profiles) {
+      if (!valid_temporary_profile(entry.display_id, entry.connector_index)) {
+        return vdd::BackendError::Failed;
+      }
+      append_u64(blob, entry.display_id);
+      append_u32(blob, entry.connector_index);
+      append_guid(blob, entry.container_id);
+      append_u32(blob, entry.edid_product_code);
+      append_u32(blob, entry.edid_serial_number);
+    }
+
+    auto value_name = unicode_string(kTemporaryDisplayProfilesValue);
+    status = WdfRegistryAssignValue(
+      state_key.get(),
+      &value_name,
+      REG_BINARY,
+      static_cast<ULONG>(blob.size()),
+      blob.data()
+    );
+
+    return NT_SUCCESS(status) ? vdd::BackendError::None : vdd::BackendError::Failed;
   }
 
   vdd::DisplayDescriptor make_permanent_descriptor(const std::uint32_t index) {
@@ -763,8 +973,14 @@ namespace {
     Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device_;
   };
 
+
   class IddCxBackend: public vdd::DisplayDriverBackend {
   public:
+    IddCxBackend(WDFDRIVER driver, WDFDEVICE device):
+        driver_ {driver},
+        device_ {device} {
+    }
+
     NTSTATUS initialize_adapter(WDFDEVICE device) {
       if (adapter_) {
         return STATUS_SUCCESS;
@@ -822,7 +1038,7 @@ namespace {
     }
 
     vdd::BackendError reserve_temporary_display_identity(const vdd::DisplayDescriptor &descriptor) override {
-      return save_temporary_display_profile(descriptor);
+      return save_temporary_display_profile(driver_, device_, descriptor);
     }
 
     vdd::BackendError depart_temporary_display(const std::uint64_t display_id) override {
@@ -1100,6 +1316,7 @@ namespace {
       }
 
       processor_to_stop.reset();
+
       return STATUS_SUCCESS;
     }
 
@@ -1150,6 +1367,8 @@ namespace {
     }
 
     std::mutex mutex_ {};
+    WDFDRIVER driver_ {};
+    WDFDEVICE device_ {};
     IDDCX_ADAPTER adapter_ {};
     bool adapter_ready_ {};
     std::uint32_t permanent_display_count_ {};
@@ -1158,12 +1377,13 @@ namespace {
 
   class DeviceState {
   public:
-    DeviceState():
+    DeviceState(WDFDRIVER driver, WDFDEVICE device):
+        backend {driver, device},
         controller {
           vdd::DisplayStore {
             kMaxPermanentDisplays,
             kMaxTemporaryDisplays,
-            load_temporary_connector_reservations()
+            load_temporary_connector_reservations(driver, device)
           },
           backend
         },
@@ -1194,7 +1414,7 @@ namespace {
       );
     }
 
-    IddCxBackend backend {};
+    IddCxBackend backend;
     vdd::DriverController controller;
     vdd::IoctlDispatcher dispatcher;
 
@@ -1313,7 +1533,7 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING re
   return WdfDriverCreate(driver_object, registry_path, WDF_NO_OBJECT_ATTRIBUTES, &config, WDF_NO_HANDLE);
 }
 
-NTSTATUS SunshineEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
+NTSTATUS SunshineEvtDeviceAdd(WDFDRIVER driver, PWDFDEVICE_INIT device_init) {
   WDF_PNPPOWER_EVENT_CALLBACKS pnp_callbacks;
   WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&pnp_callbacks);
   pnp_callbacks.EvtDeviceD0Entry = SunshineEvtDeviceD0Entry;
@@ -1355,7 +1575,7 @@ NTSTATUS SunshineEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
   }
 
   auto *context = GetDeviceContext(device);
-  context->state = new (std::nothrow) DeviceState();
+  context->state = new (std::nothrow) DeviceState(driver, device);
   if (!context->state) {
     return STATUS_INSUFFICIENT_RESOURCES;
   }
