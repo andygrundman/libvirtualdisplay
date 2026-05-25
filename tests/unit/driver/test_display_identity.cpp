@@ -11,6 +11,8 @@ namespace {
       display_id,
       3840,
       2160,
+      700,
+      390,
       120'000,
       30'000,
       8,
@@ -58,6 +60,8 @@ TEST(VirtualDisplayDriverDisplayIdentity, BuildsHdrEdidOptionsFromDisplayRecord)
   EXPECT_EQ(options.serial_number, vdd::serial_number_from_display_id(record.display_id));
   EXPECT_EQ(options.width, record.width);
   EXPECT_EQ(options.height, record.height);
+  EXPECT_EQ(options.physical_width_mm, record.physical_width_mm);
+  EXPECT_EQ(options.physical_height_mm, record.physical_height_mm);
   EXPECT_EQ(options.refresh_rate_millihz, record.refresh_rate_millihz);
   EXPECT_EQ(options.monitor_name, record.display_name);
   EXPECT_TRUE(options.hdr_supported);

@@ -47,7 +47,7 @@ AddInterface={5f894d6c-3a69-48a2-86ef-e4c671932d63},,ControlInterface
 AddReg=ControlInterface_AddReg
 
 [ControlInterface_AddReg]
-HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)"
+HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GA;;;BA)"
 
 [Device_Install.NT.Services]
 AddService=WUDFRd,0x000001fa,WUDFRD_ServiceInstall

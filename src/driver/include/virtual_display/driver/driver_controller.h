@@ -25,8 +25,11 @@ namespace virtual_display::driver {
     std::uint32_t connector_index {};
     std::uint32_t width {};
     std::uint32_t height {};
+    std::uint32_t physical_width_mm {};
+    std::uint32_t physical_height_mm {};
     std::uint32_t refresh_rate_millihz {};
     std::array<std::byte, kEdidSize> edid {};
+    bool retain_identity {true};
   };
 
   class DisplayDriverBackend {

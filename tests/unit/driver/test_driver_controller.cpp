@@ -61,6 +61,8 @@ namespace {
     request.display_id = display_id;
     request.width = 2560;
     request.height = 1440;
+    request.physical_width_mm = 590;
+    request.physical_height_mm = 330;
     request.refresh_rate_millihz = 120'000;
     request.requested_timeout_ms = 30'000;
     std::memcpy(request.display_name, "Sunshine HDR", 13);
@@ -87,6 +89,8 @@ TEST(VirtualDisplayDriverController, CreateTemporaryDisplayArrivesBackendAndRetu
   EXPECT_EQ(backend.arrived[0].container_id, vdd::container_guid_from_display_id(0x12345678u));
   EXPECT_EQ(backend.arrived[0].connector_index, 0u);
   EXPECT_EQ(backend.arrived[0].width, 2560u);
+  EXPECT_EQ(backend.arrived[0].physical_width_mm, 590u);
+  EXPECT_EQ(backend.arrived[0].physical_height_mm, 330u);
   EXPECT_TRUE(vdd::has_valid_edid_checksums(backend.arrived[0].edid));
   EXPECT_TRUE(vdd::has_hdr_static_metadata(backend.arrived[0].edid));
 }
@@ -104,6 +108,21 @@ TEST(VirtualDisplayDriverController, CreateTemporaryDisplayReservesIdentityBefor
   EXPECT_EQ(backend.reserved[0].connector_index, 0u);
   EXPECT_EQ(backend.reserved[0].container_id, vdd::container_guid_from_display_id(0x12345678u));
   EXPECT_EQ(backend.events, (std::vector<std::string> {"reserve", "arrive"}));
+}
+
+TEST(VirtualDisplayDriverController, CreateEphemeralTemporaryDisplaySkipsIdentityReserve) {
+  FakeBackend backend;
+  auto controller = make_controller(backend);
+  auto request = make_create_request();
+  request.flags = vdd::kCreateTemporaryDisplayFlagEphemeralIdentity;
+
+  const auto created = controller.create_temporary_display(request, std::chrono::steady_clock::now());
+
+  EXPECT_TRUE(created.status.ok());
+  EXPECT_TRUE(backend.reserved.empty());
+  ASSERT_EQ(backend.arrived.size(), 1u);
+  EXPECT_FALSE(backend.arrived[0].retain_identity);
+  EXPECT_EQ(backend.events, (std::vector<std::string> {"arrive"}));
 }
 
 TEST(VirtualDisplayDriverController, CreateTemporaryDisplayRollsBackStoreWhenIdentityReserveFails) {
@@ -257,6 +276,8 @@ TEST(VirtualDisplayDriverController, SetPermanentDisplayCountReconcilesBackendBe
   request.display_count = 2;
   request.width = 3840;
   request.height = 2160;
+  request.physical_width_mm = 700;
+  request.physical_height_mm = 390;
   request.refresh_rate_millihz = 144'000;
   std::memcpy(request.display_name, "Desk Display", 13);
 
@@ -267,6 +288,8 @@ TEST(VirtualDisplayDriverController, SetPermanentDisplayCountReconcilesBackendBe
   ASSERT_EQ(backend.permanent_settings.size(), 1u);
   EXPECT_EQ(backend.permanent_settings[0].width, 3840u);
   EXPECT_EQ(backend.permanent_settings[0].height, 2160u);
+  EXPECT_EQ(backend.permanent_settings[0].physical_width_mm, 700u);
+  EXPECT_EQ(backend.permanent_settings[0].physical_height_mm, 390u);
   EXPECT_EQ(controller.query_permanent_display_count().current_display_count, 2u);
   EXPECT_EQ(controller.query_permanent_display_count().refresh_rate_millihz, 144'000u);
 }

@@ -62,12 +62,15 @@ namespace virtual_display::driver {
       return CreateStoreResult {{StoreError::TemporaryDisplayLimitReached, ValidationError::None}, {}};
     }
 
-    const auto connector_index = connector_index_for_display(request.display_id);
+    const bool retain_identity = (validated.request.flags & kCreateTemporaryDisplayFlagEphemeralIdentity) == 0;
+    const auto connector_index = connector_index_for_display(request.display_id, retain_identity);
     if (!is_temporary_connector_index(connector_index)) {
       return CreateStoreResult {{StoreError::TemporaryDisplayLimitReached, ValidationError::None}, {}};
     }
 
-    connector_reservations_by_display_id_[request.display_id] = connector_index;
+    if (retain_identity) {
+      connector_reservations_by_display_id_[request.display_id] = connector_index;
+    }
     const auto expires_at = now + std::chrono::milliseconds(validated.effective_timeout_ms);
 
     displays_by_id_.emplace(
@@ -75,13 +78,16 @@ namespace virtual_display::driver {
       TemporaryDisplayRecord {
         request.lease_id,
         request.display_id,
-        request.width,
-        request.height,
-        request.refresh_rate_millihz,
+        validated.request.width,
+        validated.request.height,
+        validated.request.physical_width_mm,
+        validated.request.physical_height_mm,
+        validated.request.refresh_rate_millihz,
         validated.effective_timeout_ms,
         connector_index,
         std::string {validated.display_name},
-        expires_at
+        expires_at,
+        retain_identity
       }
     );
 
@@ -216,6 +222,8 @@ namespace virtual_display::driver {
     result.temporary_display_count = temporary_display_count();
     result.width = permanent_display_settings_.width;
     result.height = permanent_display_settings_.height;
+    result.physical_width_mm = permanent_display_settings_.physical_width_mm;
+    result.physical_height_mm = permanent_display_settings_.physical_height_mm;
     result.refresh_rate_millihz = permanent_display_settings_.refresh_rate_millihz;
     std::copy(
       std::begin(permanent_display_settings_.display_name),
@@ -289,6 +297,16 @@ namespace virtual_display::driver {
     });
   }
 
+  bool DisplayStore::connector_index_is_reserved(const std::uint32_t connector_index) const {
+    return std::any_of(
+      connector_reservations_by_display_id_.begin(),
+      connector_reservations_by_display_id_.end(),
+      [connector_index](const auto &entry) {
+        return entry.second == connector_index;
+      }
+    );
+  }
+
   bool DisplayStore::connector_index_is_reserved_for_other_display(
     const std::uint32_t connector_index,
     const std::uint64_t display_id
@@ -316,19 +334,26 @@ namespace virtual_display::driver {
     }
   }
 
-  std::uint32_t DisplayStore::connector_index_for_display(const std::uint64_t display_id) {
-    if (const auto reservation = connector_reservations_by_display_id_.find(display_id);
-        reservation != connector_reservations_by_display_id_.end() &&
-        is_temporary_connector_index(reservation->second) &&
-        !connector_index_is_active(reservation->second)) {
-      return reservation->second;
+  std::uint32_t DisplayStore::connector_index_for_display(
+    const std::uint64_t display_id,
+    const bool retain_identity
+  ) {
+    if (retain_identity) {
+      if (const auto reservation = connector_reservations_by_display_id_.find(display_id);
+          reservation != connector_reservations_by_display_id_.end() &&
+          is_temporary_connector_index(reservation->second) &&
+          !connector_index_is_active(reservation->second)) {
+        return reservation->second;
+      }
     }
 
     for (std::uint32_t connector_index = permanent_display_count_;
          connector_index < permanent_display_count_ + max_temporary_displays_;
          ++connector_index) {
       if (!connector_index_is_active(connector_index) &&
-          !connector_index_is_reserved_for_other_display(connector_index, display_id)) {
+          (retain_identity ?
+             !connector_index_is_reserved_for_other_display(connector_index, display_id) :
+             !connector_index_is_reserved(connector_index))) {
         return connector_index;
       }
     }

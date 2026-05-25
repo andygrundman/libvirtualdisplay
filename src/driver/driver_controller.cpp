@@ -32,16 +32,18 @@ namespace virtual_display::driver {
     }
 
     const auto descriptor = descriptor_from_record(*record);
-    if (const auto backend_error = backend_.reserve_temporary_display_identity(descriptor);
-        backend_error != BackendError::None) {
-      LeaseDisplayRequest rollback {};
-      rollback.lease_id = request.lease_id;
-      rollback.display_id = request.display_id;
-      (void) store_.remove_temporary_display(rollback);
-      return {
-        {StoreError::None, ValidationError::None, backend_error},
-        {}
-      };
+    if (descriptor.retain_identity) {
+      if (const auto backend_error = backend_.reserve_temporary_display_identity(descriptor);
+          backend_error != BackendError::None) {
+        LeaseDisplayRequest rollback {};
+        rollback.lease_id = request.lease_id;
+        rollback.display_id = request.display_id;
+        (void) store_.remove_temporary_display(rollback);
+        return {
+          {StoreError::None, ValidationError::None, backend_error},
+          {}
+        };
+      }
     }
 
     const auto backend_result = backend_.arrive_temporary_display(descriptor);
@@ -178,8 +180,11 @@ namespace virtual_display::driver {
     descriptor.connector_index = record.connector_index;
     descriptor.width = record.width;
     descriptor.height = record.height;
+    descriptor.physical_width_mm = record.physical_width_mm;
+    descriptor.physical_height_mm = record.physical_height_mm;
     descriptor.refresh_rate_millihz = record.refresh_rate_millihz;
     descriptor.edid = create_edid(edid_options_for_temporary_display(record));
+    descriptor.retain_identity = record.retain_identity;
     return descriptor;
   }
 

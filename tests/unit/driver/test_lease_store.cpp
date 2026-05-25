@@ -16,6 +16,8 @@ namespace {
     request.display_id = display_id;
     request.width = 1920;
     request.height = 1080;
+    request.physical_width_mm = 530;
+    request.physical_height_mm = 300;
     request.refresh_rate_millihz = 60'000;
     request.requested_timeout_ms = 30'000;
     std::memcpy(request.display_name, "Sunshine Display", 16);
@@ -40,6 +42,8 @@ TEST(VirtualDisplayDriverLeaseStore, CreatesTemporaryDisplayWithConnectorIndex) 
   ASSERT_TRUE(record);
   EXPECT_EQ(record->width, 1920u);
   EXPECT_EQ(record->height, 1080u);
+  EXPECT_EQ(record->physical_width_mm, 530u);
+  EXPECT_EQ(record->physical_height_mm, 300u);
   EXPECT_EQ(record->refresh_rate_millihz, 60'000u);
   EXPECT_EQ(record->display_name, "Sunshine Display");
 }
@@ -211,6 +215,27 @@ TEST(VirtualDisplayDriverLeaseStore, ReusesInactiveReservedConnectorWhenPoolIsOt
   );
 }
 
+TEST(VirtualDisplayDriverLeaseStore, EphemeralIdentityAvoidsRetainedConnectorWhenAvailable) {
+  vdd::DisplayStore store {0, 2};
+  const auto now = std::chrono::steady_clock::now();
+
+  ASSERT_EQ(store.create_temporary_display(make_create_request(1, 10), now).status.error, vdd::StoreError::None);
+  EXPECT_EQ(store.find_temporary_display(10)->connector_index, 0u);
+  EXPECT_TRUE(store.find_temporary_display(10)->retain_identity);
+
+  EXPECT_EQ(
+    store.remove_temporary_display({vdd::kApiNamespaceGuid, 1, 10}).error,
+    vdd::StoreError::None
+  );
+
+  auto request = make_create_request(2, 10);
+  request.flags = vdd::kCreateTemporaryDisplayFlagEphemeralIdentity;
+  ASSERT_EQ(store.create_temporary_display(request, now).status.error, vdd::StoreError::None);
+  ASSERT_TRUE(store.find_temporary_display(10));
+  EXPECT_EQ(store.find_temporary_display(10)->connector_index, 1u);
+  EXPECT_FALSE(store.find_temporary_display(10)->retain_identity);
+}
+
 TEST(VirtualDisplayDriverLeaseStore, ReleasesWholeLease) {
   vdd::DisplayStore store {2, 4};
   const auto now = std::chrono::steady_clock::now();
@@ -266,6 +291,8 @@ TEST(VirtualDisplayDriverLeaseStore, SetsAndQueriesPermanentDisplayCount) {
   request.display_count = 2;
   request.width = 2560;
   request.height = 1440;
+  request.physical_width_mm = 590;
+  request.physical_height_mm = 330;
   request.refresh_rate_millihz = 120'000;
   std::memcpy(request.display_name, "Desk Display", 13);
 
@@ -277,6 +304,8 @@ TEST(VirtualDisplayDriverLeaseStore, SetsAndQueriesPermanentDisplayCount) {
   EXPECT_EQ(result.temporary_display_count, 1u);
   EXPECT_EQ(result.width, 2560u);
   EXPECT_EQ(result.height, 1440u);
+  EXPECT_EQ(result.physical_width_mm, 590u);
+  EXPECT_EQ(result.physical_height_mm, 330u);
   EXPECT_EQ(result.refresh_rate_millihz, 120'000u);
   EXPECT_EQ(vdd::trim_display_name(result.display_name), "Desk Display");
 }

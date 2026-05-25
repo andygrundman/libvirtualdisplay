@@ -25,11 +25,14 @@ namespace virtual_display::driver {
     std::uint64_t display_id {};
     std::uint32_t width {};
     std::uint32_t height {};
+    std::uint32_t physical_width_mm {};
+    std::uint32_t physical_height_mm {};
     std::uint32_t refresh_rate_millihz {};
     std::uint32_t timeout_ms {};
     std::uint32_t connector_index {};
     std::string display_name {};
     std::chrono::steady_clock::time_point expires_at {};
+    bool retain_identity {true};
   };
 
   struct StoreResult {
@@ -80,12 +83,10 @@ namespace virtual_display::driver {
 
     bool is_temporary_connector_index(std::uint32_t connector_index) const;
     bool connector_index_is_active(std::uint32_t connector_index) const;
-    bool connector_index_is_reserved_for_other_display(
-      std::uint32_t connector_index,
-      std::uint64_t display_id
-    ) const;
+    bool connector_index_is_reserved(std::uint32_t connector_index) const;
+    bool connector_index_is_reserved_for_other_display(std::uint32_t connector_index, std::uint64_t display_id) const;
     void remove_connector_reservation(std::uint32_t connector_index, std::uint64_t except_display_id);
-    std::uint32_t connector_index_for_display(std::uint64_t display_id);
+    std::uint32_t connector_index_for_display(std::uint64_t display_id, bool retain_identity);
     bool lease_has_displays(std::uint64_t lease_id) const;
     void remove_lease_if_empty(std::uint64_t lease_id);
 

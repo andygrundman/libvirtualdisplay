@@ -14,6 +14,12 @@ namespace virtual_display::driver {
     if (request.height == 0) {
       request.height = 1080;
     }
+    if (request.physical_width_mm == 0) {
+      request.physical_width_mm = kDefaultPhysicalWidthMillimeters;
+    }
+    if (request.physical_height_mm == 0) {
+      request.physical_height_mm = kDefaultPhysicalHeightMillimeters;
+    }
     if (request.refresh_rate_millihz == 0) {
       request.refresh_rate_millihz = 60'000;
     }
@@ -57,11 +63,26 @@ namespace virtual_display::driver {
     if (request.display_id == 0) {
       return ValidationError::MissingDisplayId;
     }
+    if ((request.flags & ~kCreateTemporaryDisplayKnownFlags) != 0) {
+      return ValidationError::InvalidFlags;
+    }
     if (request.width < kMinWidth || request.width > kMaxWidth) {
       return ValidationError::InvalidWidth;
     }
     if (request.height < kMinHeight || request.height > kMaxHeight) {
       return ValidationError::InvalidHeight;
+    }
+    const auto physical_width_mm = request.physical_width_mm == 0 ?
+      kDefaultPhysicalWidthMillimeters :
+      request.physical_width_mm;
+    const auto physical_height_mm = request.physical_height_mm == 0 ?
+      kDefaultPhysicalHeightMillimeters :
+      request.physical_height_mm;
+    if (physical_width_mm < kMinPhysicalSizeMillimeters ||
+        physical_width_mm > kMaxPhysicalSizeMillimeters ||
+        physical_height_mm < kMinPhysicalSizeMillimeters ||
+        physical_height_mm > kMaxPhysicalSizeMillimeters) {
+      return ValidationError::InvalidPhysicalSize;
     }
     if (request.refresh_rate_millihz < kMinRefreshRateMilliHz ||
         request.refresh_rate_millihz > kMaxRefreshRateMilliHz) {
@@ -75,6 +96,8 @@ namespace virtual_display::driver {
 
     if (validated) {
       validated->request = request;
+      validated->request.physical_width_mm = physical_width_mm;
+      validated->request.physical_height_mm = physical_height_mm;
       validated->effective_timeout_ms = normalize_timeout_ms(request.requested_timeout_ms);
       validated->display_name = std::string_view {
         validated->request.display_name,
@@ -126,6 +149,12 @@ namespace virtual_display::driver {
     if (request.height < kMinHeight || request.height > kMaxHeight) {
       return ValidationError::InvalidHeight;
     }
+    if (request.physical_width_mm < kMinPhysicalSizeMillimeters ||
+        request.physical_width_mm > kMaxPhysicalSizeMillimeters ||
+        request.physical_height_mm < kMinPhysicalSizeMillimeters ||
+        request.physical_height_mm > kMaxPhysicalSizeMillimeters) {
+      return ValidationError::InvalidPhysicalSize;
+    }
     if (request.refresh_rate_millihz < kMinRefreshRateMilliHz ||
         request.refresh_rate_millihz > kMaxRefreshRateMilliHz) {
       return ValidationError::InvalidRefreshRate;
@@ -147,10 +176,14 @@ namespace virtual_display::driver {
         return "missing_lease_id";
       case ValidationError::MissingDisplayId:
         return "missing_display_id";
+      case ValidationError::InvalidFlags:
+        return "invalid_flags";
       case ValidationError::InvalidWidth:
         return "invalid_width";
       case ValidationError::InvalidHeight:
         return "invalid_height";
+      case ValidationError::InvalidPhysicalSize:
+        return "invalid_physical_size";
       case ValidationError::InvalidRefreshRate:
         return "invalid_refresh_rate";
       case ValidationError::InvalidDisplayName:

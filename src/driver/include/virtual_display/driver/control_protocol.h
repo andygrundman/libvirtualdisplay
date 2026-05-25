@@ -30,7 +30,7 @@ namespace virtual_display::driver {
     {0xa8, 0x28, 0x00, 0xfe, 0xec, 0x89, 0xeb, 0xac}
   };
 
-  inline constexpr std::uint16_t kProtocolVersionMajor = 2;
+  inline constexpr std::uint16_t kProtocolVersionMajor = 3;
   inline constexpr std::uint16_t kProtocolVersionMinor = 0;
   inline constexpr std::uint16_t kProtocolVersionPatch = 0;
 
@@ -45,6 +45,13 @@ namespace virtual_display::driver {
   inline constexpr std::uint32_t kMaxHeight = 16'384;
   inline constexpr std::uint32_t kMinRefreshRateMilliHz = 23'000;
   inline constexpr std::uint32_t kMaxRefreshRateMilliHz = 480'000;
+  inline constexpr std::uint32_t kDefaultPhysicalWidthMillimeters = 600;
+  inline constexpr std::uint32_t kDefaultPhysicalHeightMillimeters = 340;
+  inline constexpr std::uint32_t kMinPhysicalSizeMillimeters = 10;
+  inline constexpr std::uint32_t kMaxPhysicalSizeMillimeters = 2550;
+  inline constexpr std::uint32_t kCreateTemporaryDisplayFlagEphemeralIdentity = 0x00000001u;
+  inline constexpr std::uint32_t kCreateTemporaryDisplayKnownFlags =
+    kCreateTemporaryDisplayFlagEphemeralIdentity;
 
   enum class IoctlFunction : std::uint32_t {
     GetProtocolVersion = 0x900,
@@ -111,6 +118,8 @@ namespace virtual_display::driver {
     std::uint64_t display_id {};
     std::uint32_t width {};
     std::uint32_t height {};
+    std::uint32_t physical_width_mm {};
+    std::uint32_t physical_height_mm {};
     std::uint32_t refresh_rate_millihz {};
     std::uint32_t requested_timeout_ms {};
     char display_name[kDisplayNameChars] {};
@@ -157,6 +166,8 @@ namespace virtual_display::driver {
     std::uint32_t flags {};
     std::uint32_t width {1920};
     std::uint32_t height {1080};
+    std::uint32_t physical_width_mm {kDefaultPhysicalWidthMillimeters};
+    std::uint32_t physical_height_mm {kDefaultPhysicalHeightMillimeters};
     std::uint32_t refresh_rate_millihz {60'000};
     char display_name[kDisplayNameChars] {"Sunshine Display"};
   };
@@ -168,6 +179,8 @@ namespace virtual_display::driver {
     std::uint32_t temporary_display_count {};
     std::uint32_t width {1920};
     std::uint32_t height {1080};
+    std::uint32_t physical_width_mm {kDefaultPhysicalWidthMillimeters};
+    std::uint32_t physical_height_mm {kDefaultPhysicalHeightMillimeters};
     std::uint32_t refresh_rate_millihz {60'000};
     char display_name[kDisplayNameChars] {"Sunshine Display"};
   };
@@ -177,8 +190,10 @@ namespace virtual_display::driver {
     WrongApiNamespace,
     MissingLeaseId,
     MissingDisplayId,
+    InvalidFlags,
     InvalidWidth,
     InvalidHeight,
+    InvalidPhysicalSize,
     InvalidRefreshRate,
     InvalidDisplayName,
     PermanentDisplayCountTooHigh,
@@ -211,11 +226,11 @@ namespace virtual_display::driver {
   static_assert(std::is_standard_layout_v<AdapterLuid>);
   static_assert(sizeof(AdapterLuid) == 8);
   static_assert(sizeof(ProtocolVersion) == 24);
-  static_assert(sizeof(CreateTemporaryDisplayRequest) == 88);
+  static_assert(sizeof(CreateTemporaryDisplayRequest) == 96);
   static_assert(sizeof(CreateTemporaryDisplayResult) == 56);
   static_assert(sizeof(LeaseDisplayRequest) == 32);
   static_assert(sizeof(LeaseRequest) == 32);
   static_assert(sizeof(QueryLeaseResult) == 40);
-  static_assert(sizeof(PermanentDisplayCountRequest) == 68);
-  static_assert(sizeof(PermanentDisplayCountResult) == 72);
+  static_assert(sizeof(PermanentDisplayCountRequest) == 76);
+  static_assert(sizeof(PermanentDisplayCountResult) == 80);
 }  // namespace virtual_display::driver

@@ -135,6 +135,8 @@ TEST(VirtualDisplayDriverControlClient, CreateTemporaryDisplayRoundTripsRequestA
   request.display_id = 20;
   request.width = 2560;
   request.height = 1440;
+  request.physical_width_mm = 590;
+  request.physical_height_mm = 330;
   request.refresh_rate_millihz = 120'000;
 
   const auto result = client.create_temporary_display(request);
@@ -146,6 +148,8 @@ TEST(VirtualDisplayDriverControlClient, CreateTemporaryDisplayRoundTripsRequestA
   const auto sent = input_as<vdd::CreateTemporaryDisplayRequest>(transport.calls[0]);
   EXPECT_EQ(sent.width, 2560u);
   EXPECT_EQ(sent.height, 1440u);
+  EXPECT_EQ(sent.physical_width_mm, 590u);
+  EXPECT_EQ(sent.physical_height_mm, 330u);
 }
 
 TEST(VirtualDisplayDriverControlClient, LeaseOperationsUseExpectedIoctls) {
@@ -195,6 +199,8 @@ TEST(VirtualDisplayDriverControlClient, PermanentDisplayOperationsReturnCounts) 
   request.display_count = 2;
   request.width = 1920;
   request.height = 1080;
+  request.physical_width_mm = 530;
+  request.physical_height_mm = 300;
   request.refresh_rate_millihz = 60'000;
   std::memcpy(request.display_name, "Sunshine Display", 16);
 
@@ -207,6 +213,7 @@ TEST(VirtualDisplayDriverControlClient, PermanentDisplayOperationsReturnCounts) 
   EXPECT_EQ(transport.calls[0].ioctl_code, vdd::kIoctlSetPermanentDisplayCount);
   EXPECT_EQ(transport.calls[1].ioctl_code, vdd::kIoctlQueryPermanentDisplayCount);
   EXPECT_EQ(input_as<vdd::PermanentDisplayCountRequest>(transport.calls[0]).display_count, 2u);
+  EXPECT_EQ(input_as<vdd::PermanentDisplayCountRequest>(transport.calls[0]).physical_width_mm, 530u);
 }
 
 TEST(VirtualDisplayDriverControlClient, DetectsShortOutput) {

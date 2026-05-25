@@ -17,6 +17,8 @@ namespace {
     request.display_id = 20;
     request.width = 2560;
     request.height = 1440;
+    request.physical_width_mm = 600;
+    request.physical_height_mm = 340;
     request.refresh_rate_millihz = 120'000;
     request.requested_timeout_ms = 30'000;
     std::memcpy(request.display_name, "Sunshine Display", 16);
@@ -52,7 +54,7 @@ TEST(VirtualDisplayDriverControlProtocol, WindowsGuidAdapterPreservesProtocolGui
 #endif
 }
 
-TEST(VirtualDisplayDriverControlProtocol, InfRegistersControlInterfaceWithAuthenticatedUserAccess) {
+TEST(VirtualDisplayDriverControlProtocol, InfRegistersControlInterfaceWithAdminOnlyAccess) {
   const std::string inf_path =
     std::string {LIBVIRTUALDISPLAY_SOURCE_DIR} +
     "/src/driver/windows_driver/SunshineVirtualDisplayDriver.inf";
@@ -69,9 +71,10 @@ TEST(VirtualDisplayDriverControlProtocol, InfRegistersControlInterfaceWithAuthen
   );
   EXPECT_NE(inf.find("[ControlInterface_AddReg]"), std::string::npos);
   EXPECT_NE(
-    inf.find("HKR,,Security,,\"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)\""),
+    inf.find("HKR,,Security,,\"D:P(A;;GA;;;SY)(A;;GA;;;BA)\""),
     std::string::npos
   );
+  EXPECT_EQ(inf.find("(A;;GRGW;;;AU)"), std::string::npos);
 }
 
 TEST(VirtualDisplayDriverControlProtocol, NormalizesLeaseTimeouts) {
@@ -87,7 +90,20 @@ TEST(VirtualDisplayDriverControlProtocol, ValidatesCreateRequest) {
 
   EXPECT_EQ(vdd::validate_create_temporary_display(request, &validated), vdd::ValidationError::None);
   EXPECT_EQ(validated.effective_timeout_ms, request.requested_timeout_ms);
+  EXPECT_EQ(validated.request.physical_width_mm, 600u);
+  EXPECT_EQ(validated.request.physical_height_mm, 340u);
   EXPECT_EQ(validated.display_name, "Sunshine Display");
+}
+
+TEST(VirtualDisplayDriverControlProtocol, DefaultsCreatePhysicalSize) {
+  auto request = valid_create_request();
+  request.physical_width_mm = 0;
+  request.physical_height_mm = 0;
+  vdd::ValidatedCreateTemporaryDisplay validated {};
+
+  EXPECT_EQ(vdd::validate_create_temporary_display(request, &validated), vdd::ValidationError::None);
+  EXPECT_EQ(validated.request.physical_width_mm, vdd::kDefaultPhysicalWidthMillimeters);
+  EXPECT_EQ(validated.request.physical_height_mm, vdd::kDefaultPhysicalHeightMillimeters);
 }
 
 TEST(VirtualDisplayDriverControlProtocol, RejectsWrongNamespace) {
@@ -112,12 +128,20 @@ TEST(VirtualDisplayDriverControlProtocol, RejectsMissingIdentifiers) {
 
 TEST(VirtualDisplayDriverControlProtocol, RejectsOutOfRangeMode) {
   auto request = valid_create_request();
+  request.flags = 0x80000000u;
+  EXPECT_EQ(vdd::validate_create_temporary_display(request), vdd::ValidationError::InvalidFlags);
+
+  request = valid_create_request();
   request.width = vdd::kMinWidth - 1;
   EXPECT_EQ(vdd::validate_create_temporary_display(request), vdd::ValidationError::InvalidWidth);
 
   request = valid_create_request();
   request.height = vdd::kMaxHeight + 1;
   EXPECT_EQ(vdd::validate_create_temporary_display(request), vdd::ValidationError::InvalidHeight);
+
+  request = valid_create_request();
+  request.physical_width_mm = vdd::kMaxPhysicalSizeMillimeters + 1;
+  EXPECT_EQ(vdd::validate_create_temporary_display(request), vdd::ValidationError::InvalidPhysicalSize);
 
   request = valid_create_request();
   request.refresh_rate_millihz = vdd::kMaxRefreshRateMilliHz + 1;
@@ -214,6 +238,8 @@ TEST(VirtualDisplayDriverControlProtocol, ValidatesPermanentDisplaySettings) {
   request.display_count = 1;
   request.width = 3840;
   request.height = 2160;
+  request.physical_width_mm = 700;
+  request.physical_height_mm = 390;
   request.refresh_rate_millihz = 144'000;
   std::memcpy(request.display_name, "Desk Display", 13);
 
@@ -223,6 +249,10 @@ TEST(VirtualDisplayDriverControlProtocol, ValidatesPermanentDisplaySettings) {
   EXPECT_EQ(vdd::validate_permanent_display_count(request, 4), vdd::ValidationError::InvalidWidth);
 
   request.width = 3840;
+  request.physical_height_mm = vdd::kMinPhysicalSizeMillimeters - 1;
+  EXPECT_EQ(vdd::validate_permanent_display_count(request, 4), vdd::ValidationError::InvalidPhysicalSize);
+
+  request.physical_height_mm = 390;
   request.refresh_rate_millihz = vdd::kMaxRefreshRateMilliHz + 1;
   EXPECT_EQ(vdd::validate_permanent_display_count(request, 4), vdd::ValidationError::InvalidRefreshRate);
 

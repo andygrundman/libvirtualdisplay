@@ -542,6 +542,8 @@ namespace {
     options.serial_number = vdd::serial_number_from_display_id(display_id);
     options.width = settings.width;
     options.height = settings.height;
+    options.physical_width_mm = settings.physical_width_mm;
+    options.physical_height_mm = settings.physical_height_mm;
     options.refresh_rate_millihz = settings.refresh_rate_millihz;
     options.monitor_name = vdd::trim_display_name(settings.display_name);
     options.hdr_supported = true;
@@ -552,6 +554,8 @@ namespace {
     descriptor.connector_index = index;
     descriptor.width = options.width;
     descriptor.height = options.height;
+    descriptor.physical_width_mm = options.physical_width_mm;
+    descriptor.physical_height_mm = options.physical_height_mm;
     descriptor.refresh_rate_millihz = options.refresh_rate_millihz;
     descriptor.edid = vdd::create_edid(options);
     return descriptor;

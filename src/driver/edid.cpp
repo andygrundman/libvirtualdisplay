@@ -47,6 +47,14 @@ namespace virtual_display::driver {
       return static_cast<std::uint16_t>((value + 7u) & ~7u);
     }
 
+    std::uint8_t physical_size_cm(const std::uint32_t millimeters) {
+      return static_cast<std::uint8_t>(std::clamp((millimeters + 5u) / 10u, 1u, 255u));
+    }
+
+    std::uint16_t physical_size_mm(const std::uint32_t millimeters) {
+      return static_cast<std::uint16_t>(std::clamp(millimeters, 1u, 4095u));
+    }
+
     std::uint64_t preferred_pixel_clock_hz(const EdidOptions &options) {
       const auto horizontal_blanking = align8(std::clamp(options.width / 5u, 160u, 2047u));
       const auto vertical_blanking = static_cast<std::uint16_t>(std::clamp(options.height / 20u, 45u, 1023u));
@@ -99,9 +107,11 @@ namespace virtual_display::driver {
       data[offset + 9] = byte(h_sync_width);
       data[offset + 10] = byte((v_sync_offset << 4) | v_sync_width);
       data[offset + 11] = byte(((h_sync_offset >> 8) << 6) | ((h_sync_width >> 8) << 4));
-      data[offset + 12] = byte(60);
-      data[offset + 13] = byte(34);
-      data[offset + 14] = byte(0);
+      const auto physical_width = physical_size_mm(options.physical_width_mm);
+      const auto physical_height = physical_size_mm(options.physical_height_mm);
+      data[offset + 12] = byte(physical_width);
+      data[offset + 13] = byte(physical_height);
+      data[offset + 14] = byte(((physical_width >> 8) << 4) | (physical_height >> 8));
       data[offset + 15] = byte(0);
       data[offset + 16] = byte(0);
       data[offset + 17] = byte(0x1a);
@@ -204,6 +214,13 @@ namespace virtual_display::driver {
       base[9] = byte(manufacturer);
       put_le16(base, 10, options.product_code);
       put_le32(base, 12, options.serial_number);
+      base[21] = byte(physical_size_cm(options.physical_width_mm));
+      base[22] = byte(physical_size_cm(options.physical_height_mm));
+      const auto physical_width = physical_size_mm(options.physical_width_mm);
+      const auto physical_height = physical_size_mm(options.physical_height_mm);
+      base[66] = byte(physical_width);
+      base[67] = byte(physical_height);
+      base[68] = byte(((physical_width >> 8) << 4) | (physical_height >> 8));
       write_edid_string_field(base, 0x4d, std::to_string(options.serial_number));
       write_edid_string_field(base, 0x71, options.monitor_name);
       write_checksum(base);
@@ -236,8 +253,8 @@ namespace virtual_display::driver {
     base[18] = std::byte {1};
     base[19] = std::byte {4};
     base[20] = std::byte {0xa5};
-    base[21] = std::byte {60};
-    base[22] = std::byte {34};
+    base[21] = byte(physical_size_cm(options.physical_width_mm));
+    base[22] = byte(physical_size_cm(options.physical_height_mm));
     base[23] = std::byte {0x78};
     base[24] = std::byte {0x0a};
     base[25] = std::byte {0xee};

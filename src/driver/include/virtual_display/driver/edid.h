@@ -16,6 +16,8 @@ namespace virtual_display::driver {
     std::uint32_t serial_number {1};
     std::uint32_t width {1920};
     std::uint32_t height {1080};
+    std::uint32_t physical_width_mm {600};
+    std::uint32_t physical_height_mm {340};
     std::uint32_t refresh_rate_millihz {60'000};
     std::string_view monitor_name {"Sunshine Display"};
     bool hdr_supported {true};

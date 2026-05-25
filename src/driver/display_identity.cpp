@@ -36,6 +36,8 @@ namespace virtual_display::driver {
     options.serial_number = serial_number_from_display_id(record.display_id);
     options.width = record.width;
     options.height = record.height;
+    options.physical_width_mm = record.physical_width_mm;
+    options.physical_height_mm = record.physical_height_mm;
     options.refresh_rate_millihz = record.refresh_rate_millihz;
     options.monitor_name = record.display_name;
     options.hdr_supported = true;

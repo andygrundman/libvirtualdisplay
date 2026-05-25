@@ -10,12 +10,28 @@ namespace {
     options.manufacturer_id = {'S', 'D', 'D'};
     options.product_code = 0x4101;
     options.serial_number = 0x12345678;
-  options.width = 2560;
-  options.height = 1440;
-  options.refresh_rate_millihz = 120'000;
+    options.width = 2560;
+    options.height = 1440;
+    options.physical_width_mm = 590;
+    options.physical_height_mm = 330;
+    options.refresh_rate_millihz = 120'000;
     options.monitor_name = "Sunshine HDR";
     options.hdr_supported = true;
     return options;
+  }
+
+  std::uint16_t read_detailed_physical_width_mm(const std::array<std::byte, vdd::kEdidSize> &edid) {
+    return static_cast<std::uint16_t>(
+      static_cast<std::uint16_t>(edid[66]) |
+      ((static_cast<std::uint16_t>(edid[68]) >> 4u) << 8u)
+    );
+  }
+
+  std::uint16_t read_detailed_physical_height_mm(const std::array<std::byte, vdd::kEdidSize> &edid) {
+    return static_cast<std::uint16_t>(
+      static_cast<std::uint16_t>(edid[67]) |
+      ((static_cast<std::uint16_t>(edid[68]) & 0x0fu) << 8u)
+    );
   }
 }  // namespace
 
@@ -31,6 +47,19 @@ TEST(VirtualDisplayDriverEdid, BuildsParseableTwoBlockEdidWithStableIdentity) {
   EXPECT_EQ(vdd::read_manufacturer_id(edid), (std::array<char, 3> {'S', 'D', 'D'}));
   EXPECT_EQ(vdd::read_product_code(edid), 0x4101u);
   EXPECT_EQ(vdd::read_serial_number(edid), 0x12345678u);
+}
+
+TEST(VirtualDisplayDriverEdid, EncodesPhysicalSizeForDpiScaling) {
+  auto options = default_options();
+  options.physical_width_mm = 700;
+  options.physical_height_mm = 390;
+
+  const auto edid = vdd::create_edid(options);
+
+  EXPECT_EQ(static_cast<std::uint8_t>(edid[21]), 70u);
+  EXPECT_EQ(static_cast<std::uint8_t>(edid[22]), 39u);
+  EXPECT_EQ(read_detailed_physical_width_mm(edid), 700u);
+  EXPECT_EQ(read_detailed_physical_height_mm(edid), 390u);
 }
 
 TEST(VirtualDisplayDriverEdid, HdrEdidUsesReferencePreferredTiming) {

@@ -99,7 +99,9 @@ directory. To install a different INF:
 ```
 
 All non-install commands assume the driver package has already been installed
-and Windows has started the virtual display device.
+and Windows has started the virtual display device. The driver control
+interface is restricted to local system and administrators while the broker
+service is still pending, so direct CLI control commands must run elevated.
 
 Query the current permanent-display state:
 
@@ -118,7 +120,7 @@ Create or update a permanent display with explicit settings:
 
 ```powershell
 .\tools\virtualdisplay.exe spawn --width 2560 --height 1440 --refresh 120
-.\tools\virtualdisplay.exe permanent set --count 1 --width 3840 --height 2160 --refresh 144 --name "Desk Display"
+.\tools\virtualdisplay.exe permanent set --count 1 --width 3840 --height 2160 --physical-width-mm 700 --physical-height-mm 390 --refresh 144 --name "Desk Display"
 ```
 
 Create several permanent displays with the same EDID mode/name settings:
@@ -138,6 +140,8 @@ Supported settings:
 - `--count`: permanent display count, from `0` through the driver's maximum.
 - `--width`: preferred display width in pixels.
 - `--height`: preferred display height in pixels.
+- `--physical-width-mm`: physical panel width advertised in EDID, in millimeters.
+- `--physical-height-mm`: physical panel height advertised in EDID, in millimeters.
 - `--refresh`: preferred refresh rate. Values up to `1000` are treated as Hz, so `120` means `120 Hz`; larger values are treated as millihertz.
 - `--name`: monitor name advertised in EDID, truncated to the protocol limit.
 
@@ -145,6 +149,7 @@ The driver validates modes against the protocol range:
 
 - width: `320` through `16384`
 - height: `200` through `16384`
+- physical width and height: `10 mm` through `2550 mm`
 - refresh: `23 Hz` through `480 Hz`
 
 Use `virtualdisplay_probe.exe` for diagnostics and runtime validation rather
@@ -221,6 +226,8 @@ vdd::PermanentDisplayCountRequest request {};
 request.display_count = 1;
 request.width = 2560;
 request.height = 1440;
+request.physical_width_mm = 590;
+request.physical_height_mm = 330;
 request.refresh_rate_millihz = 120'000;
 std::strncpy(request.display_name, "Desk Display", sizeof(request.display_name) - 1);
 
@@ -230,7 +237,8 @@ if (!result.ok()) {
 }
 
 // result.value reports current_display_count, max_display_count,
-// temporary_display_count, width, height, refresh_rate_millihz, and display_name.
+// temporary_display_count, width, height, physical size, refresh_rate_millihz,
+// and display_name.
 ```
 
 Query the current permanent-display state:
@@ -262,6 +270,8 @@ request.lease_id = 0x1001;
 request.display_id = 0x2001;
 request.width = 1920;
 request.height = 1080;
+request.physical_width_mm = 530;
+request.physical_height_mm = 300;
 request.refresh_rate_millihz = 60'000;
 request.requested_timeout_ms = 30'000;
 std::strncpy(request.display_name, "Session Display", sizeof(request.display_name) - 1);
@@ -300,6 +310,12 @@ Call `feed_lease()` before that timeout expires; applications commonly refresh
 at a fraction of the effective timeout. If the lease expires, the driver removes
 temporary displays owned by that lease.
 
+Temporary displays retain driver-side identity by default so a caller can reuse
+the same `DisplayId` for a logical display that should keep Windows settings.
+Set `request.flags |= vdd::kCreateTemporaryDisplayFlagEphemeralIdentity` when a
+display should not write persistent driver identity state; pair that with a
+fresh caller-owned `DisplayId` when Windows settings retention is not desired.
+
 Release every temporary display owned by a lease:
 
 ```cpp
@@ -317,7 +333,7 @@ if (!released.ok()) {
 
 ### Protocol notes
 
-- The current protocol version is `2.0.0`.
+- The current protocol version is `3.0.0`.
 - `ControlClient::check_protocol_compatible()` should be called before issuing
   state-changing requests.
 - IDs are caller-owned. Reuse `DisplayId` for the same logical display when you
@@ -325,7 +341,8 @@ if (!released.ok()) {
   `LeaseId` for each active temporary-display owner.
 - Names are fixed-size protocol strings with a `32` byte limit.
 - Width must be `320` through `16384`, height must be `200` through `16384`,
-  and refresh rate must be `23000` through `480000` millihertz.
+  physical width and height must be `10` through `2550` millimeters, and
+  refresh rate must be `23000` through `480000` millihertz.
 - Lease timeouts are clamped to the protocol range and reported back as
   `effective_timeout_ms`.
 - Permanent-display settings are shared by the active permanent pool; setting

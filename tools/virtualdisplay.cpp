@@ -30,9 +30,9 @@ namespace {
       << "virtualdisplay commands:\n"
       << "  driver install [--inf PATH]\n"
       << "  status\n"
-      << "  spawn [--width N] [--height N] [--refresh HZ] [--name TEXT]\n"
+      << "  spawn [--width N] [--height N] [--physical-width-mm N] [--physical-height-mm N] [--refresh HZ] [--name TEXT]\n"
       << "  permanent query\n"
-      << "  permanent set --count N [--width N] [--height N] [--refresh HZ] [--name TEXT]\n"
+      << "  permanent set --count N [--width N] [--height N] [--physical-width-mm N] [--physical-height-mm N] [--refresh HZ] [--name TEXT]\n"
       << "  permanent off\n";
   }
 
@@ -397,6 +397,7 @@ namespace {
       << "temporary_displays=" << state.temporary_display_count << '\n'
       << "mode=" << state.width << 'x' << state.height << '@'
       << (state.refresh_rate_millihz / 1000.0) << "Hz\n"
+      << "physical_size_mm=" << state.physical_width_mm << 'x' << state.physical_height_mm << '\n'
       << "name=" << display_name(state.display_name) << '\n';
   }
 
@@ -404,6 +405,8 @@ namespace {
     std::uint32_t count {1};
     std::uint32_t width {1920};
     std::uint32_t height {1080};
+    std::uint32_t physical_width_mm {vdd::kDefaultPhysicalWidthMillimeters};
+    std::uint32_t physical_height_mm {vdd::kDefaultPhysicalHeightMillimeters};
     std::uint32_t refresh_rate_millihz {60'000};
     std::string name {"Sunshine Display"};
   };
@@ -445,6 +448,18 @@ namespace {
           std::cerr << "invalid --height value\n";
           return std::nullopt;
         }
+      } else if (arg == "--physical-width-mm") {
+        const auto value = need_value();
+        if (!value || !parse_u32(*value, options.physical_width_mm)) {
+          std::cerr << "invalid --physical-width-mm value\n";
+          return std::nullopt;
+        }
+      } else if (arg == "--physical-height-mm") {
+        const auto value = need_value();
+        if (!value || !parse_u32(*value, options.physical_height_mm)) {
+          std::cerr << "invalid --physical-height-mm value\n";
+          return std::nullopt;
+        }
       } else if (arg == "--refresh") {
         const auto value = need_value();
         if (!value || !parse_refresh_millihz(*value, options.refresh_rate_millihz)) {
@@ -476,6 +491,8 @@ namespace {
     request.display_count = options.count;
     request.width = options.width;
     request.height = options.height;
+    request.physical_width_mm = options.physical_width_mm;
+    request.physical_height_mm = options.physical_height_mm;
     request.refresh_rate_millihz = options.refresh_rate_millihz;
     set_display_name(request.display_name, options.name);
     return request;
