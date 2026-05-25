@@ -36,6 +36,7 @@ namespace {
       << "  --self-test-hdr [width height refresh_hz]\n"
       << "  --self-test-lease-expiry [width height refresh_hz timeout_ms]\n"
       << "  --qa-multi-temp-lease [count timeout_ms]\n"
+      << "  --qa-temp-identity-retention [width height refresh_hz timeout_ms]\n"
       << "  --qa-temp-lease [width height refresh_hz timeout_ms]\n"
       << "  --debug-temp-config [width height refresh_hz timeout_ms]\n";
   }
@@ -1432,6 +1433,234 @@ int main(const int argc, char **argv) {
       std::cout << " connector_index=" << connector_index;
     }
     std::cout << '\n';
+    return 0;
+  }
+
+  if (command == "--qa-temp-identity-retention") {
+    const std::uint32_t width = argc >= 3 ? static_cast<std::uint32_t>(std::stoul(argv[2])) : 1920u;
+    const std::uint32_t height = argc >= 4 ? static_cast<std::uint32_t>(std::stoul(argv[3])) : 1080u;
+    const std::uint32_t refresh_hz = argc >= 5 ? static_cast<std::uint32_t>(std::stoul(argv[4])) : 60u;
+    const std::uint32_t timeout_ms = argc >= 6 ? static_cast<std::uint32_t>(std::stoul(argv[5])) : 30'000u;
+
+    const auto before_count = client.query_permanent_display_count();
+    if (!before_count.ok()) {
+      return fail("query permanent count failed", before_count);
+    }
+
+    const auto stable_display_id = transient_id(0x51dd1000);
+    const auto first_lease_id = transient_id(0x717e1000);
+    auto first_request = make_temporary_request(width, height, refresh_hz);
+    first_request.lease_id = first_lease_id;
+    first_request.display_id = stable_display_id;
+    first_request.requested_timeout_ms = timeout_ms;
+    std::strncpy(first_request.display_name, "Sunshine Retain", sizeof(first_request.display_name) - 1);
+
+    const auto first = client.create_temporary_display(first_request);
+    if (!first.ok()) {
+      return fail("create retained identity display failed", first);
+    }
+
+    const auto remove_first = [&]() {
+      return client.remove_temporary_display({vdd::kApiNamespaceGuid, first_request.lease_id, first_request.display_id});
+    };
+    const vdd::LeaseRequest first_lease {
+      vdd::kApiNamespaceGuid,
+      first_request.lease_id,
+      first_request.requested_timeout_ms,
+      0
+    };
+    const auto feed_first = [&]() {
+      (void) client.feed_lease(first_lease);
+    };
+
+    if (!activate_target_path(first.value.os_adapter_luid, first.value.target_id, width, height, refresh_hz)) {
+      (void) apply_extended_topology();
+    }
+    if (!ensure_active_display_mode(first.value.os_adapter_luid, first.value.target_id, width, height, refresh_hz, feed_first)) {
+      (void) remove_first();
+      std::cerr << "retained identity display resolution mismatch after first activation\n";
+      return 1;
+    }
+
+    LONG advanced_color_error = ERROR_SUCCESS;
+    const auto first_before_color = wait_for_advanced_color(
+      first.value.os_adapter_luid,
+      first.value.target_id,
+      false,
+      &advanced_color_error,
+      feed_first
+    );
+    if (!first_before_color) {
+      (void) remove_first();
+      std::cerr << "advanced color query failed before retained identity HDR request"
+                << " native_error=" << advanced_color_error << '\n';
+      return 1;
+    }
+
+    const bool hdr_set = set_hdr_state(first.value.os_adapter_luid, first.value.target_id, true);
+    const bool advanced_color_set = set_advanced_color(first.value.os_adapter_luid, first.value.target_id, true);
+    const auto first_after_color = wait_for_advanced_color(
+      first.value.os_adapter_luid,
+      first.value.target_id,
+      true,
+      &advanced_color_error,
+      feed_first
+    );
+    if (!first_after_color) {
+      (void) remove_first();
+      std::cerr << "advanced color query did not return after retained identity HDR request\n";
+      return 1;
+    }
+    if (!first_after_color->v2 || !first_after_color->hdr_supported) {
+      (void) remove_first();
+      std::cerr << "retained identity display is not reported as HDR-supported by Windows\n";
+      return 1;
+    }
+    if (!hdr_set && !advanced_color_set) {
+      (void) remove_first();
+      std::cerr << "Windows rejected both retained identity HDR and Advanced Color enable requests\n";
+      return 1;
+    }
+    if (first_after_color->limited_by_policy ||
+        !first_after_color->supported ||
+        !first_after_color->hdr_enabled ||
+        first_after_color->bits_per_color_channel < 10) {
+      (void) remove_first();
+      std::cerr << "retained identity display did not enter HDR 10-bit mode after request\n";
+      return 1;
+    }
+
+    auto removed_first = remove_first();
+    if (!removed_first.ok()) {
+      return fail("remove retained identity display failed", removed_first);
+    }
+    (void) wait_for_display_path(first.value.os_adapter_luid, first.value.target_id, false);
+
+    const auto filler_lease_id = transient_id(0x717e2000);
+    const vdd::LeaseRequest filler_lease {
+      vdd::kApiNamespaceGuid,
+      filler_lease_id,
+      timeout_ms,
+      0
+    };
+    std::vector<vdd::CreateTemporaryDisplayResult> fillers;
+    for (std::uint32_t index = 0; index < 2; ++index) {
+      auto filler_request = make_temporary_request(index == 0 ? 1280u : 2560u, index == 0 ? 720u : 1440u, index == 0 ? 60u : 120u);
+      filler_request.lease_id = filler_lease_id;
+      filler_request.display_id = transient_id(0x51dd2000 + index);
+      filler_request.requested_timeout_ms = timeout_ms;
+      const auto filler = client.create_temporary_display(filler_request);
+      if (!filler.ok()) {
+        (void) client.release_lease(filler_lease);
+        return fail("create filler identity display failed", filler);
+      }
+      if (filler.value.connector_index == first.value.connector_index) {
+        (void) client.release_lease(filler_lease);
+        std::cerr << "filler display reused retained identity connector "
+                  << first.value.connector_index << '\n';
+        return 1;
+      }
+      fillers.push_back(filler.value);
+    }
+
+    const auto second_lease_id = transient_id(0x717e3000);
+    auto second_request = make_temporary_request(width, height, refresh_hz);
+    second_request.lease_id = second_lease_id;
+    second_request.display_id = stable_display_id;
+    second_request.requested_timeout_ms = timeout_ms;
+    std::strncpy(second_request.display_name, "Sunshine Retain", sizeof(second_request.display_name) - 1);
+
+    const auto second = client.create_temporary_display(second_request);
+    if (!second.ok()) {
+      (void) client.release_lease(filler_lease);
+      return fail("recreate retained identity display failed", second);
+    }
+
+    const auto cleanup_second = [&]() {
+      return client.remove_temporary_display({vdd::kApiNamespaceGuid, second_request.lease_id, second_request.display_id});
+    };
+    const vdd::LeaseRequest second_lease {
+      vdd::kApiNamespaceGuid,
+      second_request.lease_id,
+      second_request.requested_timeout_ms,
+      0
+    };
+    const auto feed_second = [&]() {
+      (void) client.feed_lease(second_lease);
+      (void) client.feed_lease(filler_lease);
+    };
+
+    if (second.value.connector_index != first.value.connector_index ||
+        second.value.target_id != first.value.target_id) {
+      (void) cleanup_second();
+      (void) client.release_lease(filler_lease);
+      std::cerr << "retained identity changed connector/target"
+                << " first_connector=" << first.value.connector_index
+                << " second_connector=" << second.value.connector_index
+                << " first_target=" << first.value.target_id
+                << " second_target=" << second.value.target_id << '\n';
+      return 1;
+    }
+
+    if (!activate_target_path(second.value.os_adapter_luid, second.value.target_id, width, height, refresh_hz)) {
+      (void) apply_extended_topology();
+    }
+    if (!ensure_active_display_mode(second.value.os_adapter_luid, second.value.target_id, width, height, refresh_hz, feed_second)) {
+      (void) cleanup_second();
+      (void) client.release_lease(filler_lease);
+      std::cerr << "retained identity display resolution mismatch after recreation\n";
+      return 1;
+    }
+
+    const auto restored_color = wait_for_advanced_color(
+      second.value.os_adapter_luid,
+      second.value.target_id,
+      true,
+      &advanced_color_error,
+      feed_second
+    );
+    if (!restored_color) {
+      (void) cleanup_second();
+      (void) client.release_lease(filler_lease);
+      std::cerr << "advanced color query did not return after retained identity recreation\n";
+      return 1;
+    }
+    print_advanced_color(*restored_color);
+    if (restored_color->limited_by_policy ||
+        !restored_color->supported ||
+        !restored_color->hdr_supported ||
+        !restored_color->hdr_enabled ||
+        restored_color->bits_per_color_channel < 10) {
+      (void) cleanup_second();
+      (void) client.release_lease(filler_lease);
+      std::cerr << "HDR profile was not retained for recreated temporary display\n";
+      return 1;
+    }
+
+    const auto removed_second = cleanup_second();
+    (void) client.release_lease(filler_lease);
+    if (!removed_second.ok()) {
+      return fail("remove recreated retained identity display failed", removed_second);
+    }
+
+    const auto after_count = client.query_permanent_display_count();
+    if (!after_count.ok()) {
+      return fail("query permanent count after retained identity QA failed", after_count);
+    }
+    if (after_count.value.temporary_display_count != before_count.value.temporary_display_count) {
+      std::cerr << "retained identity QA leaked temporary displays: before="
+                << before_count.value.temporary_display_count
+                << " after=" << after_count.value.temporary_display_count << '\n';
+      return 1;
+    }
+
+    std::cout << "qa_temp_identity_retention=1"
+              << " display_id=" << stable_display_id
+              << " target_id=" << second.value.target_id
+              << " connector_index=" << second.value.connector_index
+              << " filler_connector_0=" << fillers[0].connector_index
+              << " filler_connector_1=" << fillers[1].connector_index
+              << " hdr_retained=1\n";
     return 0;
   }
 

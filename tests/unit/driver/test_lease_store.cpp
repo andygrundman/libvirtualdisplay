@@ -191,7 +191,7 @@ TEST(VirtualDisplayDriverLeaseStore, DoesNotReuseReservedConnectorIndexForDiffer
   EXPECT_EQ(store.find_temporary_display(10)->connector_index, 0u);
 }
 
-TEST(VirtualDisplayDriverLeaseStore, ReservedConnectorIndexesCanExhaustTemporaryPool) {
+TEST(VirtualDisplayDriverLeaseStore, ReusesInactiveReservedConnectorWhenPoolIsOtherwiseExhausted) {
   vdd::DisplayStore store {0, 2};
   const auto now = std::chrono::steady_clock::now();
 
@@ -202,8 +202,11 @@ TEST(VirtualDisplayDriverLeaseStore, ReservedConnectorIndexesCanExhaustTemporary
     store.remove_temporary_display({vdd::kApiNamespaceGuid, 1, 10}).error,
     vdd::StoreError::None
   );
+  ASSERT_EQ(store.create_temporary_display(make_create_request(3, 30), now).status.error, vdd::StoreError::None);
+  EXPECT_EQ(store.find_temporary_display(30)->connector_index, 0u);
+
   EXPECT_EQ(
-    store.create_temporary_display(make_create_request(3, 30), now).status.error,
+    store.create_temporary_display(make_create_request(4, 10), now).status.error,
     vdd::StoreError::TemporaryDisplayLimitReached
   );
 }

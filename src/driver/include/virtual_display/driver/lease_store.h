@@ -83,7 +83,8 @@ namespace virtual_display::driver {
       std::uint32_t connector_index,
       std::uint64_t display_id
     ) const;
-    std::uint32_t connector_index_for_display(std::uint64_t display_id) const;
+    void remove_connector_reservation(std::uint32_t connector_index, std::uint64_t except_display_id);
+    std::uint32_t connector_index_for_display(std::uint64_t display_id);
     bool lease_has_displays(std::uint64_t lease_id) const;
     void remove_lease_if_empty(std::uint64_t lease_id);
 

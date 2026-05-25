@@ -286,7 +286,21 @@ namespace virtual_display::driver {
     );
   }
 
-  std::uint32_t DisplayStore::connector_index_for_display(const std::uint64_t display_id) const {
+  void DisplayStore::remove_connector_reservation(
+    const std::uint32_t connector_index,
+    const std::uint64_t except_display_id
+  ) {
+    for (auto it = connector_reservations_by_display_id_.begin();
+         it != connector_reservations_by_display_id_.end();) {
+      if (it->first != except_display_id && it->second == connector_index) {
+        it = connector_reservations_by_display_id_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
+  std::uint32_t DisplayStore::connector_index_for_display(const std::uint64_t display_id) {
     if (const auto reservation = connector_reservations_by_display_id_.find(display_id);
         reservation != connector_reservations_by_display_id_.end() &&
         is_temporary_connector_index(reservation->second) &&
@@ -299,6 +313,15 @@ namespace virtual_display::driver {
          ++connector_index) {
       if (!connector_index_is_active(connector_index) &&
           !connector_index_is_reserved_for_other_display(connector_index, display_id)) {
+        return connector_index;
+      }
+    }
+
+    for (std::uint32_t connector_index = permanent_display_count_;
+         connector_index < permanent_display_count_ + max_temporary_displays_;
+         ++connector_index) {
+      if (!connector_index_is_active(connector_index)) {
+        remove_connector_reservation(connector_index, display_id);
         return connector_index;
       }
     }

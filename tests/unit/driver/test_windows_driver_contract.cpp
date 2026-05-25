@@ -102,6 +102,7 @@ TEST(VirtualDisplayWindowsDriverContract, StoresTemporaryIdentityInWdfPersistent
   EXPECT_NE(source.find("kPersistentStateSchemaVersion"), std::string::npos);
   EXPECT_NE(source.find("TemporaryDisplayProfiles"), std::string::npos);
   EXPECT_NE(source.find("REG_BINARY"), std::string::npos);
+  EXPECT_NE(source.find("entry.connector_index == descriptor.connector_index"), std::string::npos);
   EXPECT_EQ(source.find("KEY_ALL_ACCESS"), std::string::npos);
   EXPECT_EQ(source.find("KEY_WRITE"), std::string::npos);
   EXPECT_EQ(source.find("WdfRegistryCreateKey"), std::string::npos);

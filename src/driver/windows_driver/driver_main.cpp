@@ -481,6 +481,16 @@ namespace {
     if (existing != profiles.end()) {
       *existing = profile;
     } else {
+      profiles.erase(
+        std::remove_if(
+          profiles.begin(),
+          profiles.end(),
+          [&](const TemporaryDisplayProfile &entry) {
+            return entry.connector_index == descriptor.connector_index;
+          }
+        ),
+        profiles.end()
+      );
       if (profiles.size() >= kMaxTemporaryDisplays) {
         return vdd::BackendError::Failed;
       }

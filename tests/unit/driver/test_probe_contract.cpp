@@ -40,6 +40,7 @@ TEST(VirtualDisplayProbeContract, ExposesTemporaryAndPermanentRuntimeChecks) {
   expect_contains(source, "--self-test-4k240 [timeout_ms]");
   expect_contains(source, "--self-test-hdr [width height refresh_hz]");
   expect_contains(source, "--qa-multi-temp-lease [count timeout_ms]");
+  expect_contains(source, "--qa-temp-identity-retention [width height refresh_hz timeout_ms]");
 }
 
 TEST(VirtualDisplayProbeContract, DiagnoseRunsBeforeControlDeviceOpen) {
@@ -116,4 +117,16 @@ TEST(VirtualDisplayProbeContract, MultiTemporaryLeaseQaCreatesAndExpiresSeveralD
   expect_contains(source, "active.value.temporary_display_count != count");
   expect_contains(source, "multi-temp QA lease did not expire cleanly");
   expect_contains(source, "qa_multi_temp_lease=1");
+}
+
+TEST(VirtualDisplayProbeContract, TemporaryIdentityRetentionQaRequiresRestoredHdrProfile) {
+  const auto source = read_probe_source();
+
+  expect_contains(source, "if (command == \"--qa-temp-identity-retention\")");
+  expect_contains(source, "const auto stable_display_id = transient_id(0x51dd1000)");
+  expect_contains(source, "second.value.connector_index != first.value.connector_index");
+  expect_contains(source, "second.value.target_id != first.value.target_id");
+  expect_contains(source, "filler display reused retained identity connector");
+  expect_contains(source, "HDR profile was not retained for recreated temporary display");
+  expect_contains(source, "qa_temp_identity_retention=1");
 }
