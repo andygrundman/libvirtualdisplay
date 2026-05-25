@@ -332,6 +332,8 @@ TEST(VirtualDisplayDriverLeaseStore, ConvertsPermanentSettingsToDisplayManifest)
   EXPECT_EQ(manifest.profiles[1].display_id, vdd::permanent_display_id(1));
   EXPECT_EQ(manifest.profiles[0].product_code, vdd::permanent_product_code(0));
   EXPECT_EQ(manifest.profiles[0].allowed_mode_count, 1u);
+  EXPECT_EQ(manifest.profiles[0].layout_policy, vdd::kDisplayManifestLayoutPolicyNone);
+  EXPECT_EQ(manifest.profiles[0].orientation, vdd::kDisplayManifestOrientationDefault);
   EXPECT_EQ(manifest.profiles[0].allowed_modes[0].width, 3840u);
   EXPECT_EQ(manifest.profiles[0].allowed_modes[0].refresh_rate_millihz, 144'000u);
   EXPECT_EQ(vdd::trim_display_name(manifest.profiles[0].display_name), "Desk Display");
@@ -351,6 +353,9 @@ TEST(VirtualDisplayDriverLeaseStore, AppliesDisplayManifestAsPermanentState) {
   profile.physical_height_mm = 350;
   profile.allowed_mode_count = 2;
   profile.native_mode_index = 1;
+  profile.layout_policy = vdd::kDisplayManifestLayoutPolicyApplyAndPersist;
+  profile.position_x = 1920;
+  profile.position_y = 0;
   profile.allowed_modes[0] = {1920, 1080, 60'000};
   profile.allowed_modes[1] = {2560, 1440, 120'000};
   std::fill(std::begin(profile.display_name), std::end(profile.display_name), '\0');
@@ -360,6 +365,8 @@ TEST(VirtualDisplayDriverLeaseStore, AppliesDisplayManifestAsPermanentState) {
 
   EXPECT_EQ(store.permanent_display_count(), 1u);
   EXPECT_EQ(store.display_manifest().profiles[0].connector_index, 2u);
+  EXPECT_EQ(store.display_manifest().profiles[0].layout_policy, vdd::kDisplayManifestLayoutPolicyApplyAndPersist);
+  EXPECT_EQ(store.display_manifest().profiles[0].position_x, 1920);
   const auto legacy = store.query_permanent_display_count();
   EXPECT_EQ(legacy.width, 2560u);
   EXPECT_EQ(legacy.height, 1440u);

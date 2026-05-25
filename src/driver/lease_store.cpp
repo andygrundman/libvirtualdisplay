@@ -39,6 +39,8 @@ namespace virtual_display::driver {
       profile.physical_height_mm = normalized.physical_height_mm;
       profile.native_mode_index = 0;
       profile.allowed_mode_count = 1;
+      profile.layout_policy = kDisplayManifestLayoutPolicyNone;
+      profile.orientation = kDisplayManifestOrientationDefault;
       profile.allowed_modes[0] = DisplayMode {
         normalized.width,
         normalized.height,

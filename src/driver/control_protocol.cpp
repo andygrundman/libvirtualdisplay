@@ -213,6 +213,9 @@ namespace virtual_display::driver {
           profile.native_mode_index >= profile.allowed_mode_count) {
         return ValidationError::InvalidModeCount;
       }
+      if (profile.layout_policy > kDisplayManifestLayoutPolicyApplyAndPersist) {
+        return ValidationError::InvalidLayoutPolicy;
+      }
 
       for (std::uint32_t mode_index = 0; mode_index < profile.allowed_mode_count; ++mode_index) {
         const auto &mode = profile.allowed_modes[mode_index];
@@ -266,6 +269,8 @@ namespace virtual_display::driver {
         return "invalid_connector_index";
       case ValidationError::InvalidModeCount:
         return "invalid_mode_count";
+      case ValidationError::InvalidLayoutPolicy:
+        return "invalid_layout_policy";
     }
 
     return "unknown";

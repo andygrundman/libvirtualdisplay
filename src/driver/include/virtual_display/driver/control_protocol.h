@@ -31,7 +31,7 @@ namespace virtual_display::driver {
   };
 
   inline constexpr std::uint16_t kProtocolVersionMajor = 3;
-  inline constexpr std::uint16_t kProtocolVersionMinor = 1;
+  inline constexpr std::uint16_t kProtocolVersionMinor = 2;
   inline constexpr std::uint16_t kProtocolVersionPatch = 0;
 
   inline constexpr std::uint32_t kDisplayNameChars = 32;
@@ -65,6 +65,10 @@ namespace virtual_display::driver {
   inline constexpr std::uint32_t kDisplayManifestProfileKnownFlags =
     kDisplayManifestProfileFlagHdrSupported |
     kDisplayManifestProfileFlagRetainIdentity;
+  inline constexpr std::uint32_t kDisplayManifestLayoutPolicyNone = 0;
+  inline constexpr std::uint32_t kDisplayManifestLayoutPolicyApply = 1;
+  inline constexpr std::uint32_t kDisplayManifestLayoutPolicyApplyAndPersist = 2;
+  inline constexpr std::uint32_t kDisplayManifestOrientationDefault = 0;
 
   enum class IoctlFunction : std::uint32_t {
     GetProtocolVersion = 0x900,
@@ -250,6 +254,10 @@ namespace virtual_display::driver {
     std::uint32_t physical_height_mm {};
     std::uint32_t native_mode_index {};
     std::uint32_t allowed_mode_count {};
+    std::uint32_t layout_policy {};
+    std::int32_t position_x {};
+    std::int32_t position_y {};
+    std::uint32_t orientation {};
     DisplayMode allowed_modes[kMaxAllowedModesPerProfile] {};
     char display_name[kDisplayNameChars] {};
   };
@@ -278,6 +286,7 @@ namespace virtual_display::driver {
     InvalidManifestVersion,
     InvalidConnectorIndex,
     InvalidModeCount,
+    InvalidLayoutPolicy,
   };
 
   struct ValidatedCreateTemporaryDisplay {
@@ -321,6 +330,6 @@ namespace virtual_display::driver {
   static_assert(sizeof(DisplayStateEntry) == 104);
   static_assert(sizeof(QueryDisplayStateResult) == 1696);
   static_assert(sizeof(DisplayMode) == 12);
-  static_assert(sizeof(DisplayManifestProfile) == 136);
-  static_assert(sizeof(DisplayManifest) == 1120);
+  static_assert(sizeof(DisplayManifestProfile) == 152);
+  static_assert(sizeof(DisplayManifest) == 1248);
 }  // namespace virtual_display::driver

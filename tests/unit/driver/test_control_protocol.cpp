@@ -40,6 +40,10 @@ namespace {
     profile.physical_height_mm = 390;
     profile.native_mode_index = 0;
     profile.allowed_mode_count = 2;
+    profile.layout_policy = vdd::kDisplayManifestLayoutPolicyApplyAndPersist;
+    profile.position_x = 1920;
+    profile.position_y = -100;
+    profile.orientation = vdd::kDisplayManifestOrientationDefault;
     profile.allowed_modes[0] = {3840, 2160, 144'000};
     profile.allowed_modes[1] = {2560, 1440, 120'000};
     std::memcpy(profile.display_name, "Desk Display", 13);
@@ -304,4 +308,8 @@ TEST(VirtualDisplayDriverControlProtocol, ValidatesDisplayManifest) {
   manifest = valid_display_manifest();
   manifest.profiles[0].allowed_modes[0].refresh_rate_millihz = vdd::kMaxRefreshRateMilliHz + 1;
   EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidRefreshRate);
+
+  manifest = valid_display_manifest();
+  manifest.profiles[0].layout_policy = vdd::kDisplayManifestLayoutPolicyApplyAndPersist + 1;
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidLayoutPolicy);
 }

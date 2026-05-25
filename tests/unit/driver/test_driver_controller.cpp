@@ -365,6 +365,9 @@ TEST(VirtualDisplayDriverController, ApplyDisplayManifestReportsPerSlotIdentity)
   profile.physical_height_mm = 350;
   profile.native_mode_index = 1;
   profile.allowed_mode_count = 2;
+  profile.layout_policy = vdd::kDisplayManifestLayoutPolicyApplyAndPersist;
+  profile.position_x = -2560;
+  profile.position_y = 200;
   profile.allowed_modes[0] = {1920, 1080, 60'000};
   profile.allowed_modes[1] = {2560, 1440, 120'000};
   std::memcpy(profile.display_name, "Side Display", 13);
@@ -372,6 +375,8 @@ TEST(VirtualDisplayDriverController, ApplyDisplayManifestReportsPerSlotIdentity)
   const auto status = controller.apply_display_manifest(manifest);
 
   EXPECT_TRUE(status.ok());
+  EXPECT_EQ(controller.query_display_manifest().profiles[0].layout_policy, vdd::kDisplayManifestLayoutPolicyApplyAndPersist);
+  EXPECT_EQ(controller.query_display_manifest().profiles[0].position_x, -2560);
   EXPECT_EQ(backend.permanent_counts, (std::vector<std::uint32_t> {1}));
   const auto state = controller.query_display_state();
   ASSERT_EQ(state.entry_count, 1u);

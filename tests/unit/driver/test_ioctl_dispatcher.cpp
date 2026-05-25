@@ -436,6 +436,9 @@ TEST(VirtualDisplayDriverIoctlDispatcher, SetAndQueryDisplayManifestUseManifestA
   profile.physical_height_mm = 350;
   profile.native_mode_index = 1;
   profile.allowed_mode_count = 2;
+  profile.layout_policy = vdd::kDisplayManifestLayoutPolicyApplyAndPersist;
+  profile.position_x = 2560;
+  profile.position_y = 0;
   profile.allowed_modes[0] = {1920, 1080, 60'000};
   profile.allowed_modes[1] = {2560, 1440, 120'000};
   std::memcpy(profile.display_name, "Side Display", 13);
@@ -454,6 +457,8 @@ TEST(VirtualDisplayDriverIoctlDispatcher, SetAndQueryDisplayManifestUseManifestA
   EXPECT_EQ(set_result.bytes_returned, sizeof(output));
   ASSERT_EQ(output.profile_count, 1u);
   EXPECT_EQ(output.profiles[0].connector_index, 2u);
+  EXPECT_EQ(output.profiles[0].layout_policy, vdd::kDisplayManifestLayoutPolicyApplyAndPersist);
+  EXPECT_EQ(output.profiles[0].position_x, 2560);
   EXPECT_EQ(output.profiles[0].allowed_modes[1].width, 2560u);
   EXPECT_EQ(harness.backend.permanent_counts, (std::vector<std::uint32_t> {1}));
 

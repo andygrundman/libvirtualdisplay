@@ -243,6 +243,8 @@ TEST(VirtualDisplayDriverControlClient, DisplayManifestOperationsUseManifestIoct
   expected.profiles[0].connector_index = 2;
   expected.profiles[0].display_id = 0x7000000000000100ull;
   expected.profiles[0].allowed_mode_count = 1;
+  expected.profiles[0].layout_policy = vdd::kDisplayManifestLayoutPolicyApply;
+  expected.profiles[0].position_x = 3840;
   expected.profiles[0].allowed_modes[0] = {2560, 1440, 120'000};
   std::memcpy(expected.profiles[0].display_name, "Side Display", 13);
   transport.set_output(expected);
@@ -257,6 +259,7 @@ TEST(VirtualDisplayDriverControlClient, DisplayManifestOperationsUseManifestIoct
   EXPECT_EQ(transport.calls[0].ioctl_code, vdd::kIoctlSetDisplayManifest);
   EXPECT_EQ(transport.calls[1].ioctl_code, vdd::kIoctlQueryDisplayManifest);
   EXPECT_EQ(input_as<vdd::DisplayManifest>(transport.calls[0]).profiles[0].connector_index, 2u);
+  EXPECT_EQ(input_as<vdd::DisplayManifest>(transport.calls[0]).profiles[0].layout_policy, vdd::kDisplayManifestLayoutPolicyApply);
   EXPECT_EQ(query_result.value.profiles[0].display_id, 0x7000000000000100ull);
 }
 
