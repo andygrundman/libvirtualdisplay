@@ -48,6 +48,7 @@ add_library(${SUNSHINE_DRIVER_TARGET} SHARED
 target_link_libraries(${SUNSHINE_DRIVER_TARGET}
         PRIVATE
         libvirtualdisplay::driver
+        avrt
         d3d11
         dxgi
         "${SUNSHINE_DRIVER_WDK_ROOT}/Lib/${SUNSHINE_DRIVER_SDK_VERSION}/um/${SUNSHINE_DRIVER_ARCH}/iddcx/${SUNSHINE_DRIVER_IDDCX_VERSION}/IddCxStub.lib"

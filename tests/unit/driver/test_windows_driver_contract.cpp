@@ -127,6 +127,23 @@ TEST(VirtualDisplayWindowsDriverContract, SetsSwapChainDeviceFromProcessingThrea
   EXPECT_NE(source.find("HandleNewSwapChain still owns IddCx's internal OPM cleanup", process_frames), std::string::npos);
 }
 
+TEST(VirtualDisplayWindowsDriverContract, RegistersSwapChainWorkerWithMmcss) {
+  const auto source = read_windows_driver_source();
+
+  EXPECT_NE(source.find("#include <avrt.h>"), std::string::npos);
+  EXPECT_NE(source.find("kSwapchainMmcssTask[] = L\"DisplayPostProcessing\""), std::string::npos);
+  EXPECT_NE(source.find("AvSetMmThreadCharacteristicsW(task_name, &task_index_)"), std::string::npos);
+  EXPECT_NE(source.find("AvRevertMmThreadCharacteristics(handle_)"), std::string::npos);
+
+  const auto process_frames = source.find("void process_frames(const LUID render_adapter_luid)");
+  ASSERT_NE(process_frames, std::string::npos);
+  const auto mmcss = source.find("MmcssRegistration mmcss {kSwapchainMmcssTask};", process_frames);
+  ASSERT_NE(mmcss, std::string::npos);
+  const auto create_device = source.find("create_dxgi_device_for_luid(render_adapter_luid", process_frames);
+  ASSERT_NE(create_device, std::string::npos);
+  EXPECT_LT(mmcss, create_device);
+}
+
 TEST(VirtualDisplayWindowsDriverContract, AbandonsInvalidatedSwapchainHandlesDuringTeardown) {
   const auto source = read_windows_driver_source();
 

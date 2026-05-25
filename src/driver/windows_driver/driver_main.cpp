@@ -7,6 +7,7 @@
 #include "virtual_display/driver/windows_control_protocol.h"
 
 #include <Windows.h>
+#include <avrt.h>
 #include <d3d11.h>
 #include <dxgi1_4.h>
 #include <wdf.h>
@@ -39,6 +40,7 @@ namespace {
   constexpr std::uint32_t kMaxTemporaryDisplays = 8;
   constexpr std::uint64_t kPermanentDisplayIdBase = 0x7000000000000000ull;
   constexpr std::uint32_t kPersistentStateSchemaVersion = 1;
+  constexpr wchar_t kSwapchainMmcssTask[] = L"DisplayPostProcessing";
   constexpr wchar_t kTemporaryDisplayProfilesValue[] = L"TemporaryDisplayProfiles";
   constexpr std::size_t kTemporaryDisplayProfileBytes = 36;
   constexpr std::size_t kTemporaryDisplayProfilesHeaderBytes = 8;
@@ -908,6 +910,26 @@ namespace {
     }
 
   private:
+    class MmcssRegistration {
+    public:
+      explicit MmcssRegistration(const wchar_t *task_name) {
+        handle_ = AvSetMmThreadCharacteristicsW(task_name, &task_index_);
+      }
+
+      ~MmcssRegistration() {
+        if (handle_) {
+          AvRevertMmThreadCharacteristics(handle_);
+        }
+      }
+
+      MmcssRegistration(const MmcssRegistration &) = delete;
+      MmcssRegistration &operator=(const MmcssRegistration &) = delete;
+
+    private:
+      DWORD task_index_ {};
+      HANDLE handle_ {};
+    };
+
     void delete_swapchain() {
       if (swapchain_) {
         // Match the IddCx sample by closing the swapchain when processing
@@ -919,6 +941,8 @@ namespace {
     }
 
     void process_frames(const LUID render_adapter_luid) {
+      MmcssRegistration mmcss {kSwapchainMmcssTask};
+
       HRESULT hr = create_dxgi_device_for_luid(render_adapter_luid, device_, dxgi_device_);
       if (FAILED(hr) || stop_requested_.load(std::memory_order_acquire)) {
         return;
