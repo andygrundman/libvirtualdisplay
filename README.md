@@ -7,15 +7,6 @@ identity model, EDID generation, and Windows UMDF/IddCx driver implementation.
 It is intentionally separate from Sunshine's existing `libdisplaydevice`
 dependency, which remains only a display enumeration/settings library.
 
-The expected local checkout for Sunshine integration is:
-
-```text
-D:\sources\libvirtualdisplay
-```
-
-Sunshine discovers this checkout from `D:\sources\sunshine` via
-`../libvirtualdisplay` unless `SUNSHINE_LIBVIRTUALDISPLAY_SOURCE_DIR` is set.
-
 ## Scope
 
 The driver is dedicated to Sunshine virtual-display use cases:
@@ -27,17 +18,23 @@ The driver is dedicated to Sunshine virtual-display use cases:
 - advertise HDR-capable EDID and IddCx target capabilities
 - provide runtime probes that verify the control path and HDR target behavior
 
-This is a clean-room implementation. Do not import source from SudoVDA, MttVDD,
-or Virtual-Display-Driver. Compatibility work should happen at the API/behavior
-level, not by copying driver internals.
+This is a clean-room implementation. Compatibility work happens at the
+API/behavior level rather than by copying driver internals from other virtual
+display driver projects.
 
 ## Build
 
+The core library and unit tests build with CMake and a C++20 compiler:
+
 ```powershell
-cmake -S . -B build -G Ninja -DBUILD_TESTS=ON -DLIBVIRTUALDISPLAY_GOOGLETEST_SOURCE_DIR=D:/sources/sunshine/third-party/googletest
+cmake -S . -B build -G Ninja -DBUILD_TESTS=ON
 cmake --build build -j 10
 .\build\tests\test_libvirtualdisplay.exe
 ```
+
+CMake fetches googletest automatically when no local source directory is
+provided. To use an existing checkout instead, pass
+`-DLIBVIRTUALDISPLAY_GOOGLETEST_SOURCE_DIR=<path-to-googletest>`.
 
 To build only the Windows driver, CLI, and runtime probe:
 
@@ -45,6 +42,12 @@ To build only the Windows driver, CLI, and runtime probe:
 cmake -S . -B build-driver -G Ninja -DBUILD_TESTS=OFF -DBUILD_SUNSHINE_VIRTUAL_DISPLAY_DRIVER=ON -DBUILD_VIRTUALDISPLAY_PROBE=ON
 cmake --build build-driver --target SunshineVirtualDisplayDriver virtualdisplay virtualdisplay_probe -j 10
 ```
+
+The Windows driver build requires MSVC and the Windows Driver Kit. Packaging
+also requires `Inf2Cat.exe` from the WDK. Local package builds generate the INF
+and catalog files, but do not sign them; sign the driver package according to
+your Windows driver distribution policy before installing it outside a test or
+developer environment.
 
 To build the release ZIP locally:
 
@@ -65,18 +68,25 @@ The ZIP contains:
 GitHub Actions publishes the same Windows x64 ZIP when a `v*` tag is pushed,
 for example `v0.1.0`.
 
-The commands below assume the driver package has already been installed and
-Windows has started the Sunshine virtual display device.
+For C++ integration, consume the source tree and CMake target. The release ZIP
+is intended for the driver, CLI, and probe tools.
 
 ## CLI usage
 
 `virtualdisplay.exe` is the user-facing command line tool. It talks to the
 installed driver through the same control interface Sunshine uses.
 
-Install the driver from the release ZIP:
+After extracting the release ZIP, run commands from the extracted top-level
+directory. Install the driver with:
 
 ```powershell
 .\tools\virtualdisplay.exe driver install
+```
+
+For a local developer build, the same command can be run from the build output:
+
+```powershell
+.\build-driver\src\driver\virtualdisplay.exe driver install
 ```
 
 `driver install` self-elevates through the Windows UAC prompt when it is not
@@ -85,39 +95,42 @@ already running as administrator. By default it installs
 directory. To install a different INF:
 
 ```powershell
-.\tools\virtualdisplay.exe driver install --inf C:\path\to\SunshineVirtualDisplayDriver.inf
+.\tools\virtualdisplay.exe driver install --inf <path-to-inf>
 ```
+
+All non-install commands assume the driver package has already been installed
+and Windows has started the virtual display device.
 
 Query the current permanent-display state:
 
 ```powershell
-.\build-driver\src\driver\virtualdisplay.exe status
-.\build-driver\src\driver\virtualdisplay.exe permanent query
+.\tools\virtualdisplay.exe status
+.\tools\virtualdisplay.exe permanent query
 ```
 
 Create one permanent display with the default settings:
 
 ```powershell
-.\build-driver\src\driver\virtualdisplay.exe spawn
+.\tools\virtualdisplay.exe spawn
 ```
 
 Create or update a permanent display with explicit settings:
 
 ```powershell
-.\build-driver\src\driver\virtualdisplay.exe spawn --width 2560 --height 1440 --refresh 120
-.\build-driver\src\driver\virtualdisplay.exe permanent set --count 1 --width 3840 --height 2160 --refresh 144 --name "Desk Display"
+.\tools\virtualdisplay.exe spawn --width 2560 --height 1440 --refresh 120
+.\tools\virtualdisplay.exe permanent set --count 1 --width 3840 --height 2160 --refresh 144 --name "Desk Display"
 ```
 
 Create several permanent displays with the same EDID mode/name settings:
 
 ```powershell
-.\build-driver\src\driver\virtualdisplay.exe permanent set --count 2 --width 1920 --height 1080 --refresh 60 --name "Virtual Display"
+.\tools\virtualdisplay.exe permanent set --count 2 --width 1920 --height 1080 --refresh 60 --name "Virtual Display"
 ```
 
 Remove all permanent displays:
 
 ```powershell
-.\build-driver\src\driver\virtualdisplay.exe permanent off
+.\tools\virtualdisplay.exe permanent off
 ```
 
 Supported settings:
@@ -134,19 +147,27 @@ The driver validates modes against the protocol range:
 - height: `200` through `16384`
 - refresh: `23 Hz` through `480 Hz`
 
-Use `virtualdisplay_probe.exe` for diagnostics and runtime QA rather than normal
-display management:
+Use `virtualdisplay_probe.exe` for diagnostics and runtime validation rather
+than normal display management. Common commands are:
 
 ```powershell
-.\build-driver\src\driver\virtualdisplay_probe.exe --check
-.\build-driver\src\driver\virtualdisplay_probe.exe --diagnose
-.\build-driver\src\driver\virtualdisplay_probe.exe --query-permanent
-.\build-driver\src\driver\virtualdisplay_probe.exe --self-test-permanent
-.\build-driver\src\driver\virtualdisplay_probe.exe --self-test-temp 1920 1080 60
-.\build-driver\src\driver\virtualdisplay_probe.exe --self-test-hdr 1920 1080 60
+.\tools\virtualdisplay_probe.exe --check
+.\tools\virtualdisplay_probe.exe --diagnose
+.\tools\virtualdisplay_probe.exe --query-permanent
+.\tools\virtualdisplay_probe.exe --self-test-permanent
+.\tools\virtualdisplay_probe.exe --self-test-temp 1920 1080 60
+.\tools\virtualdisplay_probe.exe --self-test-hdr 1920 1080 60
 ```
 
+Run `.\tools\virtualdisplay_probe.exe --help` to list advanced validation and
+debug commands.
+
 ## Programmatic usage
+
+The C++ API is primarily for source consumers. Link the `libvirtualdisplay::driver`
+CMake target and include headers from `src/driver/include`. Windows control
+device discovery is available through `windows_control_client.h`; the lower
+level protocol types and `ControlClient` are platform-neutral.
 
 The public C++ control surface is in:
 
@@ -175,6 +196,19 @@ if (!protocol.ok()) {
   return 1;
 }
 ```
+
+`open_first_control_device()` enumerates installed virtual display control
+devices and opens the first usable one. It fails when the driver is not
+installed, the device is not started, or Windows denies access. Keep the opened
+transport alive for as long as `ControlClient` uses it.
+
+API calls return either `ControlOperationResult` or `ControlResult<T>`. Check
+`ok()` before using output values. `status` reports library/protocol failures;
+`native_error` carries the operating-system error code when transport or device
+access fails.
+
+Requests in the examples are value-initialized before copying fixed-size display
+names. This keeps protocol strings null-terminated when using `std::strncpy`.
 
 ### Permanent displays
 
@@ -245,15 +279,26 @@ vdd::LeaseRequest lease {
 };
 
 // Call periodically before remaining_ms reaches zero.
-(void) client.feed_lease(lease);
+auto fed = client.feed_lease(lease);
+if (!fed.ok()) {
+  return 1;
+}
 
 vdd::LeaseDisplayRequest remove {
   vdd::kApiNamespaceGuid,
   request.lease_id,
   request.display_id
 };
-(void) client.remove_temporary_display(remove);
+auto removed = client.remove_temporary_display(remove);
+if (!removed.ok()) {
+  return 1;
+}
 ```
+
+`created.value.effective_timeout_ms` reports the timeout accepted by the driver.
+Call `feed_lease()` before that timeout expires; applications commonly refresh
+at a fraction of the effective timeout. If the lease expires, the driver removes
+temporary displays owned by that lease.
 
 Release every temporary display owned by a lease:
 
@@ -264,7 +309,10 @@ vdd::LeaseRequest lease {
   0,
   0
 };
-(void) client.release_lease(lease);
+auto released = client.release_lease(lease);
+if (!released.ok()) {
+  return 1;
+}
 ```
 
 ### Protocol notes
@@ -272,18 +320,14 @@ vdd::LeaseRequest lease {
 - The current protocol version is `2.0.0`.
 - `ControlClient::check_protocol_compatible()` should be called before issuing
   state-changing requests.
-- IDs are caller-owned. `DisplayId` is the stable display identity;
-  `LeaseId` is only the temporary-display lifetime owner.
+- IDs are caller-owned. Reuse `DisplayId` for the same logical display when you
+  want Windows to retain display identity across sessions; use a unique
+  `LeaseId` for each active temporary-display owner.
 - Names are fixed-size protocol strings with a `32` byte limit.
+- Width must be `320` through `16384`, height must be `200` through `16384`,
+  and refresh rate must be `23000` through `480000` millihertz.
+- Lease timeouts are clamped to the protocol range and reported back as
+  `effective_timeout_ms`.
 - Permanent-display settings are shared by the active permanent pool; setting
   the same count with new mode/name settings refreshes existing permanent
   monitors.
-
-Sunshine refreshes package assets from this repo through:
-
-```powershell
-cmake --build D:/sources/sunshine/build --target refresh_sunshine_virtual_display_driver_assets
-```
-
-The Sunshine package refresh copies the driver and tool artifacts into
-Sunshine's staged Windows driver assets.
