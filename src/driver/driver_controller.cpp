@@ -121,17 +121,19 @@ namespace virtual_display::driver {
   }
 
   ControllerStatus DriverController::set_permanent_display_count(const PermanentDisplayCountRequest &request) {
-    if (const auto validation = validate_permanent_display_count(request, store_.max_permanent_displays());
+    auto normalized = request;
+    set_default_permanent_display_settings(normalized);
+    if (const auto validation = validate_permanent_display_count(normalized, store_.max_permanent_displays());
         validation != ValidationError::None) {
       return {StoreError::ValidationFailed, validation, BackendError::None};
     }
 
-    if (const auto backend_error = backend_.set_permanent_display_count(request.display_count);
+    if (const auto backend_error = backend_.set_permanent_display_count(normalized);
         backend_error != BackendError::None) {
       return {StoreError::None, ValidationError::None, backend_error};
     }
 
-    return from_store_result(store_.set_permanent_display_count(request));
+    return from_store_result(store_.set_permanent_display_count(normalized));
   }
 
   PermanentDisplayCountResult DriverController::query_permanent_display_count() const {

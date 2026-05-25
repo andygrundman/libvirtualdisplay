@@ -208,3 +208,25 @@ TEST(VirtualDisplayDriverControlProtocol, ValidatesPermanentDisplayCount) {
     vdd::ValidationError::WrongApiNamespace
   );
 }
+
+TEST(VirtualDisplayDriverControlProtocol, ValidatesPermanentDisplaySettings) {
+  vdd::PermanentDisplayCountRequest request {};
+  request.display_count = 1;
+  request.width = 3840;
+  request.height = 2160;
+  request.refresh_rate_millihz = 144'000;
+  std::memcpy(request.display_name, "Desk Display", 13);
+
+  EXPECT_EQ(vdd::validate_permanent_display_count(request, 4), vdd::ValidationError::None);
+
+  request.width = vdd::kMinWidth - 1;
+  EXPECT_EQ(vdd::validate_permanent_display_count(request, 4), vdd::ValidationError::InvalidWidth);
+
+  request.width = 3840;
+  request.refresh_rate_millihz = vdd::kMaxRefreshRateMilliHz + 1;
+  EXPECT_EQ(vdd::validate_permanent_display_count(request, 4), vdd::ValidationError::InvalidRefreshRate);
+
+  request.refresh_rate_millihz = 144'000;
+  std::memset(request.display_name, ' ', sizeof(request.display_name));
+  EXPECT_EQ(vdd::validate_permanent_display_count(request, 4), vdd::ValidationError::InvalidDisplayName);
+}

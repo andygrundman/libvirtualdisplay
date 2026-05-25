@@ -24,8 +24,9 @@ namespace {
       return fail_depart ? vdd::BackendError::Failed : vdd::BackendError::None;
     }
 
-    vdd::BackendError set_permanent_display_count(const std::uint32_t display_count) override {
-      permanent_counts.push_back(display_count);
+    vdd::BackendError set_permanent_display_count(const vdd::PermanentDisplayCountRequest &request) override {
+      permanent_counts.push_back(request.display_count);
+      permanent_settings.push_back(request);
       return vdd::BackendError::None;
     }
 
@@ -35,6 +36,7 @@ namespace {
     std::vector<vdd::DisplayDescriptor> arrived {};
     std::vector<std::uint64_t> departed {};
     std::vector<std::uint32_t> permanent_counts {};
+    std::vector<vdd::PermanentDisplayCountRequest> permanent_settings {};
   };
 
   struct Harness {
@@ -316,6 +318,10 @@ TEST(VirtualDisplayDriverIoctlDispatcher, SetAndQueryPermanentDisplayCountUsePer
   Harness harness;
   vdd::PermanentDisplayCountRequest request {};
   request.display_count = 2;
+  request.width = 2560;
+  request.height = 1440;
+  request.refresh_rate_millihz = 120'000;
+  std::memcpy(request.display_name, "CLI Display", 12);
   vdd::PermanentDisplayCountResult output {};
 
   const auto set_result = harness.dispatcher.dispatch(
@@ -329,7 +335,12 @@ TEST(VirtualDisplayDriverIoctlDispatcher, SetAndQueryPermanentDisplayCountUsePer
 
   EXPECT_EQ(set_result.status, vdd::IoctlStatus::Success);
   EXPECT_EQ(output.current_display_count, 2u);
+  EXPECT_EQ(output.width, 2560u);
+  EXPECT_EQ(output.height, 1440u);
+  EXPECT_EQ(output.refresh_rate_millihz, 120'000u);
   EXPECT_EQ(harness.backend.permanent_counts, (std::vector<std::uint32_t> {2}));
+  ASSERT_EQ(harness.backend.permanent_settings.size(), 1u);
+  EXPECT_EQ(harness.backend.permanent_settings[0].width, 2560u);
 
   output = {};
   const auto query_result = harness.dispatcher.dispatch(
@@ -343,6 +354,7 @@ TEST(VirtualDisplayDriverIoctlDispatcher, SetAndQueryPermanentDisplayCountUsePer
 
   EXPECT_EQ(query_result.status, vdd::IoctlStatus::Success);
   EXPECT_EQ(output.current_display_count, 2u);
+  EXPECT_EQ(output.width, 2560u);
 }
 
 TEST(VirtualDisplayDriverIoctlDispatcher, SetPermanentDisplayCountRejectsShortOutputBeforeBackendMutation) {

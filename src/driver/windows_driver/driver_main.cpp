@@ -524,17 +524,24 @@ namespace {
     return NT_SUCCESS(status) ? vdd::BackendError::None : vdd::BackendError::Failed;
   }
 
-  vdd::DisplayDescriptor make_permanent_descriptor(const std::uint32_t index) {
-    const auto display_id = kPermanentDisplayIdBase | static_cast<std::uint64_t>(index + 1);
+  std::uint64_t permanent_display_id(const std::uint32_t index) {
+    return kPermanentDisplayIdBase | static_cast<std::uint64_t>(index + 1);
+  }
+
+  vdd::DisplayDescriptor make_permanent_descriptor(
+    const std::uint32_t index,
+    const vdd::PermanentDisplayCountRequest &settings
+  ) {
+    const auto display_id = permanent_display_id(index);
 
     vdd::EdidOptions options {};
     options.manufacturer_id = vdd::kSunshineDriverManufacturerId;
     options.product_code = static_cast<std::uint16_t>(0x4000u | (index & 0x0fffu));
     options.serial_number = vdd::serial_number_from_display_id(display_id);
-    options.width = 1920;
-    options.height = 1080;
-    options.refresh_rate_millihz = 60'000;
-    options.monitor_name = "Sunshine Display";
+    options.width = settings.width;
+    options.height = settings.height;
+    options.refresh_rate_millihz = settings.refresh_rate_millihz;
+    options.monitor_name = vdd::trim_display_name(settings.display_name);
     options.hdr_supported = true;
 
     vdd::DisplayDescriptor descriptor {};
@@ -1071,14 +1078,18 @@ namespace {
       return depart_display(display_id);
     }
 
-    vdd::BackendError set_permanent_display_count(const std::uint32_t display_count) override {
+    vdd::BackendError set_permanent_display_count(const vdd::PermanentDisplayCountRequest &request) override {
+      auto normalized = request;
+      vdd::set_default_permanent_display_settings(normalized);
+      const auto display_count = normalized.display_count;
       if (display_count > kMaxPermanentDisplays) {
         return vdd::BackendError::Failed;
       }
 
+      const auto previous_display_count = permanent_display_count_;
       std::vector<std::uint64_t> added;
       for (auto index = permanent_display_count_; index < display_count; ++index) {
-        const auto descriptor = make_permanent_descriptor(index);
+        const auto descriptor = make_permanent_descriptor(index, normalized);
         const auto result = arrive_display(descriptor, true);
         if (result.error != vdd::BackendError::None) {
           for (const auto display_id: added) {
@@ -1090,8 +1101,19 @@ namespace {
       }
 
       for (auto index = permanent_display_count_; index > display_count; --index) {
-        const auto display_id = make_permanent_descriptor(index - 1).display_id;
+        const auto display_id = permanent_display_id(index - 1);
         if (depart_display(display_id) != vdd::BackendError::None) {
+          return vdd::BackendError::Failed;
+        }
+      }
+
+      for (auto index = 0u; index < (std::min)(previous_display_count, display_count); ++index) {
+        const auto display_id = permanent_display_id(index);
+        if (depart_display(display_id) != vdd::BackendError::None) {
+          return vdd::BackendError::Failed;
+        }
+        const auto descriptor = make_permanent_descriptor(index, normalized);
+        if (arrive_display(descriptor, true).error != vdd::BackendError::None) {
           return vdd::BackendError::Failed;
         }
       }

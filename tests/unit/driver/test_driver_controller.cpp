@@ -32,8 +32,9 @@ namespace {
       return fail_depart ? vdd::BackendError::Failed : vdd::BackendError::None;
     }
 
-    vdd::BackendError set_permanent_display_count(const std::uint32_t display_count) override {
-      permanent_counts.push_back(display_count);
+    vdd::BackendError set_permanent_display_count(const vdd::PermanentDisplayCountRequest &request) override {
+      permanent_counts.push_back(request.display_count);
+      permanent_settings.push_back(request);
       return fail_permanent ? vdd::BackendError::Failed : vdd::BackendError::None;
     }
 
@@ -47,6 +48,7 @@ namespace {
     std::vector<vdd::DisplayDescriptor> arrived {};
     std::vector<std::uint64_t> departed {};
     std::vector<std::uint32_t> permanent_counts {};
+    std::vector<vdd::PermanentDisplayCountRequest> permanent_settings {};
     std::vector<std::string> events {};
   };
 
@@ -253,12 +255,20 @@ TEST(VirtualDisplayDriverController, SetPermanentDisplayCountReconcilesBackendBe
   auto controller = make_controller(backend);
   vdd::PermanentDisplayCountRequest request {};
   request.display_count = 2;
+  request.width = 3840;
+  request.height = 2160;
+  request.refresh_rate_millihz = 144'000;
+  std::memcpy(request.display_name, "Desk Display", 13);
 
   const auto status = controller.set_permanent_display_count(request);
 
   EXPECT_TRUE(status.ok());
   EXPECT_EQ(backend.permanent_counts, (std::vector<std::uint32_t> {2}));
+  ASSERT_EQ(backend.permanent_settings.size(), 1u);
+  EXPECT_EQ(backend.permanent_settings[0].width, 3840u);
+  EXPECT_EQ(backend.permanent_settings[0].height, 2160u);
   EXPECT_EQ(controller.query_permanent_display_count().current_display_count, 2u);
+  EXPECT_EQ(controller.query_permanent_display_count().refresh_rate_millihz, 144'000u);
 }
 
 TEST(VirtualDisplayDriverController, SetPermanentDisplayCountKeepsStoreUnchangedWhenBackendFails) {

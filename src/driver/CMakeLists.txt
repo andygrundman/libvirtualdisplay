@@ -31,4 +31,8 @@ if(WIN32 AND BUILD_VIRTUALDISPLAY_PROBE)
     add_executable(virtualdisplay_probe "${PROJECT_SOURCE_DIR}/tools/virtualdisplay_probe.cpp")
     target_link_libraries(virtualdisplay_probe PRIVATE libvirtualdisplay::driver)
     target_compile_features(virtualdisplay_probe PRIVATE cxx_std_20)
+
+    add_executable(virtualdisplay "${PROJECT_SOURCE_DIR}/tools/virtualdisplay.cpp")
+    target_link_libraries(virtualdisplay PRIVATE libvirtualdisplay::driver)
+    target_compile_features(virtualdisplay PRIVATE cxx_std_20)
 endif()

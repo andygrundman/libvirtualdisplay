@@ -264,6 +264,10 @@ TEST(VirtualDisplayDriverLeaseStore, SetsAndQueriesPermanentDisplayCount) {
 
   vdd::PermanentDisplayCountRequest request {};
   request.display_count = 2;
+  request.width = 2560;
+  request.height = 1440;
+  request.refresh_rate_millihz = 120'000;
+  std::memcpy(request.display_name, "Desk Display", 13);
 
   EXPECT_EQ(store.set_permanent_display_count(request).error, vdd::StoreError::None);
 
@@ -271,6 +275,10 @@ TEST(VirtualDisplayDriverLeaseStore, SetsAndQueriesPermanentDisplayCount) {
   EXPECT_EQ(result.current_display_count, 2u);
   EXPECT_EQ(result.max_display_count, 2u);
   EXPECT_EQ(result.temporary_display_count, 1u);
+  EXPECT_EQ(result.width, 2560u);
+  EXPECT_EQ(result.height, 1440u);
+  EXPECT_EQ(result.refresh_rate_millihz, 120'000u);
+  EXPECT_EQ(vdd::trim_display_name(result.display_name), "Desk Display");
 }
 
 TEST(VirtualDisplayDriverLeaseStore, RejectsTooManyPermanentDisplays) {

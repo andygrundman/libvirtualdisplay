@@ -21,6 +21,7 @@ namespace virtual_display::driver {
       max_permanent_displays_ {max_permanent_displays},
       max_temporary_displays_ {max_temporary_displays},
       connector_reservations_by_display_id_ {std::move(connector_reservations_by_display_id)} {
+    set_default_permanent_display_settings(permanent_display_settings_);
   }
 
   std::uint32_t DisplayStore::max_permanent_displays() const {
@@ -33,6 +34,10 @@ namespace virtual_display::driver {
 
   std::uint32_t DisplayStore::permanent_display_count() const {
     return permanent_display_count_;
+  }
+
+  const PermanentDisplayCountRequest &DisplayStore::permanent_display_settings() const {
+    return permanent_display_settings_;
   }
 
   std::uint32_t DisplayStore::temporary_display_count() const {
@@ -192,12 +197,15 @@ namespace virtual_display::driver {
   }
 
   StoreResult DisplayStore::set_permanent_display_count(const PermanentDisplayCountRequest &request) {
-    if (const auto validation = validate_permanent_display_count(request, max_permanent_displays_);
+    auto normalized = request;
+    set_default_permanent_display_settings(normalized);
+    if (const auto validation = validate_permanent_display_count(normalized, max_permanent_displays_);
         validation != ValidationError::None) {
       return validation_failure(validation);
     }
 
-    permanent_display_count_ = request.display_count;
+    permanent_display_count_ = normalized.display_count;
+    permanent_display_settings_ = normalized;
     return {};
   }
 
@@ -206,6 +214,14 @@ namespace virtual_display::driver {
     result.current_display_count = permanent_display_count_;
     result.max_display_count = max_permanent_displays_;
     result.temporary_display_count = temporary_display_count();
+    result.width = permanent_display_settings_.width;
+    result.height = permanent_display_settings_.height;
+    result.refresh_rate_millihz = permanent_display_settings_.refresh_rate_millihz;
+    std::copy(
+      std::begin(permanent_display_settings_.display_name),
+      std::end(permanent_display_settings_.display_name),
+      std::begin(result.display_name)
+    );
     return result;
   }
 

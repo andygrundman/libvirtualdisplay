@@ -30,7 +30,7 @@ namespace virtual_display::driver {
     {0xa8, 0x28, 0x00, 0xfe, 0xec, 0x89, 0xeb, 0xac}
   };
 
-  inline constexpr std::uint16_t kProtocolVersionMajor = 1;
+  inline constexpr std::uint16_t kProtocolVersionMajor = 2;
   inline constexpr std::uint16_t kProtocolVersionMinor = 0;
   inline constexpr std::uint16_t kProtocolVersionPatch = 0;
 
@@ -155,7 +155,10 @@ namespace virtual_display::driver {
     Guid api_namespace {kApiNamespaceGuid};
     std::uint32_t display_count {};
     std::uint32_t flags {};
-    std::uint32_t reserved[2] {};
+    std::uint32_t width {1920};
+    std::uint32_t height {1080};
+    std::uint32_t refresh_rate_millihz {60'000};
+    char display_name[kDisplayNameChars] {"Sunshine Display"};
   };
 
   struct PermanentDisplayCountResult {
@@ -163,7 +166,10 @@ namespace virtual_display::driver {
     std::uint32_t current_display_count {};
     std::uint32_t max_display_count {};
     std::uint32_t temporary_display_count {};
-    std::uint32_t reserved {};
+    std::uint32_t width {1920};
+    std::uint32_t height {1080};
+    std::uint32_t refresh_rate_millihz {60'000};
+    char display_name[kDisplayNameChars] {"Sunshine Display"};
   };
 
   enum class ValidationError {
@@ -185,6 +191,7 @@ namespace virtual_display::driver {
   };
 
   bool is_valid_api_namespace(const Guid &guid);
+  void set_default_permanent_display_settings(PermanentDisplayCountRequest &request);
   std::uint32_t normalize_timeout_ms(std::uint32_t requested_timeout_ms);
   std::string_view trim_display_name(const char (&display_name)[kDisplayNameChars]);
   ValidationError validate_create_temporary_display(
@@ -209,6 +216,6 @@ namespace virtual_display::driver {
   static_assert(sizeof(LeaseDisplayRequest) == 32);
   static_assert(sizeof(LeaseRequest) == 32);
   static_assert(sizeof(QueryLeaseResult) == 40);
-  static_assert(sizeof(PermanentDisplayCountRequest) == 32);
-  static_assert(sizeof(PermanentDisplayCountResult) == 32);
+  static_assert(sizeof(PermanentDisplayCountRequest) == 68);
+  static_assert(sizeof(PermanentDisplayCountResult) == 72);
 }  // namespace virtual_display::driver

@@ -191,7 +191,14 @@ TEST(VirtualDisplayDriverControlClient, PermanentDisplayOperationsReturnCounts) 
   transport.set_output(expected);
   vdd::ControlClient client {transport};
 
-  const auto set_result = client.set_permanent_display_count({vdd::kApiNamespaceGuid, 2, 0, {}});
+  vdd::PermanentDisplayCountRequest request {};
+  request.display_count = 2;
+  request.width = 1920;
+  request.height = 1080;
+  request.refresh_rate_millihz = 60'000;
+  std::memcpy(request.display_name, "Sunshine Display", 16);
+
+  const auto set_result = client.set_permanent_display_count(request);
   const auto query_result = client.query_permanent_display_count();
 
   ASSERT_TRUE(set_result.ok());
@@ -199,6 +206,7 @@ TEST(VirtualDisplayDriverControlClient, PermanentDisplayOperationsReturnCounts) 
   ASSERT_EQ(transport.calls.size(), 2u);
   EXPECT_EQ(transport.calls[0].ioctl_code, vdd::kIoctlSetPermanentDisplayCount);
   EXPECT_EQ(transport.calls[1].ioctl_code, vdd::kIoctlQueryPermanentDisplayCount);
+  EXPECT_EQ(input_as<vdd::PermanentDisplayCountRequest>(transport.calls[0]).display_count, 2u);
 }
 
 TEST(VirtualDisplayDriverControlClient, DetectsShortOutput) {

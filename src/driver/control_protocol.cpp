@@ -7,6 +7,23 @@ namespace virtual_display::driver {
     return guid == kApiNamespaceGuid;
   }
 
+  void set_default_permanent_display_settings(PermanentDisplayCountRequest &request) {
+    if (request.width == 0) {
+      request.width = 1920;
+    }
+    if (request.height == 0) {
+      request.height = 1080;
+    }
+    if (request.refresh_rate_millihz == 0) {
+      request.refresh_rate_millihz = 60'000;
+    }
+    if (trim_display_name(request.display_name).empty()) {
+      std::fill(std::begin(request.display_name), std::end(request.display_name), '\0');
+      constexpr char kDefaultName[] = "Sunshine Display";
+      std::copy_n(kDefaultName, sizeof(kDefaultName) - 1, request.display_name);
+    }
+  }
+
   std::uint32_t normalize_timeout_ms(const std::uint32_t requested_timeout_ms) {
     if (requested_timeout_ms == 0) {
       return kDefaultLeaseTimeoutMs;
@@ -102,6 +119,19 @@ namespace virtual_display::driver {
     }
     if (request.display_count > max_display_count) {
       return ValidationError::PermanentDisplayCountTooHigh;
+    }
+    if (request.width < kMinWidth || request.width > kMaxWidth) {
+      return ValidationError::InvalidWidth;
+    }
+    if (request.height < kMinHeight || request.height > kMaxHeight) {
+      return ValidationError::InvalidHeight;
+    }
+    if (request.refresh_rate_millihz < kMinRefreshRateMilliHz ||
+        request.refresh_rate_millihz > kMaxRefreshRateMilliHz) {
+      return ValidationError::InvalidRefreshRate;
+    }
+    if (trim_display_name(request.display_name).empty()) {
+      return ValidationError::InvalidDisplayName;
     }
 
     return ValidationError::None;

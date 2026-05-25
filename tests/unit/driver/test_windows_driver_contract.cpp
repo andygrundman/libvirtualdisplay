@@ -179,3 +179,14 @@ TEST(VirtualDisplayWindowsDriverContract, TargetModesUseRequestedDescriptorTimin
   const auto fill_with_requested_shape2 = source.find("fill_target_modes2(input, output, &*requested_shape)", requested_shape2);
   ASSERT_NE(fill_with_requested_shape2, std::string::npos);
 }
+
+TEST(VirtualDisplayWindowsDriverContract, PermanentDisplaysUseControlPlaneModeSettings) {
+  const auto source = read_windows_driver_source();
+
+  EXPECT_NE(source.find("make_permanent_descriptor("), std::string::npos);
+  EXPECT_NE(source.find("options.width = settings.width;"), std::string::npos);
+  EXPECT_NE(source.find("options.height = settings.height;"), std::string::npos);
+  EXPECT_NE(source.find("options.refresh_rate_millihz = settings.refresh_rate_millihz;"), std::string::npos);
+  EXPECT_NE(source.find("options.monitor_name = vdd::trim_display_name(settings.display_name);"), std::string::npos);
+  EXPECT_NE(source.find("vdd::set_default_permanent_display_settings(normalized);"), std::string::npos);
+}

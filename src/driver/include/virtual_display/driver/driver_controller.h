@@ -36,7 +36,7 @@ namespace virtual_display::driver {
     virtual BackendError reserve_temporary_display_identity(const DisplayDescriptor &descriptor);
     virtual BackendDisplayResult arrive_temporary_display(const DisplayDescriptor &descriptor) = 0;
     virtual BackendError depart_temporary_display(std::uint64_t display_id) = 0;
-    virtual BackendError set_permanent_display_count(std::uint32_t display_count) = 0;
+    virtual BackendError set_permanent_display_count(const PermanentDisplayCountRequest &request) = 0;
   };
 
   struct ControllerStatus {

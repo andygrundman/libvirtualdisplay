@@ -53,6 +53,7 @@ namespace virtual_display::driver {
     [[nodiscard]] std::uint32_t max_permanent_displays() const;
     [[nodiscard]] std::uint32_t max_temporary_displays() const;
     [[nodiscard]] std::uint32_t permanent_display_count() const;
+    [[nodiscard]] const PermanentDisplayCountRequest &permanent_display_settings() const;
     [[nodiscard]] std::uint32_t temporary_display_count() const;
 
     CreateStoreResult create_temporary_display(
@@ -91,6 +92,7 @@ namespace virtual_display::driver {
     std::uint32_t max_permanent_displays_ {};
     std::uint32_t max_temporary_displays_ {};
     std::uint32_t permanent_display_count_ {};
+    PermanentDisplayCountRequest permanent_display_settings_ {};
     std::map<std::uint64_t, TemporaryDisplayRecord> displays_by_id_ {};
     std::map<std::uint64_t, LeaseRecord> leases_by_id_ {};
     std::map<std::uint64_t, std::uint32_t> connector_reservations_by_display_id_ {};
