@@ -24,6 +24,27 @@ namespace {
     std::memcpy(request.display_name, "Sunshine Display", 16);
     return request;
   }
+
+  vdd::DisplayManifest valid_display_manifest() {
+    vdd::DisplayManifest manifest {};
+    manifest.profile_count = 1;
+    manifest.max_profile_count = 2;
+    auto &profile = manifest.profiles[0];
+    profile.flags = vdd::kDisplayManifestProfileFlagHdrSupported |
+      vdd::kDisplayManifestProfileFlagRetainIdentity;
+    profile.connector_index = 0;
+    profile.display_id = 0x7000000000000000ull;
+    profile.product_code = 0x4000;
+    profile.serial_number = 1;
+    profile.physical_width_mm = 700;
+    profile.physical_height_mm = 390;
+    profile.native_mode_index = 0;
+    profile.allowed_mode_count = 2;
+    profile.allowed_modes[0] = {3840, 2160, 144'000};
+    profile.allowed_modes[1] = {2560, 1440, 120'000};
+    std::memcpy(profile.display_name, "Desk Display", 13);
+    return manifest;
+  }
 }  // namespace
 
 TEST(VirtualDisplayDriverControlProtocol, ComputesBufferedUnknownDeviceIoctlCodes) {
@@ -36,6 +57,8 @@ TEST(VirtualDisplayDriverControlProtocol, ComputesBufferedUnknownDeviceIoctlCode
   EXPECT_EQ(vdd::kIoctlSetPermanentDisplayCount, 0x0022e418u);
   EXPECT_EQ(vdd::kIoctlQueryPermanentDisplayCount, 0x0022e41cu);
   EXPECT_EQ(vdd::kIoctlQueryDisplayState, 0x00226420u);
+  EXPECT_EQ(vdd::kIoctlSetDisplayManifest, 0x0022e424u);
+  EXPECT_EQ(vdd::kIoctlQueryDisplayManifest, 0x00226428u);
 }
 
 TEST(VirtualDisplayDriverControlProtocol, ProtocolVersionUsesDedicatedNamespace) {
@@ -260,4 +283,25 @@ TEST(VirtualDisplayDriverControlProtocol, ValidatesPermanentDisplaySettings) {
   request.refresh_rate_millihz = 144'000;
   std::memset(request.display_name, ' ', sizeof(request.display_name));
   EXPECT_EQ(vdd::validate_permanent_display_count(request, 4), vdd::ValidationError::InvalidDisplayName);
+}
+
+TEST(VirtualDisplayDriverControlProtocol, ValidatesDisplayManifest) {
+  auto manifest = valid_display_manifest();
+
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::None);
+
+  manifest.version = 2;
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidManifestVersion);
+
+  manifest = valid_display_manifest();
+  manifest.profiles[0].connector_index = 2;
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidConnectorIndex);
+
+  manifest = valid_display_manifest();
+  manifest.profiles[0].allowed_mode_count = 0;
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidModeCount);
+
+  manifest = valid_display_manifest();
+  manifest.profiles[0].allowed_modes[0].refresh_rate_millihz = vdd::kMaxRefreshRateMilliHz + 1;
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidRefreshRate);
 }

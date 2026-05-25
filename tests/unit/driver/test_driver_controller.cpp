@@ -347,3 +347,41 @@ TEST(VirtualDisplayDriverController, QueryDisplayStateReportsPermanentAndTempora
   EXPECT_EQ(state.entries[1].flags & vdd::kDisplayStateFlagRetainIdentity, 0u);
   EXPECT_EQ(state.entries[1].physical_width_mm, temporary.physical_width_mm);
 }
+
+TEST(VirtualDisplayDriverController, ApplyDisplayManifestReportsPerSlotIdentity) {
+  FakeBackend backend;
+  auto controller = make_controller(backend);
+  vdd::DisplayManifest manifest {};
+  manifest.profile_count = 1;
+  manifest.max_profile_count = 4;
+  auto &profile = manifest.profiles[0];
+  profile.flags = vdd::kDisplayManifestProfileFlagRetainIdentity;
+  profile.connector_index = 2;
+  profile.display_id = 0x7000000000000100ull;
+  profile.container_id = vdd::container_guid_from_display_id(profile.display_id);
+  profile.product_code = 0x4100;
+  profile.serial_number = 0x100;
+  profile.physical_width_mm = 620;
+  profile.physical_height_mm = 350;
+  profile.native_mode_index = 1;
+  profile.allowed_mode_count = 2;
+  profile.allowed_modes[0] = {1920, 1080, 60'000};
+  profile.allowed_modes[1] = {2560, 1440, 120'000};
+  std::memcpy(profile.display_name, "Side Display", 13);
+
+  const auto status = controller.apply_display_manifest(manifest);
+
+  EXPECT_TRUE(status.ok());
+  EXPECT_EQ(backend.permanent_counts, (std::vector<std::uint32_t> {1}));
+  const auto state = controller.query_display_state();
+  ASSERT_EQ(state.entry_count, 1u);
+  EXPECT_EQ(state.entries[0].connector_index, 2u);
+  EXPECT_EQ(state.entries[0].display_id, profile.display_id);
+  EXPECT_EQ(state.entries[0].product_code, 0x4100u);
+  EXPECT_EQ(state.entries[0].width, 2560u);
+  EXPECT_EQ(state.entries[0].height, 1440u);
+  EXPECT_EQ(state.entries[0].refresh_rate_millihz, 120'000u);
+  EXPECT_EQ(state.entries[0].flags & vdd::kDisplayStateFlagHdrSupported, 0u);
+  EXPECT_EQ(state.entries[0].flags & vdd::kDisplayStateFlagRetainIdentity, vdd::kDisplayStateFlagRetainIdentity);
+  EXPECT_EQ(vdd::trim_display_name(state.entries[0].display_name), "Side Display");
+}

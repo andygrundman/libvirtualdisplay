@@ -59,6 +59,14 @@ namespace virtual_display::driver {
     return ioctl_out<QueryDisplayStateResult>(kIoctlQueryDisplayState, nullptr, 0);
   }
 
+  ControlResult<DisplayManifest> ControlClient::set_display_manifest(const DisplayManifest &manifest) {
+    return ioctl_out<DisplayManifest>(kIoctlSetDisplayManifest, &manifest, sizeof(manifest));
+  }
+
+  ControlResult<DisplayManifest> ControlClient::query_display_manifest() {
+    return ioctl_out<DisplayManifest>(kIoctlQueryDisplayManifest, nullptr, 0);
+  }
+
   ControlOperationResult ControlClient::ioctl_no_out(
     const std::uint32_t ioctl_code,
     const void *input,

@@ -10,6 +10,12 @@
 #include <vector>
 
 namespace virtual_display::driver {
+  DisplayManifest display_manifest_from_permanent_settings(
+    const PermanentDisplayCountRequest &request,
+    std::uint32_t max_display_count
+  );
+  PermanentDisplayCountRequest permanent_settings_from_display_manifest(const DisplayManifest &manifest);
+
   enum class StoreError {
     None,
     ValidationFailed,
@@ -57,6 +63,7 @@ namespace virtual_display::driver {
     [[nodiscard]] std::uint32_t max_temporary_displays() const;
     [[nodiscard]] std::uint32_t permanent_display_count() const;
     [[nodiscard]] const PermanentDisplayCountRequest &permanent_display_settings() const;
+    [[nodiscard]] const DisplayManifest &display_manifest() const;
     [[nodiscard]] std::uint32_t temporary_display_count() const;
 
     CreateStoreResult create_temporary_display(
@@ -68,6 +75,7 @@ namespace virtual_display::driver {
     StoreResult release_lease(const LeaseRequest &request);
     QueryLeaseResult query_lease(std::uint64_t lease_id, std::chrono::steady_clock::time_point now) const;
     StoreResult set_permanent_display_count(const PermanentDisplayCountRequest &request);
+    StoreResult apply_display_manifest(const DisplayManifest &manifest);
     PermanentDisplayCountResult query_permanent_display_count() const;
     std::uint32_t reap_expired(std::chrono::steady_clock::time_point now);
 
@@ -95,6 +103,7 @@ namespace virtual_display::driver {
     std::uint32_t max_temporary_displays_ {};
     std::uint32_t permanent_display_count_ {};
     PermanentDisplayCountRequest permanent_display_settings_ {};
+    DisplayManifest display_manifest_ {};
     std::map<std::uint64_t, TemporaryDisplayRecord> displays_by_id_ {};
     std::map<std::uint64_t, LeaseRecord> leases_by_id_ {};
     std::map<std::uint64_t, std::uint32_t> connector_reservations_by_display_id_ {};

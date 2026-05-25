@@ -166,6 +166,76 @@ namespace virtual_display::driver {
     return ValidationError::None;
   }
 
+  ValidationError validate_display_manifest(
+    const DisplayManifest &manifest,
+    const std::uint32_t max_display_count
+  ) {
+    if (!is_valid_api_namespace(manifest.api_namespace)) {
+      return ValidationError::WrongApiNamespace;
+    }
+    if (manifest.version != kDisplayManifestVersion) {
+      return ValidationError::InvalidManifestVersion;
+    }
+    if (manifest.profile_count > max_display_count ||
+        manifest.profile_count > kMaxPermanentDisplayProfiles) {
+      return ValidationError::PermanentDisplayCountTooHigh;
+    }
+    if (manifest.max_profile_count < manifest.profile_count ||
+        manifest.max_profile_count > max_display_count ||
+        manifest.max_profile_count > kMaxPermanentDisplayProfiles) {
+      return ValidationError::PermanentDisplayCountTooHigh;
+    }
+
+    std::array<bool, kMaxPermanentDisplayProfiles> used_connectors {};
+    for (std::uint32_t index = 0; index < manifest.profile_count; ++index) {
+      const auto &profile = manifest.profiles[index];
+      if ((profile.flags & ~kDisplayManifestProfileKnownFlags) != 0) {
+        return ValidationError::InvalidFlags;
+      }
+      if (profile.connector_index >= max_display_count ||
+          profile.connector_index >= kMaxPermanentDisplayProfiles ||
+          used_connectors[profile.connector_index]) {
+        return ValidationError::InvalidConnectorIndex;
+      }
+      used_connectors[profile.connector_index] = true;
+
+      if (profile.display_id == 0) {
+        return ValidationError::MissingDisplayId;
+      }
+      if (profile.physical_width_mm < kMinPhysicalSizeMillimeters ||
+          profile.physical_width_mm > kMaxPhysicalSizeMillimeters ||
+          profile.physical_height_mm < kMinPhysicalSizeMillimeters ||
+          profile.physical_height_mm > kMaxPhysicalSizeMillimeters) {
+        return ValidationError::InvalidPhysicalSize;
+      }
+      if (profile.allowed_mode_count == 0 ||
+          profile.allowed_mode_count > kMaxAllowedModesPerProfile ||
+          profile.native_mode_index >= profile.allowed_mode_count) {
+        return ValidationError::InvalidModeCount;
+      }
+
+      for (std::uint32_t mode_index = 0; mode_index < profile.allowed_mode_count; ++mode_index) {
+        const auto &mode = profile.allowed_modes[mode_index];
+        if (mode.width < kMinWidth || mode.width > kMaxWidth) {
+          return ValidationError::InvalidWidth;
+        }
+        if (mode.height < kMinHeight || mode.height > kMaxHeight) {
+          return ValidationError::InvalidHeight;
+        }
+        if (mode.refresh_rate_millihz < kMinRefreshRateMilliHz ||
+            mode.refresh_rate_millihz > kMaxRefreshRateMilliHz) {
+          return ValidationError::InvalidRefreshRate;
+        }
+      }
+
+      if (trim_display_name(profile.display_name).empty()) {
+        return ValidationError::InvalidDisplayName;
+      }
+    }
+
+    return ValidationError::None;
+  }
+
   const char *to_string(const ValidationError error) {
     switch (error) {
       case ValidationError::None:
@@ -190,6 +260,12 @@ namespace virtual_display::driver {
         return "invalid_display_name";
       case ValidationError::PermanentDisplayCountTooHigh:
         return "permanent_display_count_too_high";
+      case ValidationError::InvalidManifestVersion:
+        return "invalid_manifest_version";
+      case ValidationError::InvalidConnectorIndex:
+        return "invalid_connector_index";
+      case ValidationError::InvalidModeCount:
+        return "invalid_mode_count";
     }
 
     return "unknown";

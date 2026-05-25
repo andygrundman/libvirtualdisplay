@@ -64,6 +64,8 @@ namespace virtual_display::driver {
     ControlResult<PermanentDisplayCountResult> set_permanent_display_count(const PermanentDisplayCountRequest &request);
     ControlResult<PermanentDisplayCountResult> query_permanent_display_count();
     ControlResult<QueryDisplayStateResult> query_display_state();
+    ControlResult<DisplayManifest> set_display_manifest(const DisplayManifest &manifest);
+    ControlResult<DisplayManifest> query_display_manifest();
 
   private:
     template<class T>

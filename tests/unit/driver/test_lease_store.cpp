@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "virtual_display/driver/display_identity.h"
 #include "virtual_display/driver/lease_store.h"
 
 #include <cstring>
@@ -308,6 +309,62 @@ TEST(VirtualDisplayDriverLeaseStore, SetsAndQueriesPermanentDisplayCount) {
   EXPECT_EQ(result.physical_height_mm, 330u);
   EXPECT_EQ(result.refresh_rate_millihz, 120'000u);
   EXPECT_EQ(vdd::trim_display_name(result.display_name), "Desk Display");
+}
+
+TEST(VirtualDisplayDriverLeaseStore, ConvertsPermanentSettingsToDisplayManifest) {
+  vdd::PermanentDisplayCountRequest request {};
+  request.display_count = 2;
+  request.width = 3840;
+  request.height = 2160;
+  request.physical_width_mm = 700;
+  request.physical_height_mm = 390;
+  request.refresh_rate_millihz = 144'000;
+  std::memcpy(request.display_name, "Desk Display", 13);
+
+  const auto manifest = vdd::display_manifest_from_permanent_settings(request, 4);
+
+  EXPECT_EQ(manifest.version, vdd::kDisplayManifestVersion);
+  EXPECT_EQ(manifest.profile_count, 2u);
+  EXPECT_EQ(manifest.max_profile_count, 4u);
+  EXPECT_EQ(manifest.profiles[0].connector_index, 0u);
+  EXPECT_EQ(manifest.profiles[1].connector_index, 1u);
+  EXPECT_EQ(manifest.profiles[0].display_id, vdd::permanent_display_id(0));
+  EXPECT_EQ(manifest.profiles[1].display_id, vdd::permanent_display_id(1));
+  EXPECT_EQ(manifest.profiles[0].product_code, vdd::permanent_product_code(0));
+  EXPECT_EQ(manifest.profiles[0].allowed_mode_count, 1u);
+  EXPECT_EQ(manifest.profiles[0].allowed_modes[0].width, 3840u);
+  EXPECT_EQ(manifest.profiles[0].allowed_modes[0].refresh_rate_millihz, 144'000u);
+  EXPECT_EQ(vdd::trim_display_name(manifest.profiles[0].display_name), "Desk Display");
+}
+
+TEST(VirtualDisplayDriverLeaseStore, AppliesDisplayManifestAsPermanentState) {
+  vdd::DisplayStore store {4, 4};
+  auto manifest = vdd::display_manifest_from_permanent_settings(vdd::PermanentDisplayCountRequest {}, 4);
+  manifest.profile_count = 1;
+  auto &profile = manifest.profiles[0];
+  profile.connector_index = 2;
+  profile.display_id = 0x7000000000000100ull;
+  profile.container_id = vdd::container_guid_from_display_id(profile.display_id);
+  profile.product_code = 0x4100;
+  profile.serial_number = 0x100;
+  profile.physical_width_mm = 620;
+  profile.physical_height_mm = 350;
+  profile.allowed_mode_count = 2;
+  profile.native_mode_index = 1;
+  profile.allowed_modes[0] = {1920, 1080, 60'000};
+  profile.allowed_modes[1] = {2560, 1440, 120'000};
+  std::fill(std::begin(profile.display_name), std::end(profile.display_name), '\0');
+  std::memcpy(profile.display_name, "Side Display", 13);
+
+  EXPECT_EQ(store.apply_display_manifest(manifest).error, vdd::StoreError::None);
+
+  EXPECT_EQ(store.permanent_display_count(), 1u);
+  EXPECT_EQ(store.display_manifest().profiles[0].connector_index, 2u);
+  const auto legacy = store.query_permanent_display_count();
+  EXPECT_EQ(legacy.width, 2560u);
+  EXPECT_EQ(legacy.height, 1440u);
+  EXPECT_EQ(legacy.refresh_rate_millihz, 120'000u);
+  EXPECT_EQ(vdd::trim_display_name(legacy.display_name), "Side Display");
 }
 
 TEST(VirtualDisplayDriverLeaseStore, RejectsTooManyPermanentDisplays) {

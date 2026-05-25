@@ -1,5 +1,7 @@
 #include "virtual_display/driver/lease_store.h"
 
+#include "virtual_display/driver/display_identity.h"
+
 #include <algorithm>
 #include <utility>
 
@@ -13,6 +15,69 @@ namespace virtual_display::driver {
     }
   }  // namespace
 
+  DisplayManifest display_manifest_from_permanent_settings(
+    const PermanentDisplayCountRequest &request,
+    const std::uint32_t max_display_count
+  ) {
+    auto normalized = request;
+    set_default_permanent_display_settings(normalized);
+
+    DisplayManifest manifest {};
+    manifest.profile_count = normalized.display_count;
+    manifest.max_profile_count = std::min(max_display_count, kMaxPermanentDisplayProfiles);
+    for (std::uint32_t index = 0;
+         index < manifest.profile_count && index < kMaxPermanentDisplayProfiles;
+         ++index) {
+      auto &profile = manifest.profiles[index];
+      profile.flags = kDisplayManifestProfileFlagHdrSupported | kDisplayManifestProfileFlagRetainIdentity;
+      profile.connector_index = index;
+      profile.display_id = permanent_display_id(index);
+      profile.container_id = container_guid_from_display_id(profile.display_id);
+      profile.product_code = permanent_product_code(index);
+      profile.serial_number = serial_number_from_display_id(profile.display_id);
+      profile.physical_width_mm = normalized.physical_width_mm;
+      profile.physical_height_mm = normalized.physical_height_mm;
+      profile.native_mode_index = 0;
+      profile.allowed_mode_count = 1;
+      profile.allowed_modes[0] = DisplayMode {
+        normalized.width,
+        normalized.height,
+        normalized.refresh_rate_millihz
+      };
+      std::copy(
+        std::begin(normalized.display_name),
+        std::end(normalized.display_name),
+        std::begin(profile.display_name)
+      );
+    }
+
+    return manifest;
+  }
+
+  PermanentDisplayCountRequest permanent_settings_from_display_manifest(const DisplayManifest &manifest) {
+    PermanentDisplayCountRequest request {};
+    request.display_count = manifest.profile_count;
+    if (manifest.profile_count == 0) {
+      set_default_permanent_display_settings(request);
+      return request;
+    }
+
+    const auto &profile = manifest.profiles[0];
+    const auto &mode = profile.allowed_modes[profile.native_mode_index];
+    request.width = mode.width;
+    request.height = mode.height;
+    request.physical_width_mm = profile.physical_width_mm;
+    request.physical_height_mm = profile.physical_height_mm;
+    request.refresh_rate_millihz = mode.refresh_rate_millihz;
+    std::copy(
+      std::begin(profile.display_name),
+      std::end(profile.display_name),
+      std::begin(request.display_name)
+    );
+    set_default_permanent_display_settings(request);
+    return request;
+  }
+
   DisplayStore::DisplayStore(
     const std::uint32_t max_permanent_displays,
     const std::uint32_t max_temporary_displays,
@@ -22,6 +87,10 @@ namespace virtual_display::driver {
       max_temporary_displays_ {max_temporary_displays},
       connector_reservations_by_display_id_ {std::move(connector_reservations_by_display_id)} {
     set_default_permanent_display_settings(permanent_display_settings_);
+    display_manifest_ = display_manifest_from_permanent_settings(
+      permanent_display_settings_,
+      max_permanent_displays_
+    );
   }
 
   std::uint32_t DisplayStore::max_permanent_displays() const {
@@ -38,6 +107,10 @@ namespace virtual_display::driver {
 
   const PermanentDisplayCountRequest &DisplayStore::permanent_display_settings() const {
     return permanent_display_settings_;
+  }
+
+  const DisplayManifest &DisplayStore::display_manifest() const {
+    return display_manifest_;
   }
 
   std::uint32_t DisplayStore::temporary_display_count() const {
@@ -210,8 +283,18 @@ namespace virtual_display::driver {
       return validation_failure(validation);
     }
 
-    permanent_display_count_ = normalized.display_count;
-    permanent_display_settings_ = normalized;
+    return apply_display_manifest(display_manifest_from_permanent_settings(normalized, max_permanent_displays_));
+  }
+
+  StoreResult DisplayStore::apply_display_manifest(const DisplayManifest &manifest) {
+    if (const auto validation = validate_display_manifest(manifest, max_permanent_displays_);
+        validation != ValidationError::None) {
+      return validation_failure(validation);
+    }
+
+    permanent_display_count_ = manifest.profile_count;
+    display_manifest_ = manifest;
+    permanent_display_settings_ = permanent_settings_from_display_manifest(manifest);
     return {};
   }
 

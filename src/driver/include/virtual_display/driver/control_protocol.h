@@ -31,7 +31,7 @@ namespace virtual_display::driver {
   };
 
   inline constexpr std::uint16_t kProtocolVersionMajor = 3;
-  inline constexpr std::uint16_t kProtocolVersionMinor = 0;
+  inline constexpr std::uint16_t kProtocolVersionMinor = 1;
   inline constexpr std::uint16_t kProtocolVersionPatch = 0;
 
   inline constexpr std::uint32_t kDisplayNameChars = 32;
@@ -57,6 +57,14 @@ namespace virtual_display::driver {
   inline constexpr std::uint32_t kDisplayStateKindTemporary = 2;
   inline constexpr std::uint32_t kDisplayStateFlagHdrSupported = 0x00000001u;
   inline constexpr std::uint32_t kDisplayStateFlagRetainIdentity = 0x00000002u;
+  inline constexpr std::uint32_t kDisplayManifestVersion = 1;
+  inline constexpr std::uint32_t kMaxPermanentDisplayProfiles = 8;
+  inline constexpr std::uint32_t kMaxAllowedModesPerProfile = 4;
+  inline constexpr std::uint32_t kDisplayManifestProfileFlagHdrSupported = 0x00000001u;
+  inline constexpr std::uint32_t kDisplayManifestProfileFlagRetainIdentity = 0x00000002u;
+  inline constexpr std::uint32_t kDisplayManifestProfileKnownFlags =
+    kDisplayManifestProfileFlagHdrSupported |
+    kDisplayManifestProfileFlagRetainIdentity;
 
   enum class IoctlFunction : std::uint32_t {
     GetProtocolVersion = 0x900,
@@ -68,6 +76,8 @@ namespace virtual_display::driver {
     SetPermanentDisplayCount = 0x906,
     QueryPermanentDisplayCount = 0x907,
     QueryDisplayState = 0x908,
+    SetDisplayManifest = 0x909,
+    QueryDisplayManifest = 0x90a,
   };
 
   enum class IoctlAccess : std::uint32_t {
@@ -104,6 +114,10 @@ namespace virtual_display::driver {
     ioctl_code(IoctlFunction::QueryPermanentDisplayCount, IoctlAccess::ReadWrite);
   inline constexpr std::uint32_t kIoctlQueryDisplayState =
     ioctl_code(IoctlFunction::QueryDisplayState, IoctlAccess::Read);
+  inline constexpr std::uint32_t kIoctlSetDisplayManifest =
+    ioctl_code(IoctlFunction::SetDisplayManifest, IoctlAccess::ReadWrite);
+  inline constexpr std::uint32_t kIoctlQueryDisplayManifest =
+    ioctl_code(IoctlFunction::QueryDisplayManifest, IoctlAccess::Read);
 
   struct ProtocolVersion {
     Guid api_namespace {kApiNamespaceGuid};
@@ -219,6 +233,36 @@ namespace virtual_display::driver {
     DisplayStateEntry entries[kMaxDisplayStateEntries] {};
   };
 
+  struct DisplayMode {
+    std::uint32_t width {};
+    std::uint32_t height {};
+    std::uint32_t refresh_rate_millihz {};
+  };
+
+  struct DisplayManifestProfile {
+    std::uint32_t flags {};
+    std::uint32_t connector_index {};
+    std::uint64_t display_id {};
+    Guid container_id {};
+    std::uint32_t product_code {};
+    std::uint32_t serial_number {};
+    std::uint32_t physical_width_mm {};
+    std::uint32_t physical_height_mm {};
+    std::uint32_t native_mode_index {};
+    std::uint32_t allowed_mode_count {};
+    DisplayMode allowed_modes[kMaxAllowedModesPerProfile] {};
+    char display_name[kDisplayNameChars] {};
+  };
+
+  struct DisplayManifest {
+    Guid api_namespace {kApiNamespaceGuid};
+    std::uint32_t version {kDisplayManifestVersion};
+    std::uint32_t profile_count {};
+    std::uint32_t max_profile_count {};
+    std::uint32_t reserved {};
+    DisplayManifestProfile profiles[kMaxPermanentDisplayProfiles] {};
+  };
+
   enum class ValidationError {
     None,
     WrongApiNamespace,
@@ -231,6 +275,9 @@ namespace virtual_display::driver {
     InvalidRefreshRate,
     InvalidDisplayName,
     PermanentDisplayCountTooHigh,
+    InvalidManifestVersion,
+    InvalidConnectorIndex,
+    InvalidModeCount,
   };
 
   struct ValidatedCreateTemporaryDisplay {
@@ -253,6 +300,10 @@ namespace virtual_display::driver {
     const PermanentDisplayCountRequest &request,
     std::uint32_t max_display_count
   );
+  ValidationError validate_display_manifest(
+    const DisplayManifest &manifest,
+    std::uint32_t max_display_count
+  );
   const char *to_string(ValidationError error);
 
   static_assert(std::is_standard_layout_v<Guid>);
@@ -269,4 +320,7 @@ namespace virtual_display::driver {
   static_assert(sizeof(PermanentDisplayCountResult) == 80);
   static_assert(sizeof(DisplayStateEntry) == 104);
   static_assert(sizeof(QueryDisplayStateResult) == 1696);
+  static_assert(sizeof(DisplayMode) == 12);
+  static_assert(sizeof(DisplayManifestProfile) == 136);
+  static_assert(sizeof(DisplayManifest) == 1120);
 }  // namespace virtual_display::driver

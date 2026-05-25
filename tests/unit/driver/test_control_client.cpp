@@ -235,6 +235,31 @@ TEST(VirtualDisplayDriverControlClient, QueryDisplayStateUsesDisplayStateIoctl) 
   EXPECT_EQ(transport.calls[0].ioctl_code, vdd::kIoctlQueryDisplayState);
 }
 
+TEST(VirtualDisplayDriverControlClient, DisplayManifestOperationsUseManifestIoctls) {
+  FakeTransport transport;
+  vdd::DisplayManifest expected {};
+  expected.profile_count = 1;
+  expected.max_profile_count = 4;
+  expected.profiles[0].connector_index = 2;
+  expected.profiles[0].display_id = 0x7000000000000100ull;
+  expected.profiles[0].allowed_mode_count = 1;
+  expected.profiles[0].allowed_modes[0] = {2560, 1440, 120'000};
+  std::memcpy(expected.profiles[0].display_name, "Side Display", 13);
+  transport.set_output(expected);
+  vdd::ControlClient client {transport};
+
+  const auto set_result = client.set_display_manifest(expected);
+  const auto query_result = client.query_display_manifest();
+
+  ASSERT_TRUE(set_result.ok());
+  ASSERT_TRUE(query_result.ok());
+  ASSERT_EQ(transport.calls.size(), 2u);
+  EXPECT_EQ(transport.calls[0].ioctl_code, vdd::kIoctlSetDisplayManifest);
+  EXPECT_EQ(transport.calls[1].ioctl_code, vdd::kIoctlQueryDisplayManifest);
+  EXPECT_EQ(input_as<vdd::DisplayManifest>(transport.calls[0]).profiles[0].connector_index, 2u);
+  EXPECT_EQ(query_result.value.profiles[0].display_id, 0x7000000000000100ull);
+}
+
 TEST(VirtualDisplayDriverControlClient, DetectsShortOutput) {
   FakeTransport transport;
   transport.set_output(vdd::ProtocolVersion {});

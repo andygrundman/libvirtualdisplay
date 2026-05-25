@@ -40,6 +40,7 @@ namespace virtual_display::driver {
     virtual BackendDisplayResult arrive_temporary_display(const DisplayDescriptor &descriptor) = 0;
     virtual BackendError depart_temporary_display(std::uint64_t display_id) = 0;
     virtual BackendError set_permanent_display_count(const PermanentDisplayCountRequest &request) = 0;
+    virtual BackendError apply_display_manifest(const DisplayManifest &manifest);
   };
 
   struct ControllerStatus {
@@ -68,6 +69,8 @@ namespace virtual_display::driver {
     ControllerStatus release_lease(const LeaseRequest &request);
     QueryLeaseResult query_lease(std::uint64_t lease_id, std::chrono::steady_clock::time_point now) const;
     ControllerStatus set_permanent_display_count(const PermanentDisplayCountRequest &request);
+    ControllerStatus apply_display_manifest(const DisplayManifest &manifest);
+    const DisplayManifest &query_display_manifest() const;
     PermanentDisplayCountResult query_permanent_display_count() const;
     QueryDisplayStateResult query_display_state() const;
     std::uint32_t reap_expired(std::chrono::steady_clock::time_point now);

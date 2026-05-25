@@ -420,6 +420,59 @@ TEST(VirtualDisplayDriverIoctlDispatcher, QueryDisplayStateReturnsActiveIdentiti
   EXPECT_EQ(state.entries[1].flags & vdd::kDisplayStateFlagRetainIdentity, 0u);
 }
 
+TEST(VirtualDisplayDriverIoctlDispatcher, SetAndQueryDisplayManifestUseManifestApi) {
+  Harness harness;
+  vdd::DisplayManifest manifest {};
+  manifest.profile_count = 1;
+  manifest.max_profile_count = 4;
+  auto &profile = manifest.profiles[0];
+  profile.flags = vdd::kDisplayManifestProfileFlagRetainIdentity;
+  profile.connector_index = 2;
+  profile.display_id = 0x7000000000000100ull;
+  profile.container_id = vdd::container_guid_from_display_id(profile.display_id);
+  profile.product_code = 0x4100;
+  profile.serial_number = 0x100;
+  profile.physical_width_mm = 620;
+  profile.physical_height_mm = 350;
+  profile.native_mode_index = 1;
+  profile.allowed_mode_count = 2;
+  profile.allowed_modes[0] = {1920, 1080, 60'000};
+  profile.allowed_modes[1] = {2560, 1440, 120'000};
+  std::memcpy(profile.display_name, "Side Display", 13);
+  vdd::DisplayManifest output {};
+
+  const auto set_result = harness.dispatcher.dispatch(
+    vdd::kIoctlSetDisplayManifest,
+    &manifest,
+    sizeof(manifest),
+    &output,
+    sizeof(output),
+    std::chrono::steady_clock::now()
+  );
+
+  EXPECT_EQ(set_result.status, vdd::IoctlStatus::Success);
+  EXPECT_EQ(set_result.bytes_returned, sizeof(output));
+  ASSERT_EQ(output.profile_count, 1u);
+  EXPECT_EQ(output.profiles[0].connector_index, 2u);
+  EXPECT_EQ(output.profiles[0].allowed_modes[1].width, 2560u);
+  EXPECT_EQ(harness.backend.permanent_counts, (std::vector<std::uint32_t> {1}));
+
+  output = {};
+  const auto query_result = harness.dispatcher.dispatch(
+    vdd::kIoctlQueryDisplayManifest,
+    nullptr,
+    0,
+    &output,
+    sizeof(output),
+    std::chrono::steady_clock::now()
+  );
+
+  EXPECT_EQ(query_result.status, vdd::IoctlStatus::Success);
+  EXPECT_EQ(output.api_namespace, vdd::kApiNamespaceGuid);
+  EXPECT_EQ(output.profiles[0].display_id, 0x7000000000000100ull);
+  EXPECT_EQ(vdd::trim_display_name(output.profiles[0].display_name), "Side Display");
+}
+
 TEST(VirtualDisplayDriverIoctlDispatcher, SetPermanentDisplayCountRejectsShortOutputBeforeBackendMutation) {
   Harness harness;
   vdd::PermanentDisplayCountRequest request {};

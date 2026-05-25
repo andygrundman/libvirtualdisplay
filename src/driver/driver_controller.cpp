@@ -132,12 +132,27 @@ namespace virtual_display::driver {
       return {StoreError::ValidationFailed, validation, BackendError::None};
     }
 
-    if (const auto backend_error = backend_.set_permanent_display_count(normalized);
+    return apply_display_manifest(
+      display_manifest_from_permanent_settings(normalized, store_.max_permanent_displays())
+    );
+  }
+
+  ControllerStatus DriverController::apply_display_manifest(const DisplayManifest &manifest) {
+    if (const auto validation = validate_display_manifest(manifest, store_.max_permanent_displays());
+        validation != ValidationError::None) {
+      return {StoreError::ValidationFailed, validation, BackendError::None};
+    }
+
+    if (const auto backend_error = backend_.apply_display_manifest(manifest);
         backend_error != BackendError::None) {
       return {StoreError::None, ValidationError::None, backend_error};
     }
 
-    return from_store_result(store_.set_permanent_display_count(normalized));
+    return from_store_result(store_.apply_display_manifest(manifest));
+  }
+
+  const DisplayManifest &DriverController::query_display_manifest() const {
+    return store_.display_manifest();
   }
 
   PermanentDisplayCountResult DriverController::query_permanent_display_count() const {
@@ -146,30 +161,36 @@ namespace virtual_display::driver {
 
   QueryDisplayStateResult DriverController::query_display_state() const {
     QueryDisplayStateResult result {};
-    const auto &settings = store_.permanent_display_settings();
+    const auto &manifest = store_.display_manifest();
     result.permanent_display_count = store_.permanent_display_count();
     result.temporary_display_count = store_.temporary_display_count();
 
     for (std::uint32_t index = 0;
-         index < store_.permanent_display_count() && result.entry_count < kMaxDisplayStateEntries;
+         index < manifest.profile_count && result.entry_count < kMaxDisplayStateEntries;
          ++index) {
-      const auto display_id = permanent_display_id(index);
+      const auto &profile = manifest.profiles[index];
+      const auto &mode = profile.allowed_modes[profile.native_mode_index];
       auto &entry = result.entries[result.entry_count++];
       entry.kind = kDisplayStateKindPermanent;
-      entry.flags = kDisplayStateFlagHdrSupported | kDisplayStateFlagRetainIdentity;
-      entry.display_id = display_id;
-      entry.container_id = container_guid_from_display_id(display_id);
-      entry.connector_index = index;
-      entry.product_code = permanent_product_code(index);
-      entry.serial_number = serial_number_from_display_id(display_id);
-      entry.width = settings.width;
-      entry.height = settings.height;
-      entry.physical_width_mm = settings.physical_width_mm;
-      entry.physical_height_mm = settings.physical_height_mm;
-      entry.refresh_rate_millihz = settings.refresh_rate_millihz;
+      if ((profile.flags & kDisplayManifestProfileFlagHdrSupported) != 0) {
+        entry.flags |= kDisplayStateFlagHdrSupported;
+      }
+      if ((profile.flags & kDisplayManifestProfileFlagRetainIdentity) != 0) {
+        entry.flags |= kDisplayStateFlagRetainIdentity;
+      }
+      entry.display_id = profile.display_id;
+      entry.container_id = profile.container_id;
+      entry.connector_index = profile.connector_index;
+      entry.product_code = profile.product_code;
+      entry.serial_number = profile.serial_number;
+      entry.width = mode.width;
+      entry.height = mode.height;
+      entry.physical_width_mm = profile.physical_width_mm;
+      entry.physical_height_mm = profile.physical_height_mm;
+      entry.refresh_rate_millihz = mode.refresh_rate_millihz;
       std::copy(
-        std::begin(settings.display_name),
-        std::end(settings.display_name),
+        std::begin(profile.display_name),
+        std::end(profile.display_name),
         std::begin(entry.display_name)
       );
     }
@@ -208,6 +229,10 @@ namespace virtual_display::driver {
 
   BackendError DisplayDriverBackend::reserve_temporary_display_identity(const DisplayDescriptor &) {
     return BackendError::None;
+  }
+
+  BackendError DisplayDriverBackend::apply_display_manifest(const DisplayManifest &manifest) {
+    return set_permanent_display_count(permanent_settings_from_display_manifest(manifest));
   }
 
   ControllerStatus DriverController::from_store_result(const StoreResult &result) {

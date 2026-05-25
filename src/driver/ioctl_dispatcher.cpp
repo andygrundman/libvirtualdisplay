@@ -186,6 +186,34 @@ namespace virtual_display::driver {
         return {IoctlStatus::Success, bytes_returned, {}};
       }
 
+      case kIoctlSetDisplayManifest: {
+        DisplayManifest manifest {};
+        if (!read_input(input, input_size, manifest)) {
+          return {IoctlStatus::InvalidInputBuffer, 0, {}};
+        }
+
+        if (!output || output_size < sizeof(DisplayManifest)) {
+          return {IoctlStatus::InvalidOutputBuffer, 0, {}};
+        }
+
+        const auto status = controller_.apply_display_manifest(manifest);
+        if (!status.ok()) {
+          return result_from_controller(status);
+        }
+
+        (void) write_output(output, output_size, controller_.query_display_manifest(), bytes_returned);
+
+        return {IoctlStatus::Success, bytes_returned, {}};
+      }
+
+      case kIoctlQueryDisplayManifest: {
+        if (!write_output(output, output_size, controller_.query_display_manifest(), bytes_returned)) {
+          return {IoctlStatus::InvalidOutputBuffer, 0, {}};
+        }
+
+        return {IoctlStatus::Success, bytes_returned, {}};
+      }
+
       default:
         return {IoctlStatus::InvalidIoctl, 0, {}};
     }
