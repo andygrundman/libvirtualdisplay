@@ -28,6 +28,7 @@ TEST(VirtualDisplayCliContract, ExposesFriendlyPermanentDisplayCommands) {
   const auto source = read_cli_source();
 
   expect_contains(source, "status");
+  expect_contains(source, "broker protocol|query-state|query-manifest");
   expect_contains(source, "display query");
   expect_contains(source, "driver install [--inf PATH]");
   expect_contains(source, "spawn [--width N] [--height N] [--physical-width-mm N] [--physical-height-mm N] [--refresh HZ] [--name TEXT]");
@@ -36,6 +37,25 @@ TEST(VirtualDisplayCliContract, ExposesFriendlyPermanentDisplayCommands) {
   expect_contains(source, "permanent off");
   expect_contains(source, "client.set_permanent_display_count(request)");
   expect_contains(source, "client.query_display_state()");
+}
+
+TEST(VirtualDisplayCliContract, BrokerCommandsUseSecuredIpcPath) {
+  const auto source = read_cli_source();
+
+  expect_contains(source, "kBrokerPipeName[] = L\"\\\\\\\\.\\\\pipe\\\\SunshineVirtualDisplayBroker\"");
+  expect_contains(source, "int query_broker(const std::string_view command)");
+  expect_contains(source, "CreateFileW(");
+  expect_contains(source, "WriteFile(");
+  expect_contains(source, "ReadFile(");
+  expect_contains(source, "if (args[0] == \"broker\")");
+  expect_contains(source, "args[1] == \"query-state\"");
+  expect_contains(source, "args[1] == \"query-manifest\"");
+
+  const auto broker_command = source.find("if (args[0] == \"broker\")");
+  const auto direct_open = source.find("const auto opened = vdd::open_first_control_device()");
+  ASSERT_NE(broker_command, std::string::npos);
+  ASSERT_NE(direct_open, std::string::npos);
+  EXPECT_LT(broker_command, direct_open);
 }
 
 TEST(VirtualDisplayCliContract, PermanentCommandsApplyModeAndNameSettings) {

@@ -2,6 +2,7 @@
 #include "virtual_display/driver/windows_control_client.h"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstdio>
 #include <cwchar>
@@ -30,6 +31,7 @@ namespace {
     std::cout
       << "virtualdisplay commands:\n"
       << "  driver install [--inf PATH]\n"
+      << "  broker protocol|query-state|query-manifest\n"
       << "  status\n"
       << "  display query\n"
       << "  spawn [--width N] [--height N] [--physical-width-mm N] [--physical-height-mm N] [--refresh HZ] [--name TEXT]\n"
@@ -48,6 +50,8 @@ namespace {
   }
 
 #ifdef _WIN32
+  constexpr wchar_t kBrokerPipeName[] = L"\\\\.\\pipe\\SunshineVirtualDisplayBroker";
+
   struct DevInfoSet {
     HDEVINFO value {INVALID_HANDLE_VALUE};
 
@@ -345,6 +349,54 @@ namespace {
     std::cout << "reboot_required=" << (reboot_required ? 1 : 0) << '\n';
     return reboot_required ? 3 : 0;
   }
+
+  int query_broker(const std::string_view command) {
+    HANDLE pipe = CreateFileW(
+      kBrokerPipeName,
+      GENERIC_READ | GENERIC_WRITE,
+      0,
+      nullptr,
+      OPEN_EXISTING,
+      FILE_ATTRIBUTE_NORMAL,
+      nullptr
+    );
+    if (pipe == INVALID_HANDLE_VALUE) {
+      std::cerr << "open broker pipe failed native_error=" << GetLastError() << '\n';
+      return 1;
+    }
+
+    DWORD bytes_written = 0;
+    if (!WriteFile(
+          pipe,
+          command.data(),
+          static_cast<DWORD>(command.size()),
+          &bytes_written,
+          nullptr
+        )) {
+      std::cerr << "write broker command failed native_error=" << GetLastError() << '\n';
+      CloseHandle(pipe);
+      return 1;
+    }
+
+    std::array<char, 4096> response {};
+    DWORD bytes_read = 0;
+    if (!ReadFile(
+          pipe,
+          response.data(),
+          static_cast<DWORD>(response.size() - 1),
+          &bytes_read,
+          nullptr
+        )) {
+      std::cerr << "read broker response failed native_error=" << GetLastError() << '\n';
+      CloseHandle(pipe);
+      return 1;
+    }
+
+    response[(std::min<DWORD>)(bytes_read, static_cast<DWORD>(response.size() - 1))] = '\0';
+    std::cout << response.data();
+    CloseHandle(pipe);
+    return std::string_view {response.data()}.starts_with("ok ") ? 0 : 1;
+  }
 #else
   int install_driver(const std::vector<std::string> &) {
     std::cerr << "driver install is only supported on Windows\n";
@@ -587,6 +639,21 @@ int main(int argc, char **argv) {
   if (args[0] == kDriverInstallCommand) {
     if (args.size() >= 2 && args[1] == kDriverInstallSubcommand) {
       return install_driver(args);
+    }
+
+    print_usage();
+    return 2;
+  }
+
+  if (args[0] == "broker") {
+    if (args.size() == 2 &&
+        (args[1] == "protocol" || args[1] == "query-state" || args[1] == "query-manifest")) {
+#ifdef _WIN32
+      return query_broker(args[1]);
+#else
+      std::cerr << "broker queries are only supported on Windows.\n";
+      return 1;
+#endif
     }
 
     print_usage();
