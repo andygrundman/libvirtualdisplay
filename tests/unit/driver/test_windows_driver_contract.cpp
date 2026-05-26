@@ -61,6 +61,20 @@ namespace {
     buffer << file.rdbuf();
     return buffer.str();
   }
+
+  std::string read_support_diagnostics() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
+                      "docs/support-diagnostics.md";
+    std::ifstream file {path, std::ios::binary};
+    if (!file) {
+      ADD_FAILURE() << "Failed to open " << path.string();
+      return {};
+    }
+
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+  }
 }  // namespace
 
 TEST(VirtualDisplayWindowsDriverContract, DeletesMonitorObjectWhenArrivalFails) {
@@ -248,6 +262,21 @@ TEST(VirtualDisplayWindowsDriverContract, RecordsAdvancedColorCallbacksPerMonito
 TEST(VirtualDisplayWindowsDriverContract, LinksTraceLoggingRuntime) {
   const auto cmake = read_windows_driver_cmake();
   EXPECT_NE(cmake.find("advapi32"), std::string::npos);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, DocumentsSupportDiagnosticsCapture) {
+  const auto readme = read_readme();
+  const auto docs = read_support_diagnostics();
+
+  EXPECT_NE(readme.find("docs/support-diagnostics.md"), std::string::npos);
+  EXPECT_NE(docs.find("Sunshine.VirtualDisplayDriver"), std::string::npos);
+  EXPECT_NE(docs.find("{3d5d3bd9-8500-4523-9334-583f4b5e6f80}"), std::string::npos);
+  EXPECT_NE(docs.find("logman start SunshineVDD"), std::string::npos);
+  EXPECT_NE(docs.find("SunshineVirtualDisplayBroker"), std::string::npos);
+  EXPECT_NE(docs.find("wevtutil qe Application"), std::string::npos);
+  EXPECT_NE(docs.find("broker query-state"), std::string::npos);
+  EXPECT_NE(docs.find("broker helper-query-color-profiles"), std::string::npos);
+  EXPECT_NE(docs.find("HKLM\\SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers"), std::string::npos);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, PackagesDriverSymbolsWithReleaseZip) {
