@@ -33,6 +33,34 @@ namespace {
     buffer << file.rdbuf();
     return buffer.str();
   }
+
+  std::string read_windows_driver_cmake() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
+                      "src/driver/windows_driver/CMakeLists.txt";
+    std::ifstream file {path, std::ios::binary};
+    if (!file) {
+      ADD_FAILURE() << "Failed to open " << path.string();
+      return {};
+    }
+
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+  }
+
+  std::string read_readme() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
+                      "README.md";
+    std::ifstream file {path, std::ios::binary};
+    if (!file) {
+      ADD_FAILURE() << "Failed to open " << path.string();
+      return {};
+    }
+
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+  }
 }  // namespace
 
 TEST(VirtualDisplayWindowsDriverContract, DeletesMonitorObjectWhenArrivalFails) {
@@ -197,15 +225,22 @@ TEST(VirtualDisplayWindowsDriverContract, RegistersTraceLoggingProvider) {
 }
 
 TEST(VirtualDisplayWindowsDriverContract, LinksTraceLoggingRuntime) {
-  const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
-                    "src/driver/windows_driver/CMakeLists.txt";
-  std::ifstream file {path, std::ios::binary};
-  ASSERT_TRUE(file.is_open()) << path.string();
-
-  std::ostringstream buffer;
-  buffer << file.rdbuf();
-  const auto cmake = buffer.str();
+  const auto cmake = read_windows_driver_cmake();
   EXPECT_NE(cmake.find("advapi32"), std::string::npos);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, PackagesDriverSymbolsWithReleaseZip) {
+  const auto cmake = read_windows_driver_cmake();
+  const auto readme = read_readme();
+
+  EXPECT_NE(
+    cmake.find("install(FILES \"$<TARGET_PDB_FILE:${SUNSHINE_DRIVER_TARGET}>\" DESTINATION driver OPTIONAL)"),
+    std::string::npos
+  );
+  EXPECT_NE(
+    readme.find("driver/SunshineVirtualDisplayDriver.pdb"),
+    std::string::npos
+  );
 }
 
 TEST(VirtualDisplayWindowsDriverContract, AbandonsInvalidatedSwapchainHandlesDuringTeardown) {
