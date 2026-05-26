@@ -3,6 +3,7 @@
 
 #include <array>
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -157,6 +158,50 @@ namespace {
   template<class T>
   int fail(const std::string &message, const vdd::ControlResult<T> &result) {
     return fail(message, {result.status, result.native_error});
+  }
+
+  std::optional<std::uint32_t> parse_u32_token(const std::string_view text) {
+    std::uint32_t value {};
+    const auto *begin = text.data();
+    const auto *end = text.data() + text.size();
+    const auto result = std::from_chars(begin, end, value);
+    if (text.empty() || result.ec != std::errc {} || result.ptr != end) {
+      return std::nullopt;
+    }
+    return value;
+  }
+
+  std::optional<std::int32_t> parse_i32_token(const std::string_view text) {
+    std::int32_t value {};
+    const auto *begin = text.data();
+    const auto *end = text.data() + text.size();
+    const auto result = std::from_chars(begin, end, value);
+    if (text.empty() || result.ec != std::errc {} || result.ptr != end) {
+      return std::nullopt;
+    }
+    return value;
+  }
+
+  bool read_u32_arg(
+    const int argc,
+    char **argv,
+    const int index,
+    const std::uint32_t fallback,
+    const char *label,
+    std::uint32_t &value
+  ) {
+    if (argc <= index) {
+      value = fallback;
+      return true;
+    }
+
+    const auto parsed = parse_u32_token(argv[index]);
+    if (!parsed) {
+      std::cerr << "invalid " << label << '\n';
+      return false;
+    }
+    value = *parsed;
+    return true;
   }
 
 #ifdef _WIN32
@@ -430,7 +475,9 @@ namespace {
       return nullptr;
     }
 
-    for (std::uint32_t index = 0; index < manifest.profile_count; ++index) {
+    const auto bounded_profile_count =
+      (std::min)(manifest.profile_count, vdd::kMaxPermanentDisplayProfiles);
+    for (std::uint32_t index = 0; index < bounded_profile_count; ++index) {
       const auto &profile = manifest.profiles[index];
       if (profile.connector_index == path.targetInfo.id && profile.layout_policy != vdd::kDisplayManifestLayoutPolicyNone) {
         return &profile;
@@ -1276,11 +1323,13 @@ namespace {
       return 1;
     }
 
+    std::size_t active_paths = 0;
     std::size_t queried = 0;
     for (const auto &path: display_config->paths) {
       if ((path.flags & DISPLAYCONFIG_PATH_ACTIVE) == 0) {
         continue;
       }
+      ++active_paths;
 
       WCS_PROFILE_MANAGEMENT_SCOPE scope {};
       const HRESULT scope_result = color_api->get_user_scope(
@@ -1297,7 +1346,6 @@ namespace {
       if (FAILED(scope_result)) {
         std::cout << " scope_hresult=0x" << std::hex
                   << static_cast<unsigned long>(scope_result) << std::dec << '\n';
-        ++queried;
         continue;
       }
 
@@ -1308,11 +1356,15 @@ namespace {
       ++queried;
     }
 
+    if (active_paths != 0 && queried == 0) {
+      std::cerr << "color profile query failed for every active path\n";
+    }
+    std::cout << "color_profile_active_paths=" << active_paths << '\n';
     std::cout << "color_profile_paths=" << queried << '\n';
     report_helper_event(
       queried == 0 ? EVENTLOG_ERROR_TYPE : EVENTLOG_INFORMATION_TYPE,
       queried == 0 ? kEventHelperColorQueryFailed : kEventHelperColorQueryCompleted,
-      "Color profile query paths=" + std::to_string(queried)
+      "Color profile query paths=" + std::to_string(queried) + " active_paths=" + std::to_string(active_paths)
     );
     return queried == 0 ? 1 : 0;
   }
@@ -1323,14 +1375,16 @@ namespace {
       return std::nullopt;
     }
 
-    try {
-      LUID luid {};
-      luid.HighPart = static_cast<LONG>(std::stol(std::string {text.substr(0, separator)}));
-      luid.LowPart = static_cast<DWORD>(std::stoul(std::string {text.substr(separator + 1)}));
-      return luid;
-    } catch (...) {
+    const auto high = parse_i32_token(text.substr(0, separator));
+    const auto low = parse_u32_token(text.substr(separator + 1));
+    if (!high || !low) {
       return std::nullopt;
     }
+
+    LUID luid {};
+    luid.HighPart = static_cast<LONG>(*high);
+    luid.LowPart = static_cast<DWORD>(*low);
+    return luid;
   }
 
   int associate_color_profile(
@@ -1669,11 +1723,8 @@ int main(const int argc, char **argv) {
       }
     }
 
-    UINT32 source_id {};
-    try {
-      source_id = static_cast<UINT32>(std::stoul(argv[3]));
-    } catch (...) {
-      std::cerr << "invalid source_id\n";
+    std::uint32_t source_id {};
+    if (!read_u32_arg(argc, argv, 3, 0, "source_id", source_id)) {
       return 2;
     }
 
@@ -1724,7 +1775,9 @@ int main(const int argc, char **argv) {
       return 2;
     }
     vdd::PermanentDisplayCountRequest request {};
-    request.display_count = static_cast<std::uint32_t>(std::stoul(argv[2]));
+    if (!read_u32_arg(argc, argv, 2, 0, "permanent count", request.display_count)) {
+      return 2;
+    }
     const auto result = client.set_permanent_display_count(request);
     if (!result.ok()) {
       return fail("set permanent count failed", result);
@@ -1741,9 +1794,17 @@ int main(const int argc, char **argv) {
       return fail("query permanent count failed", before);
     }
 
-    const auto requested = argc >= 3 ?
-      static_cast<std::uint32_t>(std::stoul(argv[2])) :
-      (before.value.current_display_count == 0 ? 1u : 0u);
+    std::uint32_t requested {};
+    if (!read_u32_arg(
+          argc,
+          argv,
+          2,
+          before.value.current_display_count == 0 ? 1u : 0u,
+          "permanent count",
+          requested
+        )) {
+      return 2;
+    }
     if (requested > before.value.max_display_count) {
       std::cerr << "requested permanent count " << requested
                 << " exceeds max " << before.value.max_display_count << '\n';
@@ -1798,9 +1859,14 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--self-test-temp") {
-    const std::uint32_t width = argc >= 3 ? static_cast<std::uint32_t>(std::stoul(argv[2])) : 1920u;
-    const std::uint32_t height = argc >= 4 ? static_cast<std::uint32_t>(std::stoul(argv[3])) : 1080u;
-    const std::uint32_t refresh_hz = argc >= 5 ? static_cast<std::uint32_t>(std::stoul(argv[4])) : 60u;
+    std::uint32_t width {};
+    std::uint32_t height {};
+    std::uint32_t refresh_hz {};
+    if (!read_u32_arg(argc, argv, 2, 1920u, "width", width) ||
+        !read_u32_arg(argc, argv, 3, 1080u, "height", height) ||
+        !read_u32_arg(argc, argv, 4, 60u, "refresh_hz", refresh_hz)) {
+      return 2;
+    }
     const auto request = make_temporary_request(width, height, refresh_hz);
 
     const auto created = client.create_temporary_display(request);
@@ -1816,7 +1882,10 @@ int main(const int argc, char **argv) {
     };
     const auto queried = client.query_lease(lease_request);
     if (!queried.ok()) {
-      (void) client.remove_temporary_display({vdd::kApiNamespaceGuid, request.lease_id, request.display_id});
+      const auto cleanup = client.remove_temporary_display({vdd::kApiNamespaceGuid, request.lease_id, request.display_id});
+      if (!cleanup.ok()) {
+        return fail("remove temporary display after query lease failed", cleanup);
+      }
       return fail("query lease failed", queried);
     }
 
@@ -1833,14 +1902,22 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--self-test-4k240") {
-    const std::uint32_t timeout_ms = argc >= 3 ? static_cast<std::uint32_t>(std::stoul(argv[2])) : 10'000u;
+    std::uint32_t timeout_ms {};
+    if (!read_u32_arg(argc, argv, 2, 10'000u, "timeout_ms", timeout_ms)) {
+      return 2;
+    }
     return run_temporary_mode_probe(client, 3840u, 2160u, 240u, timeout_ms, "self_test_4k240");
   }
 
   if (command == "--self-test-hdr") {
-    const std::uint32_t width = argc >= 3 ? static_cast<std::uint32_t>(std::stoul(argv[2])) : 1920u;
-    const std::uint32_t height = argc >= 4 ? static_cast<std::uint32_t>(std::stoul(argv[3])) : 1080u;
-    const std::uint32_t refresh_hz = argc >= 5 ? static_cast<std::uint32_t>(std::stoul(argv[4])) : 60u;
+    std::uint32_t width {};
+    std::uint32_t height {};
+    std::uint32_t refresh_hz {};
+    if (!read_u32_arg(argc, argv, 2, 1920u, "width", width) ||
+        !read_u32_arg(argc, argv, 3, 1080u, "height", height) ||
+        !read_u32_arg(argc, argv, 4, 60u, "refresh_hz", refresh_hz)) {
+      return 2;
+    }
     const auto request = make_temporary_request(width, height, refresh_hz);
 
     const auto created = client.create_temporary_display(request);
@@ -1917,10 +1994,16 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--self-test-lease-expiry") {
-    const std::uint32_t width = argc >= 3 ? static_cast<std::uint32_t>(std::stoul(argv[2])) : 1920u;
-    const std::uint32_t height = argc >= 4 ? static_cast<std::uint32_t>(std::stoul(argv[3])) : 1080u;
-    const std::uint32_t refresh_hz = argc >= 5 ? static_cast<std::uint32_t>(std::stoul(argv[4])) : 60u;
-    const std::uint32_t timeout_ms = argc >= 6 ? static_cast<std::uint32_t>(std::stoul(argv[5])) : 3'000u;
+    std::uint32_t width {};
+    std::uint32_t height {};
+    std::uint32_t refresh_hz {};
+    std::uint32_t timeout_ms {};
+    if (!read_u32_arg(argc, argv, 2, 1920u, "width", width) ||
+        !read_u32_arg(argc, argv, 3, 1080u, "height", height) ||
+        !read_u32_arg(argc, argv, 4, 60u, "refresh_hz", refresh_hz) ||
+        !read_u32_arg(argc, argv, 5, 3'000u, "timeout_ms", timeout_ms)) {
+      return 2;
+    }
     auto request = make_temporary_request(width, height, refresh_hz);
     request.requested_timeout_ms = timeout_ms;
 
@@ -1973,8 +2056,12 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--qa-multi-temp-lease") {
-    const std::uint32_t count = argc >= 3 ? static_cast<std::uint32_t>(std::stoul(argv[2])) : 3u;
-    const std::uint32_t timeout_ms = argc >= 4 ? static_cast<std::uint32_t>(std::stoul(argv[3])) : 3'000u;
+    std::uint32_t count {};
+    std::uint32_t timeout_ms {};
+    if (!read_u32_arg(argc, argv, 2, 3u, "count", count) ||
+        !read_u32_arg(argc, argv, 3, 3'000u, "timeout_ms", timeout_ms)) {
+      return 2;
+    }
     if (count == 0 || count > 8) {
       std::cerr << "multi-temp QA count must be in the range 1..8\n";
       return 2;
@@ -2070,10 +2157,16 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--qa-temp-identity-retention") {
-    const std::uint32_t width = argc >= 3 ? static_cast<std::uint32_t>(std::stoul(argv[2])) : 1920u;
-    const std::uint32_t height = argc >= 4 ? static_cast<std::uint32_t>(std::stoul(argv[3])) : 1080u;
-    const std::uint32_t refresh_hz = argc >= 5 ? static_cast<std::uint32_t>(std::stoul(argv[4])) : 60u;
-    const std::uint32_t timeout_ms = argc >= 6 ? static_cast<std::uint32_t>(std::stoul(argv[5])) : 30'000u;
+    std::uint32_t width {};
+    std::uint32_t height {};
+    std::uint32_t refresh_hz {};
+    std::uint32_t timeout_ms {};
+    if (!read_u32_arg(argc, argv, 2, 1920u, "width", width) ||
+        !read_u32_arg(argc, argv, 3, 1080u, "height", height) ||
+        !read_u32_arg(argc, argv, 4, 60u, "refresh_hz", refresh_hz) ||
+        !read_u32_arg(argc, argv, 5, 30'000u, "timeout_ms", timeout_ms)) {
+      return 2;
+    }
 
     const auto before_count = client.query_permanent_display_count();
     if (!before_count.ok()) {
@@ -2298,10 +2391,16 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--debug-temp-config") {
-    const std::uint32_t width = argc >= 3 ? static_cast<std::uint32_t>(std::stoul(argv[2])) : 1920u;
-    const std::uint32_t height = argc >= 4 ? static_cast<std::uint32_t>(std::stoul(argv[3])) : 1080u;
-    const std::uint32_t refresh_hz = argc >= 5 ? static_cast<std::uint32_t>(std::stoul(argv[4])) : 60u;
-    const std::uint32_t timeout_ms = argc >= 6 ? static_cast<std::uint32_t>(std::stoul(argv[5])) : 10'000u;
+    std::uint32_t width {};
+    std::uint32_t height {};
+    std::uint32_t refresh_hz {};
+    std::uint32_t timeout_ms {};
+    if (!read_u32_arg(argc, argv, 2, 1920u, "width", width) ||
+        !read_u32_arg(argc, argv, 3, 1080u, "height", height) ||
+        !read_u32_arg(argc, argv, 4, 60u, "refresh_hz", refresh_hz) ||
+        !read_u32_arg(argc, argv, 5, 10'000u, "timeout_ms", timeout_ms)) {
+      return 2;
+    }
     auto request = make_temporary_request(width, height, refresh_hz);
     request.requested_timeout_ms = timeout_ms;
 
@@ -2364,10 +2463,16 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--qa-temp-lease") {
-    const std::uint32_t width = argc >= 3 ? static_cast<std::uint32_t>(std::stoul(argv[2])) : 1920u;
-    const std::uint32_t height = argc >= 4 ? static_cast<std::uint32_t>(std::stoul(argv[3])) : 1080u;
-    const std::uint32_t refresh_hz = argc >= 5 ? static_cast<std::uint32_t>(std::stoul(argv[4])) : 60u;
-    const std::uint32_t timeout_ms = argc >= 6 ? static_cast<std::uint32_t>(std::stoul(argv[5])) : 3'000u;
+    std::uint32_t width {};
+    std::uint32_t height {};
+    std::uint32_t refresh_hz {};
+    std::uint32_t timeout_ms {};
+    if (!read_u32_arg(argc, argv, 2, 1920u, "width", width) ||
+        !read_u32_arg(argc, argv, 3, 1080u, "height", height) ||
+        !read_u32_arg(argc, argv, 4, 60u, "refresh_hz", refresh_hz) ||
+        !read_u32_arg(argc, argv, 5, 3'000u, "timeout_ms", timeout_ms)) {
+      return 2;
+    }
     auto request = make_temporary_request(width, height, refresh_hz);
     request.requested_timeout_ms = timeout_ms;
 

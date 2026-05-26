@@ -75,6 +75,11 @@ TEST(VirtualDisplayProbeContract, ExposesTemporaryAndPermanentRuntimeChecks) {
   expect_contains(source, "saturating_mul_u64");
   expect_contains(source, "saturating_u32(static_cast<std::uint64_t>(refresh_hz) * height)");
   expect_not_contains(source, "refresh_hz * 1000u");
+  expect_contains(source, "std::from_chars(begin, end, value)");
+  expect_contains(source, "result.ptr != end");
+  expect_contains(source, "read_u32_arg(argc, argv");
+  expect_not_contains(source, "std::stoul");
+  expect_not_contains(source, "std::stol");
 }
 
 TEST(VirtualDisplayProbeContract, DiagnoseRunsBeforeControlDeviceOpen) {
@@ -229,6 +234,7 @@ TEST(VirtualDisplayProbeContract, MultiTemporaryLeaseQaCreatesAndExpiresSeveralD
 
   expect_contains(source, "if (command == \"--qa-multi-temp-lease\")");
   expect_contains(source, "multi-temp QA reused connector index");
+  expect_contains(source, "read_u32_arg(argc, argv, 2, 3u, \"count\", count)");
   expect_contains(source, "active.value.temporary_display_count != count");
   expect_contains(source, "multi-temp QA lease did not expire cleanly");
   expect_contains(source, "qa_multi_temp_lease=1");
@@ -238,6 +244,7 @@ TEST(VirtualDisplayProbeContract, TemporaryIdentityRetentionQaRequiresRestoredHd
   const auto source = read_probe_source();
 
   expect_contains(source, "if (command == \"--qa-temp-identity-retention\")");
+  expect_contains(source, "read_u32_arg(argc, argv, 5, 30'000u, \"timeout_ms\", timeout_ms)");
   expect_contains(source, "const auto stable_display_id = transient_id(0x51dd1000)");
   expect_contains(source, "second.value.connector_index != first.value.connector_index");
   expect_contains(source, "second.value.target_id != first.value.target_id");
@@ -248,6 +255,7 @@ TEST(VirtualDisplayProbeContract, TemporaryIdentityRetentionQaRequiresRestoredHd
 
 TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   const auto source = read_broker_source();
+  const auto probe_source = read_probe_source();
   const auto cmake = read_driver_cmake();
 
   expect_contains(cmake, "add_executable(virtualdisplay_broker");
@@ -308,6 +316,12 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "--default");
   expect_contains(source, "launch_console_helper(*helper_arguments)");
   expect_contains(source, "WTSGetActiveConsoleSessionId()");
+  expect_contains(probe_source, "(std::min)(manifest.profile_count, vdd::kMaxPermanentDisplayProfiles)");
+  expect_contains(probe_source, "color_profile_active_paths=");
+  expect_contains(probe_source, "color profile query failed for every active path");
+  expect_contains(probe_source, "parse_i32_token(text.substr(0, separator))");
+  expect_contains(probe_source, "parse_u32_token(text.substr(separator + 1))");
+  expect_contains(probe_source, "remove temporary display after query lease failed");
   expect_contains(source, "WTSQueryUserToken(session_id");
   expect_contains(source, "CreateProcessAsUserW");
   expect_contains(source, "RegisterServiceCtrlHandlerW");
