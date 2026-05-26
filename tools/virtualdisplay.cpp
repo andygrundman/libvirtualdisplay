@@ -1,5 +1,6 @@
 #include "virtual_display/driver/control_client.h"
 #include "virtual_display/driver/windows_control_client.h"
+#include "virtual_display/driver/windows_cli_utils.h"
 
 #include <algorithm>
 #include <array>
@@ -171,31 +172,6 @@ namespace {
     return output;
   }
 
-  std::wstring quote_argument(const std::wstring &argument) {
-    std::wstring quoted {L"\""};
-    std::size_t backslashes = 0;
-    for (wchar_t ch : argument) {
-      if (ch == L'"') {
-        quoted.append(backslashes * 2 + 1, L'\\');
-        quoted += ch;
-        backslashes = 0;
-        continue;
-      }
-      if (ch == L'\\') {
-        ++backslashes;
-        continue;
-      }
-      if (backslashes != 0) {
-        quoted.append(backslashes, L'\\');
-        backslashes = 0;
-      }
-      quoted += ch;
-    }
-    quoted.append(backslashes * 2, L'\\');
-    quoted += L'"';
-    return quoted;
-  }
-
   bool is_process_elevated() {
     HANDLE token {};
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
@@ -222,7 +198,7 @@ namespace {
       if (parameters.tellp() > 0) {
         parameters << L' ';
       }
-      parameters << quote_argument(widen(arg));
+      parameters << vdd::quote_windows_command_argument(widen(arg));
     }
 
     SHELLEXECUTEINFOW execute {};
@@ -425,7 +401,7 @@ namespace {
       return 1;
     }
 
-    const std::wstring command_line = quote_argument(broker_path.wstring()) + L" --service";
+    const std::wstring command_line = vdd::quote_windows_command_argument(broker_path.wstring()) + L" --service";
     SC_HANDLE service_handle = CreateServiceW(
       manager.value,
       kBrokerServiceName,
@@ -641,27 +617,22 @@ namespace {
   }
 
   std::optional<std::filesystem::path> parse_driver_inf_path(const std::vector<std::string> &args) {
-    auto inf_path = default_driver_inf_path();
-
-    for (std::size_t index = 2; index < args.size(); ++index) {
-      const auto &arg = args[index];
-      if (arg != "--inf") {
-        std::cerr << "unknown option: " << arg << '\n';
+    const auto result = vdd::parse_driver_install_inf_path(args, default_driver_inf_path());
+    switch (result.status) {
+      case vdd::DriverInstallInfPathStatus::Ok:
+        return result.inf_path;
+      case vdd::DriverInstallInfPathStatus::UnknownOption:
+        std::cerr << "unknown option: " << result.option << '\n';
         return std::nullopt;
-      }
-
-      if (index + 1 >= args.size()) {
+      case vdd::DriverInstallInfPathStatus::MissingInfValue:
         std::cerr << "--inf requires a value\n";
         return std::nullopt;
-      }
-      inf_path = std::filesystem::absolute(args[++index]);
+      case vdd::DriverInstallInfPathStatus::EmptyDefaultPath:
+        break;
     }
 
-    if (inf_path.empty()) {
       std::cerr << "failed to resolve default driver INF path\n";
-      return std::nullopt;
-    }
-    return inf_path;
+    return std::nullopt;
   }
 
   bool multi_sz_contains(const std::byte *values, const DWORD byte_count, const std::wstring_view expected) {

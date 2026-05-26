@@ -1,9 +1,14 @@
 #include <gtest/gtest.h>
 
+#include "virtual_display/driver/windows_cli_utils.h"
+
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
+
+namespace vdd = virtual_display::driver;
 
 namespace {
   std::string read_cli_source() {
@@ -158,12 +163,52 @@ TEST(VirtualDisplayCliContract, DriverInstallSelfElevatesAndInstallsRootDevice) 
 
   expect_contains(source, "ShellExecuteExW(&execute)");
   expect_contains(source, "execute.lpVerb = L\"runas\"");
-  expect_contains(source, "quoted.append(backslashes * 2 + 1, L'\\\\')");
-  expect_contains(source, "quoted.append(backslashes * 2, L'\\\\')");
+  expect_contains(source, "vdd::quote_windows_command_argument(widen(arg))");
+  expect_contains(source, "vdd::parse_driver_install_inf_path(args, default_driver_inf_path())");
   expect_contains(source, "Root\\\\SunshineVirtualDisplay");
   expect_contains(source, "UpdateDriverForPlugAndPlayDevicesW");
   expect_contains(source, "driver_installed=1");
   expect_contains(source, "multi_sz_contains(buffer.data(), required_size");
   expect_contains(source, "byte_count % sizeof(wchar_t)");
   expect_contains(source, "wide_values[char_count - 1] != L'\\0'");
+  expect_contains(source, "if (!ShellExecuteExW(&execute))");
+  expect_contains(source, "return static_cast<int>(exit_code)");
+  expect_contains(source, "create root device failed native_error=");
+  expect_contains(source, "driver install failed native_error=");
+  expect_contains(source, "return reboot_required ? 3 : 0");
+}
+
+TEST(VirtualDisplayCliContract, QuotesWindowsArgumentsForElevation) {
+  EXPECT_EQ(vdd::quote_windows_command_argument(L""), L"\"\"");
+  EXPECT_EQ(vdd::quote_windows_command_argument(L"simple"), L"\"simple\"");
+  EXPECT_EQ(vdd::quote_windows_command_argument(L"C:\\Path With Spaces\\tool.exe"), L"\"C:\\Path With Spaces\\tool.exe\"");
+  EXPECT_EQ(vdd::quote_windows_command_argument(L"ends\\"), L"\"ends\\\\\"");
+  EXPECT_EQ(vdd::quote_windows_command_argument(L"say \"hello\""), L"\"say \\\"hello\\\"\"");
+  EXPECT_EQ(vdd::quote_windows_command_argument(L"slash\\\"quote"), L"\"slash\\\\\\\"quote\"");
+}
+
+TEST(VirtualDisplayCliContract, ParsesDriverInstallInfPathOptions) {
+  const std::filesystem::path default_inf {"default-driver.inf"};
+  const std::vector<std::string> default_args {"driver", "install"};
+  const auto default_result = vdd::parse_driver_install_inf_path(default_args, default_inf);
+  ASSERT_EQ(default_result.status, vdd::DriverInstallInfPathStatus::Ok);
+  EXPECT_EQ(default_result.inf_path, default_inf);
+
+  const std::vector<std::string> explicit_args {"driver", "install", "--inf", "custom-driver.inf"};
+  const auto explicit_result = vdd::parse_driver_install_inf_path(explicit_args, default_inf);
+  ASSERT_EQ(explicit_result.status, vdd::DriverInstallInfPathStatus::Ok);
+  EXPECT_TRUE(explicit_result.inf_path.is_absolute());
+  EXPECT_EQ(explicit_result.inf_path.filename(), "custom-driver.inf");
+
+  const std::vector<std::string> unknown_args {"driver", "install", "--force"};
+  const auto unknown_result = vdd::parse_driver_install_inf_path(unknown_args, default_inf);
+  EXPECT_EQ(unknown_result.status, vdd::DriverInstallInfPathStatus::UnknownOption);
+  EXPECT_EQ(unknown_result.option, "--force");
+
+  const std::vector<std::string> missing_value_args {"driver", "install", "--inf"};
+  const auto missing_value_result = vdd::parse_driver_install_inf_path(missing_value_args, default_inf);
+  EXPECT_EQ(missing_value_result.status, vdd::DriverInstallInfPathStatus::MissingInfValue);
+
+  const auto empty_default_result = vdd::parse_driver_install_inf_path(default_args, {});
+  EXPECT_EQ(empty_default_result.status, vdd::DriverInstallInfPathStatus::EmptyDefaultPath);
 }
