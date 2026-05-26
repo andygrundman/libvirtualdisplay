@@ -247,6 +247,11 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "CreateProcessAsUserW");
   expect_contains(source, "RegisterServiceCtrlHandlerW");
   expect_contains(source, "StartServiceCtrlDispatcherW");
+  expect_contains(source, "RegisterEventSourceW");
+  expect_contains(source, "ReportEventW");
+  expect_contains(source, "DeregisterEventSource");
+  expect_contains(source, "kEventServiceStarting");
+  expect_contains(source, "kEventHelperFinished");
   expect_contains(source, "--run-console");
   expect_contains(source, "--service");
 }

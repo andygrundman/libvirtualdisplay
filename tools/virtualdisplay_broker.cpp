@@ -35,6 +35,13 @@ namespace {
   constexpr wchar_t kPipeSecurityDescriptor[] = L"D:P(A;;GA;;;SY)(A;;GA;;;BA)";
   constexpr wchar_t kSessionHelperExecutable[] = L"virtualdisplay_probe.exe";
   constexpr DWORD kPipeBufferBytes = 4096;
+  constexpr DWORD kEventServiceStarting = 0x1000;
+  constexpr DWORD kEventServiceRunning = 0x1001;
+  constexpr DWORD kEventServiceStopping = 0x1002;
+  constexpr DWORD kEventServiceStopped = 0x1003;
+  constexpr DWORD kEventServiceFailed = 0x1004;
+  constexpr DWORD kEventHelperStarting = 0x2000;
+  constexpr DWORD kEventHelperFinished = 0x2001;
 
   void print_usage() {
     std::cout
@@ -341,6 +348,41 @@ namespace {
 
   BrokerContext g_context {};
 
+  std::wstring widen_ascii(const std::string_view text) {
+    std::wstring wide;
+    wide.reserve(text.size());
+    for (const unsigned char ch: text) {
+      wide.push_back(static_cast<wchar_t>(ch));
+    }
+    return wide;
+  }
+
+  void report_event_log(const WORD type, const DWORD event_id, const std::wstring_view text) {
+    HANDLE source = RegisterEventSourceW(nullptr, kServiceName);
+    if (!source) {
+      return;
+    }
+
+    const std::wstring message {text};
+    LPCWSTR strings[] {message.c_str()};
+    (void) ReportEventW(
+      source,
+      type,
+      0,
+      event_id,
+      nullptr,
+      static_cast<WORD>(std::size(strings)),
+      0,
+      strings,
+      nullptr
+    );
+    DeregisterEventSource(source);
+  }
+
+  void report_event_log(const WORD type, const DWORD event_id, const std::string_view text) {
+    report_event_log(type, event_id, widen_ascii(text));
+  }
+
   void report_service_status(const DWORD state, const DWORD win32_exit_code = NO_ERROR) {
     if (!g_context.service_status_handle) {
       return;
@@ -532,10 +574,17 @@ namespace {
     }
 
     if (const auto helper_arguments = helper_arguments_for_broker_command(command)) {
+      report_event_log(EVENTLOG_INFORMATION_TYPE, kEventHelperStarting, L"Starting active-session helper");
       const DWORD helper_result = launch_console_helper(*helper_arguments);
       if (helper_result != ERROR_SUCCESS) {
+        report_event_log(
+          EVENTLOG_ERROR_TYPE,
+          kEventHelperFinished,
+          "Active-session helper failed result=" + std::to_string(helper_result)
+        );
         return "error helper_result=" + std::to_string(helper_result) + "\n";
       }
+      report_event_log(EVENTLOG_INFORMATION_TYPE, kEventHelperFinished, L"Active-session helper completed");
       return "ok helper_result=0\n";
     }
 
@@ -568,6 +617,11 @@ namespace {
   int run_broker_loop() {
     auto opened = vdd::open_first_control_device();
     if (!opened.ok()) {
+      report_event_log(
+        EVENTLOG_ERROR_TYPE,
+        kEventServiceFailed,
+        "Open driver control device failed native_error=" + std::to_string(opened.native_error)
+      );
       std::cerr << "open driver control device failed: "
                 << vdd::to_string(opened.status)
                 << " native_error=" << opened.native_error << '\n';
@@ -577,12 +631,18 @@ namespace {
     vdd::ControlClient client {*opened.transport};
     const auto protocol = client.query_protocol_version();
     if (!protocol.ok()) {
+      report_event_log(EVENTLOG_ERROR_TYPE, kEventServiceFailed, "Driver protocol check failed " + format_status(protocol));
       std::cerr << "driver protocol check failed: " << format_status(protocol) << '\n';
       return 1;
     }
 
     auto pipe_security = make_pipe_security();
     if (!pipe_security) {
+      report_event_log(
+        EVENTLOG_ERROR_TYPE,
+        kEventServiceFailed,
+        "Create pipe security failed native_error=" + std::to_string(GetLastError())
+      );
       std::cerr << "create pipe security failed native_error=" << GetLastError() << '\n';
       return 1;
     }
@@ -599,6 +659,11 @@ namespace {
         &pipe_security->attributes
       );
       if (pipe == INVALID_HANDLE_VALUE) {
+        report_event_log(
+          EVENTLOG_ERROR_TYPE,
+          kEventServiceFailed,
+          "Create broker pipe failed native_error=" + std::to_string(GetLastError())
+        );
         std::cerr << "create broker pipe failed native_error=" << GetLastError() << '\n';
         return 1;
       }
@@ -621,6 +686,7 @@ namespace {
     }
 
     report_service_status(SERVICE_STOP_PENDING);
+    report_event_log(EVENTLOG_INFORMATION_TYPE, kEventServiceStopping, L"Broker service stop requested");
     g_context.stop_requested.store(true, std::memory_order_release);
     if (g_context.stop_event) {
       SetEvent(g_context.stop_event);
@@ -648,12 +714,19 @@ namespace {
 
     g_context.stop_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     report_service_status(SERVICE_START_PENDING);
+    report_event_log(EVENTLOG_INFORMATION_TYPE, kEventServiceStarting, L"Broker service starting");
     report_service_status(SERVICE_RUNNING);
+    report_event_log(EVENTLOG_INFORMATION_TYPE, kEventServiceRunning, L"Broker service running");
     const int result = run_broker_loop();
     if (g_context.stop_event) {
       CloseHandle(g_context.stop_event);
       g_context.stop_event = nullptr;
     }
+    report_event_log(
+      result == 0 ? EVENTLOG_INFORMATION_TYPE : EVENTLOG_ERROR_TYPE,
+      result == 0 ? kEventServiceStopped : kEventServiceFailed,
+      result == 0 ? L"Broker service stopped" : L"Broker service stopped after failure"
+    );
     report_service_status(SERVICE_STOPPED, result == 0 ? NO_ERROR : ERROR_SERVICE_SPECIFIC_ERROR);
   }
 
