@@ -57,7 +57,7 @@ namespace virtual_display::driver {
   inline constexpr std::uint32_t kDisplayStateKindTemporary = 2;
   inline constexpr std::uint32_t kDisplayStateFlagHdrSupported = 0x00000001u;
   inline constexpr std::uint32_t kDisplayStateFlagRetainIdentity = 0x00000002u;
-  inline constexpr std::uint32_t kDisplayManifestVersion = 2;
+  inline constexpr std::uint32_t kDisplayManifestVersion = 3;
   inline constexpr std::uint32_t kMaxPermanentDisplayProfiles = 8;
   inline constexpr std::uint32_t kMaxAllowedModesPerProfile = 4;
   inline constexpr std::uint32_t kDisplayManifestProfileFlagHdrSupported = 0x00000001u;
@@ -250,6 +250,7 @@ namespace virtual_display::driver {
     std::uint32_t connector_index {};
     std::uint64_t display_id {};
     Guid container_id {};
+    char manufacturer_id[4] {"SDD"};
     std::uint32_t product_code {};
     std::uint32_t serial_number {};
     std::uint32_t physical_width_mm {};
@@ -289,6 +290,7 @@ namespace virtual_display::driver {
     InvalidConnectorIndex,
     InvalidModeCount,
     InvalidLayoutPolicy,
+    InvalidManufacturerId,
   };
 
   struct ValidatedCreateTemporaryDisplay {
@@ -332,6 +334,6 @@ namespace virtual_display::driver {
   static_assert(sizeof(DisplayStateEntry) == 104);
   static_assert(sizeof(QueryDisplayStateResult) == 1696);
   static_assert(sizeof(DisplayMode) == 12);
-  static_assert(sizeof(DisplayManifestProfile) == 152);
-  static_assert(sizeof(DisplayManifest) == 1248);
+  static_assert(sizeof(DisplayManifestProfile) == 160);
+  static_assert(sizeof(DisplayManifest) == 1312);
 }  // namespace virtual_display::driver

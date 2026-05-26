@@ -563,6 +563,38 @@ namespace {
     return descriptor;
   }
 
+  vdd::DisplayDescriptor make_permanent_descriptor(const vdd::DisplayManifestProfile &profile) {
+    const auto &mode = profile.allowed_modes[profile.native_mode_index];
+
+    vdd::EdidOptions options {};
+    options.manufacturer_id = {
+      profile.manufacturer_id[0],
+      profile.manufacturer_id[1],
+      profile.manufacturer_id[2]
+    };
+    options.product_code = static_cast<std::uint16_t>(profile.product_code);
+    options.serial_number = profile.serial_number;
+    options.width = mode.width;
+    options.height = mode.height;
+    options.physical_width_mm = profile.physical_width_mm;
+    options.physical_height_mm = profile.physical_height_mm;
+    options.refresh_rate_millihz = mode.refresh_rate_millihz;
+    options.monitor_name = vdd::trim_display_name(profile.display_name);
+    options.hdr_supported = (profile.flags & vdd::kDisplayManifestProfileFlagHdrSupported) != 0;
+
+    vdd::DisplayDescriptor descriptor {};
+    descriptor.display_id = profile.display_id;
+    descriptor.container_id = profile.container_id;
+    descriptor.connector_index = profile.connector_index;
+    descriptor.width = options.width;
+    descriptor.height = options.height;
+    descriptor.physical_width_mm = options.physical_width_mm;
+    descriptor.physical_height_mm = options.physical_height_mm;
+    descriptor.refresh_rate_millihz = options.refresh_rate_millihz;
+    descriptor.edid = vdd::create_edid(options);
+    return descriptor;
+  }
+
   ModeShape mode_shape_from_description(const IDDCX_MONITOR_DESCRIPTION &description) {
     if (description.Type != IDDCX_MONITOR_DESCRIPTION_TYPE_EDID ||
         !description.pData ||
@@ -1218,6 +1250,45 @@ namespace {
       }
 
       permanent_display_count_ = display_count;
+      return vdd::BackendError::None;
+    }
+
+    vdd::BackendError apply_display_manifest(const vdd::DisplayManifest &manifest) override {
+      if (manifest.profile_count > kMaxPermanentDisplays) {
+        return vdd::BackendError::Failed;
+      }
+
+      std::vector<std::uint64_t> active_permanent_ids;
+      {
+        std::lock_guard lock {mutex_};
+        active_permanent_ids.reserve(monitors_.size());
+        for (const auto &[display_id, record]: monitors_) {
+          if (record.permanent) {
+            active_permanent_ids.push_back(display_id);
+          }
+        }
+      }
+
+      for (const auto display_id: active_permanent_ids) {
+        if (depart_display(display_id) != vdd::BackendError::None) {
+          return vdd::BackendError::Failed;
+        }
+      }
+
+      std::vector<std::uint64_t> added;
+      for (std::uint32_t index = 0; index < manifest.profile_count; ++index) {
+        const auto descriptor = make_permanent_descriptor(manifest.profiles[index]);
+        const auto result = arrive_display(descriptor, true);
+        if (result.error != vdd::BackendError::None) {
+          for (const auto display_id: added) {
+            (void) depart_display(display_id);
+          }
+          return vdd::BackendError::Failed;
+        }
+        added.push_back(descriptor.display_id);
+      }
+
+      permanent_display_count_ = manifest.profile_count;
       return vdd::BackendError::None;
     }
 

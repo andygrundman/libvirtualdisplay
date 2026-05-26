@@ -35,6 +35,11 @@ namespace virtual_display::driver {
       profile.connector_index = index;
       profile.display_id = permanent_display_id(index);
       profile.container_id = container_guid_from_display_id(profile.display_id);
+      std::copy(
+        std::begin(kSunshineDriverManufacturerId),
+        std::end(kSunshineDriverManufacturerId),
+        std::begin(profile.manufacturer_id)
+      );
       profile.product_code = permanent_product_code(index);
       profile.serial_number = serial_number_from_display_id(profile.display_id);
       profile.physical_width_mm = normalized.physical_width_mm;

@@ -35,6 +35,7 @@ namespace {
       vdd::kDisplayManifestProfileFlagPermanentIdentity;
     profile.connector_index = 0;
     profile.display_id = 0x7000000000000000ull;
+    std::memcpy(profile.manufacturer_id, "SDD", 4);
     profile.product_code = 0x4000;
     profile.serial_number = 1;
     profile.physical_width_mm = 700;
@@ -301,6 +302,10 @@ TEST(VirtualDisplayDriverControlProtocol, ValidatesDisplayManifest) {
   manifest = valid_display_manifest();
   manifest.profiles[0].flags &= ~vdd::kDisplayManifestProfileFlagPermanentIdentity;
   EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidFlags);
+
+  manifest = valid_display_manifest();
+  std::memcpy(manifest.profiles[0].manufacturer_id, "sdd", 4);
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidManufacturerId);
 
   manifest = valid_display_manifest();
   manifest.profiles[0].connector_index = 2;

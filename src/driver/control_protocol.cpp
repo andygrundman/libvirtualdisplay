@@ -3,6 +3,15 @@
 #include <algorithm>
 
 namespace virtual_display::driver {
+  namespace {
+    bool valid_manufacturer_id(const char (&manufacturer_id)[4]) {
+      return manufacturer_id[0] >= 'A' && manufacturer_id[0] <= 'Z' &&
+             manufacturer_id[1] >= 'A' && manufacturer_id[1] <= 'Z' &&
+             manufacturer_id[2] >= 'A' && manufacturer_id[2] <= 'Z' &&
+             manufacturer_id[3] == '\0';
+    }
+  }  // namespace
+
   bool is_valid_api_namespace(const Guid &guid) {
     return guid == kApiNamespaceGuid;
   }
@@ -205,6 +214,9 @@ namespace virtual_display::driver {
       if (profile.display_id == 0) {
         return ValidationError::MissingDisplayId;
       }
+      if (!valid_manufacturer_id(profile.manufacturer_id)) {
+        return ValidationError::InvalidManufacturerId;
+      }
       if (profile.physical_width_mm < kMinPhysicalSizeMillimeters ||
           profile.physical_width_mm > kMaxPhysicalSizeMillimeters ||
           profile.physical_height_mm < kMinPhysicalSizeMillimeters ||
@@ -274,6 +286,8 @@ namespace virtual_display::driver {
         return "invalid_mode_count";
       case ValidationError::InvalidLayoutPolicy:
         return "invalid_layout_policy";
+      case ValidationError::InvalidManufacturerId:
+        return "invalid_manufacturer_id";
     }
 
     return "unknown";

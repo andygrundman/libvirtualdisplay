@@ -259,4 +259,8 @@ TEST(VirtualDisplayWindowsDriverContract, PermanentDisplaysUseControlPlaneModeSe
   EXPECT_NE(source.find("options.refresh_rate_millihz = settings.refresh_rate_millihz;"), std::string::npos);
   EXPECT_NE(source.find("options.monitor_name = vdd::trim_display_name(settings.display_name);"), std::string::npos);
   EXPECT_NE(source.find("vdd::set_default_permanent_display_settings(normalized);"), std::string::npos);
+  EXPECT_NE(source.find("make_permanent_descriptor(const vdd::DisplayManifestProfile &profile)"), std::string::npos);
+  EXPECT_NE(source.find("profile.manufacturer_id[0]"), std::string::npos);
+  EXPECT_NE(source.find("options.product_code = static_cast<std::uint16_t>(profile.product_code);"), std::string::npos);
+  EXPECT_NE(source.find("vdd::BackendError apply_display_manifest(const vdd::DisplayManifest &manifest) override"), std::string::npos);
 }

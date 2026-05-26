@@ -3,6 +3,7 @@
 #include "virtual_display/driver/lease_store.h"
 
 #include <cstring>
+#include <string>
 
 namespace vdd = virtual_display::driver;
 
@@ -331,6 +332,7 @@ TEST(VirtualDisplayDriverLeaseStore, ConvertsPermanentSettingsToDisplayManifest)
   EXPECT_EQ(manifest.profiles[0].display_id, vdd::permanent_display_id(0));
   EXPECT_EQ(manifest.profiles[1].display_id, vdd::permanent_display_id(1));
   EXPECT_NE(manifest.profiles[0].flags & vdd::kDisplayManifestProfileFlagPermanentIdentity, 0u);
+  EXPECT_EQ(std::string(manifest.profiles[0].manufacturer_id), "SDD");
   EXPECT_EQ(manifest.profiles[0].product_code, vdd::permanent_product_code(0));
   EXPECT_EQ(manifest.profiles[0].allowed_mode_count, 1u);
   EXPECT_EQ(manifest.profiles[0].layout_policy, vdd::kDisplayManifestLayoutPolicyNone);
