@@ -33,6 +33,11 @@ namespace {
       return vdd::BackendError::None;
     }
 
+    vdd::BackendError apply_display_manifest(const vdd::DisplayManifest &manifest) override {
+      manifests.push_back(manifest);
+      return set_permanent_display_count(vdd::permanent_settings_from_display_manifest(manifest));
+    }
+
     bool fail_arrive {};
     bool fail_depart {};
     std::uint32_t next_target_id {12};
@@ -40,6 +45,7 @@ namespace {
     std::vector<std::uint64_t> departed {};
     std::vector<std::uint32_t> permanent_counts {};
     std::vector<vdd::PermanentDisplayCountRequest> permanent_settings {};
+    std::vector<vdd::DisplayManifest> manifests {};
   };
 
   struct Harness {
@@ -465,6 +471,8 @@ TEST(VirtualDisplayDriverIoctlDispatcher, SetAndQueryDisplayManifestUseManifestA
   EXPECT_EQ(output.profiles[0].position_x, 2560);
   EXPECT_EQ(output.profiles[0].allowed_modes[1].width, 2560u);
   EXPECT_EQ(harness.backend.permanent_counts, (std::vector<std::uint32_t> {1}));
+  ASSERT_EQ(harness.backend.manifests.size(), 1u);
+  EXPECT_EQ(harness.backend.manifests[0].profiles[0].connector_index, 2u);
 
   output = {};
   const auto query_result = harness.dispatcher.dispatch(

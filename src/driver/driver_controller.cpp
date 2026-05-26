@@ -148,12 +148,25 @@ namespace virtual_display::driver {
       return {StoreError::ValidationFailed, validation, BackendError::None};
     }
 
-    if (const auto backend_error = backend_.apply_display_manifest(manifest);
+    auto canonical = manifest;
+    for (std::uint32_t index = 0; index < canonical.profile_count; ++index) {
+      char display_name[kDisplayNameChars] {};
+      if (!canonicalize_display_name(canonical.profiles[index].display_name, display_name)) {
+        return {StoreError::ValidationFailed, ValidationError::InvalidDisplayName, BackendError::None};
+      }
+      std::copy(
+        std::begin(display_name),
+        std::end(display_name),
+        std::begin(canonical.profiles[index].display_name)
+      );
+    }
+
+    if (const auto backend_error = backend_.apply_display_manifest(canonical);
         backend_error != BackendError::None) {
       return {StoreError::None, ValidationError::None, backend_error};
     }
 
-    return from_store_result(store_.apply_display_manifest(manifest));
+    return from_store_result(store_.apply_display_manifest(canonical));
   }
 
   const DisplayManifest &DriverController::query_display_manifest() const {
@@ -240,8 +253,8 @@ namespace virtual_display::driver {
     return BackendError::None;
   }
 
-  BackendError DisplayDriverBackend::apply_display_manifest(const DisplayManifest &manifest) {
-    return set_permanent_display_count(permanent_settings_from_display_manifest(manifest));
+  BackendError DisplayDriverBackend::apply_display_manifest(const DisplayManifest &) {
+    return BackendError::Failed;
   }
 
   ControllerStatus DriverController::from_store_result(const StoreResult &result) {
@@ -274,7 +287,6 @@ namespace virtual_display::driver {
     if (record.retain_identity) {
       entry.flags |= kDisplayStateFlagRetainIdentity;
     }
-    entry.lease_id = record.lease_id;
     entry.display_id = record.display_id;
     const auto identity_display_id = record.identity_display_id == 0 ?
       record.display_id :

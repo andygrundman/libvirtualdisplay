@@ -47,6 +47,11 @@ namespace {
       return fail_permanent ? vdd::BackendError::Failed : vdd::BackendError::None;
     }
 
+    vdd::BackendError apply_display_manifest(const vdd::DisplayManifest &manifest) override {
+      manifests.push_back(manifest);
+      return set_permanent_display_count(vdd::permanent_settings_from_display_manifest(manifest));
+    }
+
     bool fail_arrive {};
     bool fail_depart {};
     bool fail_permanent {};
@@ -59,6 +64,7 @@ namespace {
     std::vector<std::uint64_t> departed {};
     std::vector<std::uint32_t> permanent_counts {};
     std::vector<vdd::PermanentDisplayCountRequest> permanent_settings {};
+    std::vector<vdd::DisplayManifest> manifests {};
     std::vector<std::string> events {};
   };
 
@@ -354,7 +360,7 @@ TEST(VirtualDisplayDriverController, QueryDisplayStateReportsPermanentAndTempora
 
   EXPECT_EQ(state.entries[1].kind, vdd::kDisplayStateKindTemporary);
   EXPECT_EQ(state.entries[1].display_id, 0x12345678u);
-  EXPECT_EQ(state.entries[1].lease_id, lease_id(100));
+  EXPECT_EQ(state.entries[1].lease_id, 0u);
   EXPECT_NE(state.entries[1].container_id, vdd::container_guid_from_display_id(0x12345678u));
   EXPECT_NE(state.entries[1].product_code, vdd::product_code_from_display_id(0x12345678u));
   EXPECT_EQ(state.entries[1].flags & vdd::kDisplayStateFlagRetainIdentity, 0u);
@@ -392,6 +398,8 @@ TEST(VirtualDisplayDriverController, ApplyDisplayManifestReportsPerSlotIdentity)
   EXPECT_EQ(controller.query_display_manifest().profiles[0].layout_policy, vdd::kDisplayManifestLayoutPolicyApplyAndPersist);
   EXPECT_EQ(controller.query_display_manifest().profiles[0].position_x, -2560);
   EXPECT_EQ(backend.permanent_counts, (std::vector<std::uint32_t> {1}));
+  ASSERT_EQ(backend.manifests.size(), 1u);
+  EXPECT_EQ(backend.manifests[0].profiles[0].connector_index, 2u);
   const auto state = controller.query_display_state();
   ASSERT_EQ(state.entry_count, 1u);
   EXPECT_EQ(state.entries[0].connector_index, 2u);

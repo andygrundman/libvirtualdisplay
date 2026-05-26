@@ -344,6 +344,10 @@ namespace virtual_display::driver {
   void set_default_permanent_display_settings(PermanentDisplayCountRequest &request);
   std::uint32_t normalize_timeout_ms(std::uint32_t requested_timeout_ms);
   std::string_view trim_display_name(const char (&display_name)[kDisplayNameChars]);
+  bool canonicalize_display_name(
+    const char (&input)[kDisplayNameChars],
+    char (&output)[kDisplayNameChars]
+  );
   ValidationError validate_create_temporary_display(
     const CreateTemporaryDisplayRequest &request,
     ValidatedCreateTemporaryDisplay *validated = nullptr

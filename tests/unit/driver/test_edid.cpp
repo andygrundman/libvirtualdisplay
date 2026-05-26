@@ -125,6 +125,15 @@ TEST(VirtualDisplayDriverEdid, ClampsTimingInputsBeforeEncoding) {
   EXPECT_TRUE(vdd::has_valid_edid_checksums(edid));
 }
 
+TEST(VirtualDisplayDriverEdid, HandlesEmptyMonitorName) {
+  auto options = default_options();
+  options.monitor_name = std::string_view {};
+
+  const auto edid = vdd::create_edid(options);
+
+  EXPECT_TRUE(vdd::has_valid_edid_checksums(edid));
+}
+
 TEST(VirtualDisplayDriverEdid, EmbedsHdrStaticMetadataWhenRequested) {
   const auto edid = vdd::create_edid(default_options());
 

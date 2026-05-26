@@ -210,6 +210,17 @@ TEST(VirtualDisplayDriverControlProtocol, ValidatesCreateRequest) {
   EXPECT_EQ(validated.display_name, "Sunshine Display");
 }
 
+TEST(VirtualDisplayDriverControlProtocol, CanonicalizesDisplayNames) {
+  auto request = valid_create_request();
+  std::fill(std::begin(request.display_name), std::end(request.display_name), '\0');
+  std::memcpy(request.display_name, "Desk Display   ", 15);
+  vdd::ValidatedCreateTemporaryDisplay validated {};
+
+  EXPECT_EQ(vdd::validate_create_temporary_display(request, &validated), vdd::ValidationError::None);
+  EXPECT_EQ(validated.display_name, "Desk Display");
+  EXPECT_EQ(validated.request.display_name[12], '\0');
+}
+
 TEST(VirtualDisplayDriverControlProtocol, ValidatedCreateCopiesRebindDisplayNameView) {
   const auto request = valid_create_request();
   vdd::ValidatedCreateTemporaryDisplay validated {};
@@ -278,12 +289,32 @@ TEST(VirtualDisplayDriverControlProtocol, RejectsOutOfRangeMode) {
   request = valid_create_request();
   request.refresh_rate_millihz = vdd::kMaxRefreshRateMilliHz + 1;
   EXPECT_EQ(vdd::validate_create_temporary_display(request), vdd::ValidationError::InvalidRefreshRate);
+
+  request = valid_create_request();
+  request.width = 4096;
+  EXPECT_EQ(vdd::validate_create_temporary_display(request), vdd::ValidationError::InvalidWidth);
+
+  request = valid_create_request();
+  request.width = 3840;
+  request.height = 2160;
+  request.refresh_rate_millihz = 480'000;
+  EXPECT_EQ(vdd::validate_create_temporary_display(request), vdd::ValidationError::InvalidRefreshRate);
 }
 
 TEST(VirtualDisplayDriverControlProtocol, RejectsBlankDisplayName) {
   auto request = valid_create_request();
   std::memset(request.display_name, ' ', sizeof(request.display_name));
 
+  EXPECT_EQ(vdd::validate_create_temporary_display(request), vdd::ValidationError::InvalidDisplayName);
+}
+
+TEST(VirtualDisplayDriverControlProtocol, RejectsUnsafeDisplayNames) {
+  auto request = valid_create_request();
+  std::memset(request.display_name, 'A', sizeof(request.display_name));
+  EXPECT_EQ(vdd::validate_create_temporary_display(request), vdd::ValidationError::InvalidDisplayName);
+
+  request = valid_create_request();
+  std::memcpy(request.display_name, "Desk\nDisplay", 13);
   EXPECT_EQ(vdd::validate_create_temporary_display(request), vdd::ValidationError::InvalidDisplayName);
 }
 
@@ -431,6 +462,14 @@ TEST(VirtualDisplayDriverControlProtocol, ValidatesDisplayManifest) {
   manifest = valid_display_manifest();
   manifest.profiles[0].allowed_modes[0].refresh_rate_millihz = vdd::kMaxRefreshRateMilliHz + 1;
   EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidRefreshRate);
+
+  manifest = valid_display_manifest();
+  manifest.profiles[0].allowed_modes[0] = {4096, 2160, 60'000};
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidWidth);
+
+  manifest = valid_display_manifest();
+  std::memcpy(manifest.profiles[0].display_name, "Desk\rDisplay", 13);
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidDisplayName);
 
   manifest = valid_display_manifest();
   manifest.profiles[0].layout_policy = vdd::kDisplayManifestLayoutPolicyApplyAndPersist + 1;

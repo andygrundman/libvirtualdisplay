@@ -312,9 +312,22 @@ namespace virtual_display::driver {
       return validation_failure(validation);
     }
 
-    permanent_display_count_ = manifest.profile_count;
-    display_manifest_ = manifest;
-    permanent_display_settings_ = permanent_settings_from_display_manifest(manifest);
+    auto canonical = manifest;
+    for (std::uint32_t index = 0; index < canonical.profile_count; ++index) {
+      char display_name[kDisplayNameChars] {};
+      if (!canonicalize_display_name(canonical.profiles[index].display_name, display_name)) {
+        return validation_failure(ValidationError::InvalidDisplayName);
+      }
+      std::copy(
+        std::begin(display_name),
+        std::end(display_name),
+        std::begin(canonical.profiles[index].display_name)
+      );
+    }
+
+    permanent_display_count_ = canonical.profile_count;
+    display_manifest_ = canonical;
+    permanent_display_settings_ = permanent_settings_from_display_manifest(canonical);
     return {};
   }
 

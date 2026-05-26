@@ -4,6 +4,10 @@
 
 namespace virtual_display::driver {
   namespace {
+    constexpr std::uint64_t kMaxModePixels = 3840ull * 2160ull;
+    constexpr std::uint64_t kMaxPixelRateMilliHz = kMaxModePixels * 240'000ull;
+    constexpr std::uint32_t kMaxEdidDetailedTimingDimension = 4095;
+
     bool valid_manufacturer_id(const char (&manufacturer_id)[4]) {
       return manufacturer_id[0] >= 'A' && manufacturer_id[0] <= 'Z' &&
              manufacturer_id[1] >= 'A' && manufacturer_id[1] <= 'Z' &&
@@ -13,6 +17,35 @@ namespace virtual_display::driver {
 
     bool is_zero_guid(const Guid &guid) {
       return guid == Guid {};
+    }
+
+    ValidationError validate_display_mode(
+      const std::uint32_t width,
+      const std::uint32_t height,
+      const std::uint32_t refresh_rate_millihz
+    ) {
+      if (width < kMinWidth || width > kMaxWidth ||
+          width > kMaxEdidDetailedTimingDimension) {
+        return ValidationError::InvalidWidth;
+      }
+      if (height < kMinHeight || height > kMaxHeight ||
+          height > kMaxEdidDetailedTimingDimension) {
+        return ValidationError::InvalidHeight;
+      }
+      if (refresh_rate_millihz < kMinRefreshRateMilliHz ||
+          refresh_rate_millihz > kMaxRefreshRateMilliHz) {
+        return ValidationError::InvalidRefreshRate;
+      }
+
+      const auto pixels = static_cast<std::uint64_t>(width) * height;
+      if (pixels == 0 || pixels > kMaxModePixels) {
+        return ValidationError::InvalidWidth;
+      }
+      if (pixels > kMaxPixelRateMilliHz / refresh_rate_millihz) {
+        return ValidationError::InvalidRefreshRate;
+      }
+
+      return ValidationError::None;
     }
   }  // namespace
 
@@ -40,6 +73,12 @@ namespace virtual_display::driver {
       std::fill(std::begin(request.display_name), std::end(request.display_name), '\0');
       constexpr char kDefaultName[] = "Sunshine Display";
       std::copy_n(kDefaultName, sizeof(kDefaultName) - 1, request.display_name);
+      return;
+    }
+
+    char canonical[kDisplayNameChars] {};
+    if (canonicalize_display_name(request.display_name, canonical)) {
+      std::copy(std::begin(canonical), std::end(canonical), std::begin(request.display_name));
     }
   }
 
@@ -63,6 +102,32 @@ namespace virtual_display::driver {
     return value;
   }
 
+  bool canonicalize_display_name(
+    const char (&input)[kDisplayNameChars],
+    char (&output)[kDisplayNameChars]
+  ) {
+    const auto end = std::find(std::begin(input), std::end(input), '\0');
+    auto size = static_cast<std::size_t>(std::distance(std::begin(input), end));
+    while (size > 0 && input[size - 1] == ' ') {
+      --size;
+    }
+
+    if (size == 0 || size >= kDisplayNameChars) {
+      return false;
+    }
+
+    for (std::size_t index = 0; index < size; ++index) {
+      const auto ch = static_cast<unsigned char>(input[index]);
+      if (ch < 0x20 || ch > 0x7e) {
+        return false;
+      }
+    }
+
+    std::fill(std::begin(output), std::end(output), '\0');
+    std::copy_n(input, size, output);
+    return true;
+  }
+
   ValidationError validate_create_temporary_display(
     const CreateTemporaryDisplayRequest &request,
     ValidatedCreateTemporaryDisplay *validated
@@ -79,11 +144,13 @@ namespace virtual_display::driver {
     if ((request.flags & ~kCreateTemporaryDisplayKnownFlags) != 0) {
       return ValidationError::InvalidFlags;
     }
-    if (request.width < kMinWidth || request.width > kMaxWidth) {
-      return ValidationError::InvalidWidth;
-    }
-    if (request.height < kMinHeight || request.height > kMaxHeight) {
-      return ValidationError::InvalidHeight;
+    if (const auto mode_validation = validate_display_mode(
+          request.width,
+          request.height,
+          request.refresh_rate_millihz
+        );
+        mode_validation != ValidationError::None) {
+      return mode_validation;
     }
     const auto physical_width_mm = request.physical_width_mm == 0 ?
       kDefaultPhysicalWidthMillimeters :
@@ -97,13 +164,8 @@ namespace virtual_display::driver {
         physical_height_mm > kMaxPhysicalSizeMillimeters) {
       return ValidationError::InvalidPhysicalSize;
     }
-    if (request.refresh_rate_millihz < kMinRefreshRateMilliHz ||
-        request.refresh_rate_millihz > kMaxRefreshRateMilliHz) {
-      return ValidationError::InvalidRefreshRate;
-    }
-
-    const auto display_name = trim_display_name(request.display_name);
-    if (display_name.empty()) {
+    char canonical_display_name[kDisplayNameChars] {};
+    if (!canonicalize_display_name(request.display_name, canonical_display_name)) {
       return ValidationError::InvalidDisplayName;
     }
 
@@ -111,8 +173,13 @@ namespace virtual_display::driver {
       validated->request = request;
       validated->request.physical_width_mm = physical_width_mm;
       validated->request.physical_height_mm = physical_height_mm;
+      std::copy(
+        std::begin(canonical_display_name),
+        std::end(canonical_display_name),
+        std::begin(validated->request.display_name)
+      );
       validated->effective_timeout_ms = normalize_timeout_ms(request.requested_timeout_ms);
-      validated->rebind_display_name(display_name.size());
+      validated->rebind_display_name(trim_display_name(validated->request.display_name).size());
     }
 
     return ValidationError::None;
@@ -156,11 +223,13 @@ namespace virtual_display::driver {
     if (request.display_count > max_display_count) {
       return ValidationError::PermanentDisplayCountTooHigh;
     }
-    if (request.width < kMinWidth || request.width > kMaxWidth) {
-      return ValidationError::InvalidWidth;
-    }
-    if (request.height < kMinHeight || request.height > kMaxHeight) {
-      return ValidationError::InvalidHeight;
+    if (const auto mode_validation = validate_display_mode(
+          request.width,
+          request.height,
+          request.refresh_rate_millihz
+        );
+        mode_validation != ValidationError::None) {
+      return mode_validation;
     }
     if (request.physical_width_mm < kMinPhysicalSizeMillimeters ||
         request.physical_width_mm > kMaxPhysicalSizeMillimeters ||
@@ -168,11 +237,8 @@ namespace virtual_display::driver {
         request.physical_height_mm > kMaxPhysicalSizeMillimeters) {
       return ValidationError::InvalidPhysicalSize;
     }
-    if (request.refresh_rate_millihz < kMinRefreshRateMilliHz ||
-        request.refresh_rate_millihz > kMaxRefreshRateMilliHz) {
-      return ValidationError::InvalidRefreshRate;
-    }
-    if (trim_display_name(request.display_name).empty()) {
+    char canonical_display_name[kDisplayNameChars] {};
+    if (!canonicalize_display_name(request.display_name, canonical_display_name)) {
       return ValidationError::InvalidDisplayName;
     }
 
@@ -265,19 +331,18 @@ namespace virtual_display::driver {
 
       for (std::uint32_t mode_index = 0; mode_index < profile.allowed_mode_count; ++mode_index) {
         const auto &mode = profile.allowed_modes[mode_index];
-        if (mode.width < kMinWidth || mode.width > kMaxWidth) {
-          return ValidationError::InvalidWidth;
-        }
-        if (mode.height < kMinHeight || mode.height > kMaxHeight) {
-          return ValidationError::InvalidHeight;
-        }
-        if (mode.refresh_rate_millihz < kMinRefreshRateMilliHz ||
-            mode.refresh_rate_millihz > kMaxRefreshRateMilliHz) {
-          return ValidationError::InvalidRefreshRate;
+        if (const auto mode_validation = validate_display_mode(
+              mode.width,
+              mode.height,
+              mode.refresh_rate_millihz
+            );
+            mode_validation != ValidationError::None) {
+          return mode_validation;
         }
       }
 
-      if (trim_display_name(profile.display_name).empty()) {
+      char canonical_display_name[kDisplayNameChars] {};
+      if (!canonicalize_display_name(profile.display_name, canonical_display_name)) {
         return ValidationError::InvalidDisplayName;
       }
     }

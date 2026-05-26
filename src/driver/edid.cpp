@@ -141,7 +141,9 @@ namespace virtual_display::driver {
 
       std::fill_n(data.begin() + static_cast<std::ptrdiff_t>(offset + 5), 13, std::byte {' '});
       const auto copy_size = std::min<std::size_t>(text.size(), 12);
-      std::memcpy(data.data() + offset + 5, text.data(), copy_size);
+      if (copy_size != 0) {
+        std::memcpy(data.data() + offset + 5, text.data(), copy_size);
+      }
       data[offset + 5 + copy_size] = std::byte {'\n'};
     }
 
@@ -153,7 +155,9 @@ namespace virtual_display::driver {
       constexpr std::size_t kFieldSize = 13;
       std::fill_n(data.begin() + static_cast<std::ptrdiff_t>(offset), kFieldSize, std::byte {' '});
       const auto copy_size = std::min<std::size_t>(text.size(), kFieldSize - 1);
-      std::memcpy(data.data() + offset, text.data(), copy_size);
+      if (copy_size != 0) {
+        std::memcpy(data.data() + offset, text.data(), copy_size);
+      }
       data[offset + copy_size] = std::byte {'\n'};
     }
 
