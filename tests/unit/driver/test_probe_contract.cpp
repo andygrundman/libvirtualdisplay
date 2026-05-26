@@ -125,6 +125,14 @@ TEST(VirtualDisplayProbeContract, ManifestTopologyAppliesStoredLayoutPolicy) {
   expect_contains(source, "report_helper_event(");
   expect_contains(source, "kEventHelperTopologyApplied");
   expect_contains(source, "manifest_topology_applied=1");
+  const auto manifest_topology = source.find("int apply_manifest_topology(vdd::ControlClient &client)");
+  ASSERT_NE(manifest_topology, std::string::npos);
+  const auto legacy_topology = source.find("void prepare_legacy_topology_path", manifest_topology);
+  ASSERT_NE(legacy_topology, std::string::npos);
+  EXPECT_EQ(
+    source.substr(manifest_topology, legacy_topology - manifest_topology).find("apply_extended_topology"),
+    std::string::npos
+  );
 }
 
 TEST(VirtualDisplayProbeContract, PermanentSelfTestRestoresOriginalCount) {
@@ -246,6 +254,12 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "RegSetKeySecurity");
   expect_contains(source, "RegQueryValueExW");
   expect_contains(source, "RegSetValueExW");
+  expect_contains(source, "profile.native_mode_index < profile.allowed_mode_count");
+  expect_contains(source, "kHelperProcessTimeoutMs");
+  expect_contains(source, "WaitForMultipleObjects");
+  expect_contains(source, "TerminateProcess(process.hProcess");
+  expect_contains(source, "kPipeClientReadTimeoutMs");
+  expect_contains(source, "PeekNamedPipe");
   expect_contains(source, "load_persisted_display_manifest");
   expect_contains(source, "save_display_manifest");
   expect_contains(source, "restore_persisted_display_manifest(client)");

@@ -607,10 +607,32 @@ namespace {
     return inf_path;
   }
 
-  bool multi_sz_contains(const wchar_t *values, const std::wstring_view expected) {
-    for (const wchar_t *cursor = values; cursor && *cursor != L'\0'; cursor += std::wcslen(cursor) + 1) {
-      if (expected == cursor) {
+  bool multi_sz_contains(const std::byte *values, const DWORD byte_count, const std::wstring_view expected) {
+    if (!values || byte_count == 0 || (byte_count % sizeof(wchar_t)) != 0) {
+      return false;
+    }
+
+    const auto *wide_values = reinterpret_cast<const wchar_t *>(values);
+    const std::size_t char_count = byte_count / sizeof(wchar_t);
+    if (char_count < 2 || wide_values[char_count - 1] != L'\0' || wide_values[char_count - 2] != L'\0') {
+      return false;
+    }
+
+    for (std::size_t offset = 0; offset < char_count && wide_values[offset] != L'\0';) {
+      const auto remaining = char_count - offset;
+      const auto *entry_begin = wide_values + offset;
+      const auto *entry_end = std::find(entry_begin, wide_values + char_count, L'\0');
+      if (entry_end == wide_values + char_count) {
+        return false;
+      }
+
+      const std::wstring_view entry {entry_begin, static_cast<std::size_t>(entry_end - entry_begin)};
+      if (entry == expected) {
         return true;
+      }
+      offset += entry.size() + 1;
+      if (offset > char_count) {
+        return false;
       }
     }
     return false;
@@ -655,7 +677,7 @@ namespace {
         continue;
       }
 
-      if (multi_sz_contains(reinterpret_cast<const wchar_t *>(buffer.data()), L"Root\\SunshineVirtualDisplay")) {
+      if (multi_sz_contains(buffer.data(), required_size, L"Root\\SunshineVirtualDisplay")) {
         native_error = ERROR_SUCCESS;
         return true;
       }

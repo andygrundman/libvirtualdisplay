@@ -435,8 +435,6 @@ namespace {
       return fail("query display manifest failed", manifest);
     }
 
-    (void) apply_extended_topology();
-
     UINT32 query_flags = QDC_ONLY_ACTIVE_PATHS | QDC_VIRTUAL_MODE_AWARE;
     auto query = query_display_config_result(query_flags);
     if (!query.data) {

@@ -42,6 +42,9 @@ namespace {
   constexpr wchar_t kBrokerRegistrySecurityDescriptor[] = L"D:P(A;;GA;;;SY)(A;;GA;;;BA)";
   constexpr wchar_t kSessionHelperExecutable[] = L"virtualdisplay_probe.exe";
   constexpr DWORD kPipeBufferBytes = 4096;
+  constexpr DWORD kPipeClientReadTimeoutMs = 5000;
+  constexpr DWORD kPipeClientPollMs = 50;
+  constexpr DWORD kHelperProcessTimeoutMs = 120000;
   constexpr DWORD kEventServiceStarting = 0x1000;
   constexpr DWORD kEventServiceRunning = 0x1001;
   constexpr DWORD kEventServiceStopping = 0x1002;
@@ -217,15 +220,25 @@ namespace {
 
     for (std::uint32_t index = 0; index < manifest.profile_count && index < vdd::kMaxPermanentDisplayProfiles; ++index) {
       const auto &profile = manifest.profiles[index];
-      const auto &mode = profile.allowed_modes[profile.native_mode_index];
+      const bool mode_valid =
+        profile.allowed_mode_count > 0 &&
+        profile.allowed_mode_count <= vdd::kMaxAllowedModesPerProfile &&
+        profile.native_mode_index < profile.allowed_mode_count;
+      const auto mode = mode_valid ? profile.allowed_modes[profile.native_mode_index] : vdd::DisplayMode {};
       output
         << "profile." << index << ".connector_index=" << profile.connector_index << '\n'
         << "profile." << index << ".display_id=" << profile.display_id << '\n'
         << "profile." << index << ".container_id=" << guid_string(profile.container_id) << '\n'
         << "profile." << index << ".product_code=" << profile.product_code << '\n'
         << "profile." << index << ".serial_number=" << profile.serial_number << '\n'
-        << "profile." << index << ".mode=" << mode.width << 'x' << mode.height << '@'
-        << (mode.refresh_rate_millihz / 1000.0) << "Hz\n"
+        << "profile." << index << ".mode=";
+      if (mode_valid) {
+        output << mode.width << 'x' << mode.height << '@'
+               << (mode.refresh_rate_millihz / 1000.0) << "Hz\n";
+      } else {
+        output << "invalid\n";
+      }
+      output
         << "profile." << index << ".physical_size_mm=" << profile.physical_width_mm << 'x'
         << profile.physical_height_mm << '\n'
         << "profile." << index << ".hdr_supported="
@@ -798,7 +811,18 @@ namespace {
     }
 
     CloseHandle(process.hThread);
-    WaitForSingleObject(process.hProcess, INFINITE);
+    HANDLE wait_handles[] {process.hProcess, g_context.stop_event};
+    const DWORD wait_result = g_context.stop_event ?
+      WaitForMultipleObjects(2, wait_handles, FALSE, kHelperProcessTimeoutMs) :
+      WaitForSingleObject(process.hProcess, kHelperProcessTimeoutMs);
+    if (wait_result == WAIT_TIMEOUT || wait_result == WAIT_OBJECT_0 + 1) {
+      TerminateProcess(process.hProcess, wait_result == WAIT_TIMEOUT ? ERROR_TIMEOUT : ERROR_CANCELLED);
+      WaitForSingleObject(process.hProcess, 5000);
+    } else if (wait_result == WAIT_FAILED) {
+      const DWORD wait_error = GetLastError();
+      CloseHandle(process.hProcess);
+      return wait_error;
+    }
     DWORD exit_code = ERROR_SUCCESS;
     if (!GetExitCodeProcess(process.hProcess, &exit_code)) {
       exit_code = GetLastError();
@@ -987,10 +1011,40 @@ namespace {
     return "error unknown_command\n";
   }
 
+  bool wait_for_pipe_input(HANDLE pipe) {
+    const auto deadline = GetTickCount64() + kPipeClientReadTimeoutMs;
+    while (!g_context.stop_requested.load(std::memory_order_acquire)) {
+      DWORD available = 0;
+      if (!PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr)) {
+        return false;
+      }
+      if (available > 0) {
+        return true;
+      }
+      if (GetTickCount64() >= deadline) {
+        SetLastError(ERROR_TIMEOUT);
+        return false;
+      }
+      if (g_context.stop_event) {
+        const DWORD wait_result = WaitForSingleObject(g_context.stop_event, kPipeClientPollMs);
+        if (wait_result == WAIT_OBJECT_0) {
+          SetLastError(ERROR_CANCELLED);
+          return false;
+        }
+      } else {
+        Sleep(kPipeClientPollMs);
+      }
+    }
+    SetLastError(ERROR_CANCELLED);
+    return false;
+  }
+
   void serve_pipe_client(HANDLE pipe, vdd::ControlClient &client) {
     char input[kPipeBufferBytes] {};
     DWORD bytes_read = 0;
-    const BOOL read_ok = ReadFile(pipe, input, sizeof(input) - 1, &bytes_read, nullptr);
+    const BOOL read_ok =
+      wait_for_pipe_input(pipe) &&
+      ReadFile(pipe, input, sizeof(input) - 1, &bytes_read, nullptr);
     std::string response;
     if (!read_ok || bytes_read == 0) {
       response = "error read_failed\n";

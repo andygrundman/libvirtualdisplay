@@ -142,4 +142,7 @@ TEST(VirtualDisplayCliContract, DriverInstallSelfElevatesAndInstallsRootDevice) 
   expect_contains(source, "Root\\\\SunshineVirtualDisplay");
   expect_contains(source, "UpdateDriverForPlugAndPlayDevicesW");
   expect_contains(source, "driver_installed=1");
+  expect_contains(source, "multi_sz_contains(buffer.data(), required_size");
+  expect_contains(source, "byte_count % sizeof(wchar_t)");
+  expect_contains(source, "wide_values[char_count - 1] != L'\\0'");
 }
