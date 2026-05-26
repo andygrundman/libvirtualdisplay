@@ -32,7 +32,7 @@ namespace {
       << "virtualdisplay commands:\n"
       << "  driver install [--inf PATH]\n"
       << "  broker install|start|stop|status|uninstall\n"
-      << "  broker protocol|query-state|query-manifest|helper-diagnose|helper-apply-extended-topology|helper-query-color-profiles\n"
+      << "  broker protocol|query-state|query-manifest|helper-diagnose|helper-apply-extended-topology|helper-apply-manifest-topology|helper-query-color-profiles\n"
       << "  status\n"
       << "  display query\n"
       << "  spawn [--width N] [--height N] [--physical-width-mm N] [--physical-height-mm N] [--refresh HZ] [--name TEXT]\n"
@@ -1027,6 +1027,7 @@ int main(int argc, char **argv) {
          args[1] == "query-manifest" ||
          args[1] == "helper-diagnose" ||
          args[1] == "helper-apply-extended-topology" ||
+         args[1] == "helper-apply-manifest-topology" ||
          args[1] == "helper-query-color-profiles")) {
 #ifdef _WIN32
       return query_broker(args[1]);

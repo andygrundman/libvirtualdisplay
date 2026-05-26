@@ -462,6 +462,9 @@ namespace {
     if (command == "helper-apply-extended-topology") {
       return L"--apply-extended-topology";
     }
+    if (command == "helper-apply-manifest-topology") {
+      return L"--apply-manifest-topology";
+    }
     if (command == "helper-query-color-profiles") {
       return L"--query-color-profiles";
     }

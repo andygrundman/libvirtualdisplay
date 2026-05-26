@@ -30,6 +30,7 @@ namespace {
       << "virtualdisplay_probe commands:\n"
       << "  --diagnose\n"
       << "  --apply-extended-topology\n"
+      << "  --apply-manifest-topology\n"
       << "  --query-color-profiles\n"
       << "  --check\n"
       << "  --query-permanent\n"
@@ -228,6 +229,7 @@ namespace {
 
   bool command_uses_display_config(const std::string_view command) {
     return command == "--apply-extended-topology" ||
+           command == "--apply-manifest-topology" ||
            command == "--query-color-profiles" ||
            command == "--self-test-4k240" ||
            command == "--self-test-hdr" ||
@@ -335,6 +337,105 @@ namespace {
 
   bool apply_extended_topology() {
     return apply_extended_topology_result() == ERROR_SUCCESS;
+  }
+
+  const vdd::DisplayManifestProfile *profile_for_target(
+    const vdd::DisplayManifest &manifest,
+    const std::uint32_t target_id
+  ) {
+    for (std::uint32_t index = 0; index < manifest.profile_count; ++index) {
+      const auto &profile = manifest.profiles[index];
+      if (profile.connector_index == target_id && profile.layout_policy != vdd::kDisplayManifestLayoutPolicyNone) {
+        return &profile;
+      }
+    }
+    return nullptr;
+  }
+
+  std::optional<UINT32> source_mode_index(const DISPLAYCONFIG_PATH_INFO &path, const bool virtual_mode_aware) {
+    if (virtual_mode_aware) {
+      if (path.sourceInfo.sourceModeInfoIdx == DISPLAYCONFIG_PATH_SOURCE_MODE_IDX_INVALID) {
+        return std::nullopt;
+      }
+      return path.sourceInfo.sourceModeInfoIdx;
+    }
+
+    if (path.sourceInfo.modeInfoIdx == DISPLAYCONFIG_PATH_MODE_IDX_INVALID) {
+      return std::nullopt;
+    }
+    return path.sourceInfo.modeInfoIdx;
+  }
+
+  int apply_manifest_topology(vdd::ControlClient &client) {
+    const auto manifest = client.query_display_manifest();
+    if (!manifest.ok()) {
+      return fail("query display manifest failed", manifest);
+    }
+
+    (void) apply_extended_topology();
+
+    UINT32 query_flags = QDC_ONLY_ACTIVE_PATHS | QDC_VIRTUAL_MODE_AWARE;
+    auto query = query_display_config_result(query_flags);
+    if (!query.data) {
+      query_flags = QDC_ONLY_ACTIVE_PATHS;
+      query = query_display_config_result(query_flags);
+    }
+    if (!query.data) {
+      std::cerr << "manifest topology query failed native_error=" << query.native_error << '\n';
+      return 1;
+    }
+
+    auto paths = query.data->paths;
+    auto modes = query.data->modes;
+    const bool virtual_mode_aware = (query_flags & QDC_VIRTUAL_MODE_AWARE) != 0;
+    bool save_to_database = false;
+    std::uint32_t applied_profiles = 0;
+
+    for (auto &path: paths) {
+      if ((path.flags & DISPLAYCONFIG_PATH_ACTIVE) == 0) {
+        continue;
+      }
+
+      const auto *profile = profile_for_target(manifest.value, path.targetInfo.id);
+      if (!profile) {
+        continue;
+      }
+
+      const auto mode_index = source_mode_index(path, virtual_mode_aware);
+      if (!mode_index || *mode_index >= modes.size() || modes[*mode_index].infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE) {
+        continue;
+      }
+
+      modes[*mode_index].sourceMode.position = POINTL {profile->position_x, profile->position_y};
+      if (profile->layout_policy == vdd::kDisplayManifestLayoutPolicyApplyAndPersist) {
+        save_to_database = true;
+      }
+      ++applied_profiles;
+    }
+
+    if (applied_profiles == 0) {
+      std::cerr << "manifest topology had no active layout profiles\n";
+      return 1;
+    }
+
+    const LONG result = SetDisplayConfig(
+      static_cast<UINT32>(paths.size()),
+      paths.data(),
+      static_cast<UINT32>(modes.size()),
+      modes.data(),
+      SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES | SDC_ALLOW_PATH_ORDER_CHANGES |
+        (save_to_database ? SDC_SAVE_TO_DATABASE : 0) |
+        (virtual_mode_aware ? SDC_VIRTUAL_MODE_AWARE : 0)
+    );
+    if (result != ERROR_SUCCESS) {
+      std::cerr << "apply manifest topology failed native_error=" << result << '\n';
+      return 1;
+    }
+
+    std::cout << "manifest_topology_applied=1\n";
+    std::cout << "manifest_topology_profiles=" << applied_profiles << '\n';
+    std::cout << "manifest_topology_saved=" << (save_to_database ? 1 : 0) << '\n';
+    return 0;
   }
 
   void prepare_legacy_topology_path(DISPLAYCONFIG_PATH_INFO &path, const bool active) {
@@ -1260,6 +1361,10 @@ int main(const int argc, char **argv) {
               << " max=" << result.value.max_display_count
               << " temporary=" << result.value.temporary_display_count << '\n';
     return 0;
+  }
+
+  if (command == "--apply-manifest-topology") {
+    return apply_manifest_topology(client);
   }
 
   if (command == "--set-permanent") {

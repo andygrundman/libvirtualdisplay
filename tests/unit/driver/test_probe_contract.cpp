@@ -59,6 +59,7 @@ TEST(VirtualDisplayProbeContract, ExposesTemporaryAndPermanentRuntimeChecks) {
 
   expect_contains(source, "--diagnose");
   expect_contains(source, "--apply-extended-topology");
+  expect_contains(source, "--apply-manifest-topology");
   expect_contains(source, "--query-color-profiles");
   expect_contains(source, "--check");
   expect_contains(source, "--query-permanent");
@@ -101,6 +102,20 @@ TEST(VirtualDisplayProbeContract, DiagnoseRunsBeforeControlDeviceOpen) {
   EXPECT_LT(color_profile_pos, open_pos);
 }
 
+TEST(VirtualDisplayProbeContract, ManifestTopologyAppliesStoredLayoutPolicy) {
+  const auto source = read_probe_source();
+
+  expect_contains(source, "if (command == \"--apply-manifest-topology\")");
+  expect_contains(source, "apply_manifest_topology(client)");
+  expect_contains(source, "client.query_display_manifest()");
+  expect_contains(source, "profile_for_target(manifest.value, path.targetInfo.id)");
+  expect_contains(source, "profile.layout_policy != vdd::kDisplayManifestLayoutPolicyNone");
+  expect_contains(source, "modes[*mode_index].sourceMode.position = POINTL {profile->position_x, profile->position_y}");
+  expect_contains(source, "profile->layout_policy == vdd::kDisplayManifestLayoutPolicyApplyAndPersist");
+  expect_contains(source, "SDC_SAVE_TO_DATABASE");
+  expect_contains(source, "manifest_topology_applied=1");
+}
+
 TEST(VirtualDisplayProbeContract, PermanentSelfTestRestoresOriginalCount) {
   const auto source = read_probe_source();
 
@@ -131,6 +146,7 @@ TEST(VirtualDisplayProbeContract, DisplayConfigCommandsRequireInteractiveSession
 
   expect_contains(source, "command_uses_display_config");
   expect_contains(source, "--apply-extended-topology");
+  expect_contains(source, "--apply-manifest-topology");
   expect_contains(source, "--query-color-profiles");
   expect_contains(source, "--self-test-4k240");
   expect_contains(source, "--self-test-hdr");
@@ -223,6 +239,7 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "helper_arguments_for_broker_command");
   expect_contains(source, "return L\"--diagnose\"");
   expect_contains(source, "return L\"--apply-extended-topology\"");
+  expect_contains(source, "return L\"--apply-manifest-topology\"");
   expect_contains(source, "return L\"--query-color-profiles\"");
   expect_contains(source, "launch_console_helper(*helper_arguments)");
   expect_contains(source, "WTSGetActiveConsoleSessionId()");
