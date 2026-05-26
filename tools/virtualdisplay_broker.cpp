@@ -1,4 +1,5 @@
 #include "virtual_display/driver/control_client.h"
+#include "virtual_display/driver/lease_store.h"
 #include "virtual_display/driver/windows_control_client.h"
 
 #include <algorithm>
@@ -15,6 +16,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -33,6 +35,9 @@ namespace {
   constexpr wchar_t kServiceName[] = L"SunshineVirtualDisplayBroker";
   constexpr wchar_t kPipeName[] = L"\\\\.\\pipe\\SunshineVirtualDisplayBroker";
   constexpr wchar_t kPipeSecurityDescriptor[] = L"D:P(A;;GA;;;SY)(A;;GA;;;BA)";
+  constexpr wchar_t kBrokerStateSubkey[] = L"SOFTWARE\\Sunshine\\VirtualDisplayBroker";
+  constexpr wchar_t kBrokerDisplayManifestValue[] = L"DisplayManifest";
+  constexpr wchar_t kBrokerRegistrySecurityDescriptor[] = L"D:P(A;;GA;;;SY)(A;;GA;;;BA)";
   constexpr wchar_t kSessionHelperExecutable[] = L"virtualdisplay_probe.exe";
   constexpr DWORD kPipeBufferBytes = 4096;
   constexpr DWORD kEventServiceStarting = 0x1000;
@@ -339,6 +344,165 @@ namespace {
     return std::optional<PipeSecurity> {std::in_place, attributes, descriptor};
   }
 
+  class RegistryKey {
+  public:
+    RegistryKey() = default;
+
+    ~RegistryKey() {
+      reset();
+    }
+
+    RegistryKey(const RegistryKey &) = delete;
+    RegistryKey &operator=(const RegistryKey &) = delete;
+
+    RegistryKey(RegistryKey &&other) noexcept:
+        key_ {other.key_} {
+      other.key_ = nullptr;
+    }
+
+    RegistryKey &operator=(RegistryKey &&other) noexcept {
+      if (this != &other) {
+        reset(other.key_);
+        other.key_ = nullptr;
+      }
+      return *this;
+    }
+
+    [[nodiscard]] HKEY get() const {
+      return key_;
+    }
+
+    [[nodiscard]] HKEY *put() {
+      reset();
+      return &key_;
+    }
+
+    [[nodiscard]] bool valid() const {
+      return key_ != nullptr;
+    }
+
+    void reset(HKEY value = nullptr) {
+      if (key_) {
+        RegCloseKey(key_);
+      }
+      key_ = value;
+    }
+
+  private:
+    HKEY key_ {};
+  };
+
+  struct RegistrySecurity {
+    SECURITY_ATTRIBUTES attributes {};
+    LocalMemory descriptor {nullptr};
+
+    RegistrySecurity(SECURITY_ATTRIBUTES security_attributes, void *security_descriptor):
+        attributes {security_attributes},
+        descriptor {security_descriptor} {
+    }
+  };
+
+  std::optional<RegistrySecurity> make_registry_security() {
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+          kBrokerRegistrySecurityDescriptor,
+          SDDL_REVISION_1,
+          &descriptor,
+          nullptr
+        )) {
+      return std::nullopt;
+    }
+
+    SECURITY_ATTRIBUTES attributes {};
+    attributes.nLength = sizeof(attributes);
+    attributes.lpSecurityDescriptor = descriptor;
+    attributes.bInheritHandle = FALSE;
+    return std::optional<RegistrySecurity> {std::in_place, attributes, descriptor};
+  }
+
+  std::optional<RegistryKey> open_broker_state_key(const REGSAM access) {
+    RegistryKey key;
+    const auto status = RegOpenKeyExW(HKEY_LOCAL_MACHINE, kBrokerStateSubkey, 0, access, key.put());
+    if (status != ERROR_SUCCESS) {
+      return std::nullopt;
+    }
+    return std::optional<RegistryKey> {std::move(key)};
+  }
+
+  std::optional<RegistryKey> create_broker_state_key(const REGSAM access) {
+    auto security = make_registry_security();
+    if (!security) {
+      return std::nullopt;
+    }
+
+    RegistryKey key;
+    DWORD disposition {};
+    const auto status = RegCreateKeyExW(
+      HKEY_LOCAL_MACHINE,
+      kBrokerStateSubkey,
+      0,
+      nullptr,
+      REG_OPTION_NON_VOLATILE,
+      access | WRITE_DAC,
+      &security->attributes,
+      key.put(),
+      &disposition
+    );
+    if (status != ERROR_SUCCESS) {
+      return std::nullopt;
+    }
+    (void) RegSetKeySecurity(key.get(), DACL_SECURITY_INFORMATION, security->attributes.lpSecurityDescriptor);
+    return std::optional<RegistryKey> {std::move(key)};
+  }
+
+  std::optional<vdd::DisplayManifest> load_persisted_display_manifest(const std::uint32_t max_display_count) {
+    auto key = open_broker_state_key(KEY_QUERY_VALUE);
+    if (!key) {
+      return std::nullopt;
+    }
+
+    vdd::DisplayManifest manifest {};
+    DWORD type {};
+    DWORD size = sizeof(manifest);
+    const auto status = RegQueryValueExW(
+      key->get(),
+      kBrokerDisplayManifestValue,
+      nullptr,
+      &type,
+      reinterpret_cast<BYTE *>(&manifest),
+      &size
+    );
+    if (status != ERROR_SUCCESS ||
+        type != REG_BINARY ||
+        size != sizeof(manifest) ||
+        vdd::validate_display_manifest(manifest, max_display_count) != vdd::ValidationError::None) {
+      return std::nullopt;
+    }
+
+    return manifest;
+  }
+
+  bool save_display_manifest(const vdd::DisplayManifest &manifest, const std::uint32_t max_display_count) {
+    if (vdd::validate_display_manifest(manifest, max_display_count) != vdd::ValidationError::None) {
+      return false;
+    }
+
+    auto key = create_broker_state_key(KEY_SET_VALUE);
+    if (!key) {
+      return false;
+    }
+
+    const auto status = RegSetValueExW(
+      key->get(),
+      kBrokerDisplayManifestValue,
+      0,
+      REG_BINARY,
+      reinterpret_cast<const BYTE *>(&manifest),
+      sizeof(manifest)
+    );
+    return status == ERROR_SUCCESS;
+  }
+
   struct BrokerContext {
     SERVICE_STATUS_HANDLE service_status_handle {};
     SERVICE_STATUS service_status {};
@@ -566,7 +730,22 @@ namespace {
         return "error invalid_permanent_set\n";
       }
 
-      const auto result = client.set_permanent_display_count(*request);
+      const auto current = client.query_permanent_display_count();
+      if (!current.ok()) {
+        return "error " + format_status(current) + "\n";
+      }
+
+      const auto manifest = vdd::display_manifest_from_permanent_settings(*request, current.value.max_display_count);
+      const auto applied = client.set_display_manifest(manifest);
+      if (!applied.ok()) {
+        return "error " + format_status(applied) + "\n";
+      }
+      if (!save_display_manifest(applied.value, current.value.max_display_count)) {
+        report_event_log(EVENTLOG_ERROR_TYPE, kEventServiceFailed, L"Persist permanent display manifest failed");
+        return "error persistence_failed\n";
+      }
+
+      const auto result = client.query_permanent_display_count();
       if (!result.ok()) {
         return "error " + format_status(result) + "\n";
       }
@@ -614,6 +793,44 @@ namespace {
     FlushFileBuffers(pipe);
   }
 
+  void restore_persisted_display_manifest(vdd::ControlClient &client) {
+    const auto current = client.query_permanent_display_count();
+    if (!current.ok()) {
+      report_event_log(
+        EVENTLOG_ERROR_TYPE,
+        kEventServiceFailed,
+        "Query permanent display state before restore failed " + format_status(current)
+      );
+      return;
+    }
+
+    const auto manifest = load_persisted_display_manifest(current.value.max_display_count);
+    if (!manifest || manifest->profile_count == 0) {
+      return;
+    }
+
+    constexpr DWORD kRestoreRetryDelayMs = 250;
+    constexpr std::uint32_t kRestoreAttempts = 20;
+    vdd::ControlResult<vdd::DisplayManifest> applied {};
+    for (std::uint32_t attempt = 0; attempt < kRestoreAttempts; ++attempt) {
+      applied = client.set_display_manifest(*manifest);
+      if (applied.ok()) {
+        report_event_log(EVENTLOG_INFORMATION_TYPE, kEventServiceRunning, L"Restored persisted display manifest");
+        return;
+      }
+      if (g_context.stop_requested.load(std::memory_order_acquire)) {
+        return;
+      }
+      Sleep(kRestoreRetryDelayMs);
+    }
+
+    report_event_log(
+      EVENTLOG_ERROR_TYPE,
+      kEventServiceFailed,
+      "Restore persisted display manifest failed " + format_status(applied)
+    );
+  }
+
   int run_broker_loop() {
     auto opened = vdd::open_first_control_device();
     if (!opened.ok()) {
@@ -635,6 +852,8 @@ namespace {
       std::cerr << "driver protocol check failed: " << format_status(protocol) << '\n';
       return 1;
     }
+
+    restore_persisted_display_manifest(client);
 
     auto pipe_security = make_pipe_security();
     if (!pipe_security) {

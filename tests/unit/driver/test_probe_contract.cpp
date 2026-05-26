@@ -229,8 +229,18 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(cmake, "target_link_libraries(virtualdisplay PRIVATE libvirtualdisplay::driver advapi32 shell32 newdev)");
   expect_contains(source, "kPipeName[] = L\"\\\\\\\\.\\\\pipe\\\\SunshineVirtualDisplayBroker\"");
   expect_contains(source, "kPipeSecurityDescriptor[] = L\"D:P(A;;GA;;;SY)(A;;GA;;;BA)\"");
+  expect_contains(source, "kBrokerStateSubkey[] = L\"SOFTWARE\\\\Sunshine\\\\VirtualDisplayBroker\"");
+  expect_contains(source, "kBrokerDisplayManifestValue[] = L\"DisplayManifest\"");
+  expect_contains(source, "kBrokerRegistrySecurityDescriptor[] = L\"D:P(A;;GA;;;SY)(A;;GA;;;BA)\"");
   expect_contains(source, "kSessionHelperExecutable[] = L\"virtualdisplay_probe.exe\"");
   expect_contains(source, "ConvertStringSecurityDescriptorToSecurityDescriptorW");
+  expect_contains(source, "RegCreateKeyExW");
+  expect_contains(source, "RegSetKeySecurity");
+  expect_contains(source, "RegQueryValueExW");
+  expect_contains(source, "RegSetValueExW");
+  expect_contains(source, "load_persisted_display_manifest");
+  expect_contains(source, "save_display_manifest");
+  expect_contains(source, "restore_persisted_display_manifest(client)");
   expect_contains(source, "CreateNamedPipeW");
   expect_contains(source, "open_first_control_device()");
   expect_contains(source, "query_display_state()");
@@ -238,7 +248,8 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "format_display_state(result.value)");
   expect_contains(source, "query_display_manifest()");
   expect_contains(source, "query_permanent_display_count()");
-  expect_contains(source, "set_permanent_display_count(*request)");
+  expect_contains(source, "vdd::display_manifest_from_permanent_settings(*request");
+  expect_contains(source, "client.set_display_manifest(manifest)");
   expect_contains(source, "command == \"permanent-query\"");
   expect_contains(source, "command.starts_with(\"permanent-set \")");
   expect_contains(source, "helper_arguments_for_broker_command");

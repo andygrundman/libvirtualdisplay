@@ -140,17 +140,16 @@ TEST(VirtualDisplayWindowsDriverContract, StoresTemporaryIdentityInWdfPersistent
   EXPECT_NE(inf.find("HKR,,\"ConfigVersion\",0x00010001,1"), std::string::npos);
 }
 
-TEST(VirtualDisplayWindowsDriverContract, RestoresPersistentDisplayManifestState) {
+TEST(VirtualDisplayWindowsDriverContract, LeavesPermanentPolicyPersistenceToBroker) {
   const auto source = read_windows_driver_source();
 
-  EXPECT_NE(source.find("kDisplayManifestValue[] = L\"DisplayManifest\""), std::string::npos);
-  EXPECT_NE(source.find("load_persistent_display_manifest(driver, device)"), std::string::npos);
-  EXPECT_NE(source.find("save_display_manifest(driver_, device_, manifest)"), std::string::npos);
-  EXPECT_NE(source.find("vdd::validate_display_manifest(manifest, kMaxPermanentDisplays)"), std::string::npos);
-  EXPECT_NE(source.find("WdfRegistryAssignValue("), std::string::npos);
-  EXPECT_NE(source.find("persisted_manifest_"), std::string::npos);
-  EXPECT_NE(source.find("if (adapter_ready_ && persisted_manifest_ && persisted_manifest_->profile_count > 0)"), std::string::npos);
-  EXPECT_NE(source.find("(void) apply_display_manifest(*persisted_manifest_);"), std::string::npos);
+  EXPECT_EQ(source.find("kDisplayManifestValue"), std::string::npos);
+  EXPECT_EQ(source.find("load_persistent_display_manifest"), std::string::npos);
+  EXPECT_EQ(source.find("save_display_manifest(driver_, device_, manifest)"), std::string::npos);
+  EXPECT_EQ(source.find("persisted_manifest_"), std::string::npos);
+  EXPECT_NE(source.find("vdd::BackendError apply_display_manifest(const vdd::DisplayManifest &manifest) override"), std::string::npos);
+  EXPECT_NE(source.find("permanent_display_count_ = manifest.profile_count;"), std::string::npos);
+  EXPECT_NE(source.find("load_temporary_connector_reservations(driver, device)"), std::string::npos);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, SetsSwapChainDeviceFromProcessingThread) {
@@ -322,5 +321,5 @@ TEST(VirtualDisplayWindowsDriverContract, PermanentManifestUpdatesRestorePreviou
   EXPECT_NE(source.find("std::vector<vdd::DisplayDescriptor> departed;"), std::string::npos);
   EXPECT_NE(source.find("departed.push_back(descriptor);"), std::string::npos);
   EXPECT_NE(source.find("(void) arrive_display(restore_descriptor, true);"), std::string::npos);
-  EXPECT_NE(source.find("save_display_manifest(driver_, device_, manifest)"), std::string::npos);
+  EXPECT_EQ(source.find("save_display_manifest(driver_, device_, manifest)"), std::string::npos);
 }
