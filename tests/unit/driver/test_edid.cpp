@@ -49,6 +49,34 @@ TEST(VirtualDisplayDriverEdid, BuildsParseableTwoBlockEdidWithStableIdentity) {
   EXPECT_EQ(vdd::read_serial_number(edid), 0x12345678u);
 }
 
+TEST(VirtualDisplayDriverEdid, RejectsInvalidManufacturerCodes) {
+  auto edid = vdd::create_edid(default_options());
+
+  edid[8] = std::byte {0x00};
+  edid[9] = std::byte {0x00};
+  EXPECT_EQ(vdd::read_manufacturer_id(edid), std::nullopt);
+
+  edid = vdd::create_edid(default_options());
+  edid[8] = std::byte {0x7f};
+  edid[9] = std::byte {0xff};
+  EXPECT_EQ(vdd::read_manufacturer_id(edid), std::nullopt);
+}
+
+TEST(VirtualDisplayDriverEdid, StopsMonitorNameAtDescriptorTerminator) {
+  auto edid = vdd::create_edid(default_options());
+  edid[90 + 5 + 4] = std::byte {'\n'};
+  edid[90 + 5 + 5] = std::byte {'X'};
+
+  EXPECT_EQ(vdd::read_monitor_name(edid), "Suns");
+}
+
+TEST(VirtualDisplayDriverEdid, RejectsUnsafeMonitorNameCharacters) {
+  auto edid = vdd::create_edid(default_options());
+  edid[90 + 5 + 4] = std::byte {'\t'};
+
+  EXPECT_EQ(vdd::read_monitor_name(edid), std::nullopt);
+}
+
 TEST(VirtualDisplayDriverEdid, EncodesPhysicalSizeForDpiScaling) {
   auto options = default_options();
   options.physical_width_mm = 700;

@@ -127,6 +127,21 @@ namespace virtual_display::driver {
       data[offset + 17] = byte(0x1a);
     }
 
+    std::string sanitized_edid_text(const std::string_view text, const std::size_t max_size) {
+      std::string sanitized;
+      sanitized.reserve(std::min(text.size(), max_size));
+      for (const unsigned char ch : text) {
+        if (sanitized.size() == max_size) {
+          break;
+        }
+        sanitized.push_back(ch >= 0x20 && ch <= 0x7e ? static_cast<char>(ch) : ' ');
+      }
+      while (!sanitized.empty() && sanitized.back() == ' ') {
+        sanitized.pop_back();
+      }
+      return sanitized;
+    }
+
     void write_text_descriptor(
       std::span<std::byte> data,
       const std::size_t offset,
@@ -140,9 +155,10 @@ namespace virtual_display::driver {
       data[offset + 4] = std::byte {0x00};
 
       std::fill_n(data.begin() + static_cast<std::ptrdiff_t>(offset + 5), 13, std::byte {' '});
-      const auto copy_size = std::min<std::size_t>(text.size(), 12);
+      const auto safe_text = sanitized_edid_text(text, 12);
+      const auto copy_size = safe_text.size();
       if (copy_size != 0) {
-        std::memcpy(data.data() + offset + 5, text.data(), copy_size);
+        std::memcpy(data.data() + offset + 5, safe_text.data(), copy_size);
       }
       data[offset + 5 + copy_size] = std::byte {'\n'};
     }
@@ -154,9 +170,10 @@ namespace virtual_display::driver {
     ) {
       constexpr std::size_t kFieldSize = 13;
       std::fill_n(data.begin() + static_cast<std::ptrdiff_t>(offset), kFieldSize, std::byte {' '});
-      const auto copy_size = std::min<std::size_t>(text.size(), kFieldSize - 1);
+      const auto safe_text = sanitized_edid_text(text, kFieldSize - 1);
+      const auto copy_size = safe_text.size();
       if (copy_size != 0) {
-        std::memcpy(data.data() + offset, text.data(), copy_size);
+        std::memcpy(data.data() + offset, safe_text.data(), copy_size);
       }
       data[offset + copy_size] = std::byte {'\n'};
     }
@@ -387,17 +404,27 @@ namespace virtual_display::driver {
     return false;
   }
 
-  std::array<char, 3> read_manufacturer_id(const std::span<const std::byte, kEdidSize> edid) {
+  std::optional<std::array<char, 3>> read_manufacturer_id(const std::span<const std::byte, kEdidSize> edid) {
     const auto encoded = static_cast<std::uint16_t>(
       (static_cast<std::uint16_t>(to_u8(edid[8])) << 8) |
       static_cast<std::uint16_t>(to_u8(edid[9]))
     );
 
-    return {
-      static_cast<char>('A' + (((encoded >> 10) & 0x1fu) - 1u)),
-      static_cast<char>('A' + (((encoded >> 5) & 0x1fu) - 1u)),
-      static_cast<char>('A' + ((encoded & 0x1fu) - 1u))
+    const std::array<unsigned, 3> parts {
+      static_cast<unsigned>((encoded >> 10) & 0x1fu),
+      static_cast<unsigned>((encoded >> 5) & 0x1fu),
+      static_cast<unsigned>(encoded & 0x1fu)
     };
+
+    std::array<char, 3> manufacturer_id {};
+    for (std::size_t index = 0; index < parts.size(); ++index) {
+      if (parts[index] == 0 || parts[index] > 26) {
+        return std::nullopt;
+      }
+      manufacturer_id[index] = static_cast<char>('A' + parts[index] - 1);
+    }
+
+    return manufacturer_id;
   }
 
   std::uint16_t read_product_code(const std::span<const std::byte, kEdidSize> edid) {
@@ -428,10 +455,16 @@ namespace virtual_display::driver {
       std::string name;
       name.reserve(13);
       for (std::size_t index = offset + 5; index < offset + 18; ++index) {
-        name.push_back(static_cast<char>(to_u8(edid[index])));
+        const auto ch = to_u8(edid[index]);
+        if (ch == '\0' || ch == '\n' || ch == '\r') {
+          break;
+        }
+        if (ch < 0x20 || ch > 0x7e) {
+          return std::nullopt;
+        }
+        name.push_back(static_cast<char>(ch));
       }
-      while (!name.empty() &&
-             (name.back() == '\0' || name.back() == '\n' || name.back() == '\r' || name.back() == ' ')) {
+      while (!name.empty() && name.back() == ' ') {
         name.pop_back();
       }
       if (!name.empty()) {

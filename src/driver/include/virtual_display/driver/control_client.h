@@ -76,7 +76,7 @@ namespace virtual_display::driver {
       if (!transport_.ioctl(ioctl_code, input, input_size, &output, sizeof(output), bytes_returned, native_error)) {
         return {ControlStatus::TransportFailed, {}, native_error};
       }
-      if (bytes_returned < sizeof(output)) {
+      if (bytes_returned != sizeof(output)) {
         return {ControlStatus::InvalidOutput, {}, native_error};
       }
       if (!is_valid_api_namespace(output.api_namespace)) {

@@ -131,6 +131,34 @@ namespace {
     return std::string {vdd::trim_display_name(value)};
   }
 
+  std::string escape_key_value(const std::string_view value) {
+    constexpr char kHex[] = "0123456789ABCDEF";
+    std::string output;
+    output.reserve(value.size());
+    for (const unsigned char ch : value) {
+      if (ch == '\\') {
+        output += "\\\\";
+      } else if (ch == '\n') {
+        output += "\\n";
+      } else if (ch == '\r') {
+        output += "\\r";
+      } else if (ch == '\t') {
+        output += "\\t";
+      } else if (ch < 0x20 || ch == 0x7f) {
+        output += "\\x";
+        output += kHex[ch >> 4];
+        output += kHex[ch & 0x0f];
+      } else {
+        output += static_cast<char>(ch);
+      }
+    }
+    return output;
+  }
+
+  std::string output_display_name(const char (&value)[vdd::kDisplayNameChars]) {
+    return escape_key_value(display_name(value));
+  }
+
   std::string guid_string(const vdd::Guid &guid) {
     char text[37] {};
     std::snprintf(
@@ -176,7 +204,7 @@ namespace {
       << "mode=" << state.width << 'x' << state.height << '@'
       << (state.refresh_rate_millihz / 1000.0) << "Hz\n"
       << "physical_size_mm=" << state.physical_width_mm << 'x' << state.physical_height_mm << '\n'
-      << "name=" << display_name(state.display_name) << '\n';
+      << "name=" << output_display_name(state.display_name) << '\n';
     return output.str();
   }
 
@@ -205,7 +233,7 @@ namespace {
         << ((entry.flags & vdd::kDisplayStateFlagHdrSupported) ? 1 : 0) << '\n'
         << "display." << index << ".retain_identity="
         << ((entry.flags & vdd::kDisplayStateFlagRetainIdentity) ? 1 : 0) << '\n'
-        << "display." << index << ".name=" << display_name(entry.display_name) << '\n';
+        << "display." << index << ".name=" << output_display_name(entry.display_name) << '\n';
     }
 
     return output.str();
@@ -247,7 +275,7 @@ namespace {
         << ((profile.flags & vdd::kDisplayManifestProfileFlagRetainIdentity) ? 1 : 0) << '\n'
         << "profile." << index << ".layout_policy=" << profile.layout_policy << '\n'
         << "profile." << index << ".position=" << profile.position_x << ',' << profile.position_y << '\n'
-        << "profile." << index << ".name=" << display_name(profile.display_name) << '\n';
+        << "profile." << index << ".name=" << output_display_name(profile.display_name) << '\n';
     }
 
     return output.str();

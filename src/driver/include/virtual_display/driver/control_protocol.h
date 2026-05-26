@@ -297,6 +297,7 @@ namespace virtual_display::driver {
     InvalidManufacturerId,
     InvalidProductCode,
     DuplicateManifestIdentity,
+    InvalidReservedField,
   };
 
   struct ValidatedCreateTemporaryDisplay {

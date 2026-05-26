@@ -301,6 +301,13 @@ TEST(VirtualDisplayDriverControlProtocol, RejectsOutOfRangeMode) {
   EXPECT_EQ(vdd::validate_create_temporary_display(request), vdd::ValidationError::InvalidRefreshRate);
 }
 
+TEST(VirtualDisplayDriverControlProtocol, RejectsReservedCreateFields) {
+  auto request = valid_create_request();
+  request.reserved = 1;
+
+  EXPECT_EQ(vdd::validate_create_temporary_display(request), vdd::ValidationError::InvalidReservedField);
+}
+
 TEST(VirtualDisplayDriverControlProtocol, RejectsBlankDisplayName) {
   auto request = valid_create_request();
   std::memset(request.display_name, ' ', sizeof(request.display_name));
@@ -352,6 +359,14 @@ TEST(VirtualDisplayDriverControlProtocol, RejectsInvalidLeaseRequests) {
     0
   };
   EXPECT_EQ(vdd::validate_lease_request(request), vdd::ValidationError::MissingLeaseId);
+
+  request = vdd::LeaseRequest {
+    vdd::kApiNamespaceGuid,
+    lease_id(1),
+    0,
+    1
+  };
+  EXPECT_EQ(vdd::validate_lease_request(request), vdd::ValidationError::InvalidReservedField);
 
   auto display_request = vdd::LeaseDisplayRequest {
     vdd::kApiNamespaceGuid,
@@ -438,6 +453,10 @@ TEST(VirtualDisplayDriverControlProtocol, ValidatesDisplayManifest) {
 
   manifest.version = vdd::kDisplayManifestVersion + 1;
   EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidManifestVersion);
+
+  manifest = valid_display_manifest();
+  manifest.reserved = 1;
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidReservedField);
 
   manifest = valid_display_manifest();
   manifest.profiles[0].flags &= ~vdd::kDisplayManifestProfileFlagPermanentIdentity;

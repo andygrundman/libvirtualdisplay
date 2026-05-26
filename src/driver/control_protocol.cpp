@@ -135,6 +135,9 @@ namespace virtual_display::driver {
     if (!is_valid_api_namespace(request.api_namespace)) {
       return ValidationError::WrongApiNamespace;
     }
+    if (request.reserved != 0) {
+      return ValidationError::InvalidReservedField;
+    }
     if (request.lease_id < kMinOpaqueLeaseId) {
       return ValidationError::MissingLeaseId;
     }
@@ -203,6 +206,9 @@ namespace virtual_display::driver {
     if (!is_valid_api_namespace(request.api_namespace)) {
       return ValidationError::WrongApiNamespace;
     }
+    if (request.reserved != 0) {
+      return ValidationError::InvalidReservedField;
+    }
     if (request.lease_id < kMinOpaqueLeaseId) {
       return ValidationError::MissingLeaseId;
     }
@@ -251,6 +257,9 @@ namespace virtual_display::driver {
   ) {
     if (!is_valid_api_namespace(manifest.api_namespace)) {
       return ValidationError::WrongApiNamespace;
+    }
+    if (manifest.reserved != 0) {
+      return ValidationError::InvalidReservedField;
     }
     if (manifest.version != kDisplayManifestVersion) {
       return ValidationError::InvalidManifestVersion;
@@ -390,6 +399,8 @@ namespace virtual_display::driver {
         return "invalid_product_code";
       case ValidationError::DuplicateManifestIdentity:
         return "duplicate_manifest_identity";
+      case ValidationError::InvalidReservedField:
+        return "invalid_reserved_field";
     }
 
     return "unknown";

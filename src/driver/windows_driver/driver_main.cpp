@@ -758,7 +758,7 @@ namespace {
     }
 
     vdd::EdidOptions options {};
-    options.manufacturer_id = vdd::read_manufacturer_id(descriptor.edid);
+    options.manufacturer_id = vdd::read_manufacturer_id(descriptor.edid).value_or(vdd::kSunshineDriverManufacturerId);
     options.product_code = vdd::read_product_code(descriptor.edid);
     options.serial_number = vdd::read_serial_number(descriptor.edid);
     options.width = descriptor.width;

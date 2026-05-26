@@ -275,6 +275,30 @@ TEST(VirtualDisplayDriverControlClient, DetectsShortOutput) {
   EXPECT_EQ(result.status, vdd::ControlStatus::InvalidOutput);
 }
 
+TEST(VirtualDisplayDriverControlClient, DetectsOversizedOutput) {
+  FakeTransport transport;
+  transport.set_output(vdd::ProtocolVersion {});
+  transport.forced_bytes_returned = sizeof(vdd::ProtocolVersion) + 1;
+  vdd::ControlClient client {transport};
+
+  const auto result = client.query_protocol_version();
+
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(result.status, vdd::ControlStatus::InvalidOutput);
+}
+
+TEST(VirtualDisplayDriverControlClient, DetectsUnexpectedNoOutputBytes) {
+  FakeTransport transport;
+  transport.next_output.resize(1);
+  transport.forced_bytes_returned = 1;
+  vdd::ControlClient client {transport};
+
+  const auto result = client.feed_lease({vdd::kApiNamespaceGuid, 10, 10'000, 0});
+
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(result.status, vdd::ControlStatus::InvalidOutput);
+}
+
 TEST(VirtualDisplayDriverControlClient, ReportsTransportFailureNativeError) {
   FakeTransport transport;
   transport.next_success = false;
