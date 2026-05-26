@@ -1047,6 +1047,12 @@ int main(int argc, char **argv) {
     }
   }
 
+  if (args[0] == "display" && args.size() >= 2 && args[1] == "query") {
+    if (const auto broker_result = try_broker_command("display-query", true)) {
+      return *broker_result;
+    }
+  }
+
   if (args[0] == "spawn") {
     const auto options = parse_permanent_options(args, 1, false);
     if (!options) {

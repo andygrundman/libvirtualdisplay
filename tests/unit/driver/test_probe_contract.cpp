@@ -213,6 +213,8 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "CreateNamedPipeW");
   expect_contains(source, "open_first_control_device()");
   expect_contains(source, "query_display_state()");
+  expect_contains(source, "command == \"display-query\"");
+  expect_contains(source, "format_display_state(result.value)");
   expect_contains(source, "query_display_manifest()");
   expect_contains(source, "query_permanent_display_count()");
   expect_contains(source, "set_permanent_display_count(*request)");
