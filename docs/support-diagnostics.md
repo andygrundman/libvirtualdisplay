@@ -9,6 +9,7 @@ The UMDF driver registers the `Sunshine.VirtualDisplayDriver` TraceLogging
 provider:
 
 - Provider GUID: `{3d5d3bd9-8500-4523-9334-583f4b5e6f80}`
+- WPP provider GUID: `{b0dcb744-045b-463b-9c2f-6a3c897d3458}`
 - Event examples: `DriverEntry`, `DeviceAdd`, `MonitorArrived`,
   `MonitorDeparted`, `SwapChainAssigned`, `SwapChainUnassigned`,
   `RenderDeviceCreated`, `RenderDeviceLost`, `DefaultHdrMetadataSet`, and
@@ -24,6 +25,14 @@ logman stop SunshineVDD -ets
 
 Export or archive the generated ETL with the matching driver package, PDB, and
 commit SHA.
+
+The driver also builds WPP with Inflight Trace Recorder enabled. When a live
+debugger is attached to the WUDFHost process that hosts the driver, dump the
+recent in-memory trace ring with:
+
+```text
+!wdfkd.wdflogdump
+```
 
 ## Broker And Helper Events
 

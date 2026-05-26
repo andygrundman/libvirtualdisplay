@@ -45,6 +45,34 @@ add_library(${SUNSHINE_DRIVER_TARGET} SHARED
         driver_main.cpp
         "${SUNSHINE_DRIVER_INF}")
 
+find_program(SUNSHINE_DRIVER_TRACEWPP
+        NAMES TraceWPP.exe tracewpp.exe
+        HINTS
+        "${SUNSHINE_DRIVER_WDK_ROOT}/bin/${SUNSHINE_DRIVER_SDK_VERSION}/x64"
+        "${SUNSHINE_DRIVER_WDK_ROOT}/bin/${SUNSHINE_DRIVER_SDK_VERSION}/x86")
+
+if(NOT SUNSHINE_DRIVER_TRACEWPP)
+    message(FATAL_ERROR "TraceWPP.exe is required to build ${SUNSHINE_DRIVER_TARGET} WPP/IFR tracing")
+endif()
+
+set(SUNSHINE_DRIVER_WPP_TMH "${CMAKE_CURRENT_BINARY_DIR}/driver_main.tmh")
+set(SUNSHINE_DRIVER_WPP_CONFIG "${SUNSHINE_DRIVER_WDK_ROOT}/bin/${SUNSHINE_DRIVER_SDK_VERSION}/WppConfig/Rev1")
+add_custom_command(OUTPUT "${SUNSHINE_DRIVER_WPP_TMH}"
+        COMMAND "${SUNSHINE_DRIVER_TRACEWPP}"
+        -um
+        -dll
+        -DWPP_MACRO_USE_KM_VERSION_FOR_UM=1
+        -DENABLE_WPP_RECORDER=1
+        "-I${SUNSHINE_DRIVER_WPP_CONFIG}"
+        "-func:TraceEvents(LEVEL,FLAGS,MSG,...)"
+        "-oDir:${CMAKE_CURRENT_BINARY_DIR}"
+        driver_main.cpp
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/driver_main.cpp"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        VERBATIM)
+add_custom_target(${SUNSHINE_DRIVER_TARGET}WppTrace DEPENDS "${SUNSHINE_DRIVER_WPP_TMH}")
+add_dependencies(${SUNSHINE_DRIVER_TARGET} ${SUNSHINE_DRIVER_TARGET}WppTrace)
+
 target_link_libraries(${SUNSHINE_DRIVER_TARGET}
         PRIVATE
         libvirtualdisplay::driver
@@ -54,10 +82,12 @@ target_link_libraries(${SUNSHINE_DRIVER_TARGET}
         dxgi
         "${SUNSHINE_DRIVER_WDK_ROOT}/Lib/${SUNSHINE_DRIVER_SDK_VERSION}/um/${SUNSHINE_DRIVER_ARCH}/iddcx/${SUNSHINE_DRIVER_IDDCX_VERSION}/IddCxStub.lib"
         "${SUNSHINE_DRIVER_WDK_ROOT}/Lib/wdf/umdf/${SUNSHINE_DRIVER_ARCH}/${SUNSHINE_DRIVER_WDF_VERSION}/WdfDriverStubUm.lib"
+        "${SUNSHINE_DRIVER_WDK_ROOT}/Lib/${SUNSHINE_DRIVER_SDK_VERSION}/um/${SUNSHINE_DRIVER_ARCH}/wpprecorderum.lib"
         "${SUNSHINE_DRIVER_WDK_ROOT}/Lib/${SUNSHINE_DRIVER_SDK_VERSION}/um/${SUNSHINE_DRIVER_ARCH}/ntdll.lib")
 
 target_include_directories(${SUNSHINE_DRIVER_TARGET}
         PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}"
         "${SUNSHINE_DRIVER_WDK_ROOT}/Include/wdf/umdf/${SUNSHINE_DRIVER_WDF_VERSION}"
         "${SUNSHINE_DRIVER_WDK_ROOT}/Include/${SUNSHINE_DRIVER_SDK_VERSION}/um"
         "${SUNSHINE_DRIVER_WDK_ROOT}/Include/${SUNSHINE_DRIVER_SDK_VERSION}/shared"
@@ -76,7 +106,9 @@ target_compile_definitions(${SUNSHINE_DRIVER_TARGET}
         _ATL_NO_WIN_SUPPORT
         IDDCX_VERSION_MAJOR=1
         IDDCX_VERSION_MINOR=10
-        IDDCX_MINIMUM_VERSION_REQUIRED=4)
+        IDDCX_MINIMUM_VERSION_REQUIRED=4
+        WPP_MACRO_USE_KM_VERSION_FOR_UM=1
+        ENABLE_WPP_RECORDER=1)
 
 set_target_properties(${SUNSHINE_DRIVER_TARGET}
         PROPERTIES

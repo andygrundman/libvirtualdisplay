@@ -293,6 +293,30 @@ TEST(VirtualDisplayWindowsDriverContract, RegistersTraceLoggingProvider) {
   EXPECT_NE(source.find("\"GammaRampSet\""), std::string::npos);
 }
 
+TEST(VirtualDisplayWindowsDriverContract, EnablesWppInflightRecorder) {
+  const auto source = read_windows_driver_source();
+  const auto cmake = read_windows_driver_cmake();
+  const auto docs = read_support_diagnostics();
+
+  EXPECT_NE(source.find("#include \"driver_main.tmh\""), std::string::npos);
+  EXPECT_NE(source.find("WPP_CONTROL_GUIDS"), std::string::npos);
+  EXPECT_NE(source.find("WPP_INIT_TRACING(driver_object, registry_path);"), std::string::npos);
+  EXPECT_NE(source.find("WPP_CLEANUP(WdfDriverWdmGetDriverObject(driver));"), std::string::npos);
+  EXPECT_NE(source.find("TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, \"DriverEntry\");"), std::string::npos);
+  EXPECT_NE(source.find("TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DEVICE, \"MonitorArrived\");"), std::string::npos);
+  EXPECT_NE(source.find("TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DEVICE, \"MonitorDeparted\");"), std::string::npos);
+  EXPECT_NE(source.find("TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_SWAPCHAIN, \"SwapChainAssigned\");"), std::string::npos);
+  EXPECT_NE(source.find("TraceEvents(TRACE_LEVEL_WARNING, TRACE_SWAPCHAIN, \"RenderDeviceLost\");"), std::string::npos);
+
+  EXPECT_NE(cmake.find("TraceWPP.exe"), std::string::npos);
+  EXPECT_NE(cmake.find("ENABLE_WPP_RECORDER=1"), std::string::npos);
+  EXPECT_NE(cmake.find("WPP_MACRO_USE_KM_VERSION_FOR_UM=1"), std::string::npos);
+
+  EXPECT_NE(docs.find("WPP provider GUID: `{b0dcb744-045b-463b-9c2f-6a3c897d3458}`"), std::string::npos);
+  EXPECT_NE(docs.find("Inflight Trace Recorder"), std::string::npos);
+  EXPECT_NE(docs.find("!wdfkd.wdflogdump"), std::string::npos);
+}
+
 TEST(VirtualDisplayWindowsDriverContract, RecordsAdvancedColorCallbacksPerMonitor) {
   const auto source = read_windows_driver_source();
 

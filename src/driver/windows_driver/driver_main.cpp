@@ -43,6 +43,23 @@ TRACELOGGING_DEFINE_PROVIDER(
   (0x3d5d3bd9, 0x8500, 0x4523, 0x93, 0x34, 0x58, 0x3f, 0x4b, 0x5e, 0x6f, 0x80)
 );
 
+#define WPP_CONTROL_GUIDS \
+  WPP_DEFINE_CONTROL_GUID( \
+    SunshineVirtualDisplayDriverWpp, \
+    (b0dcb744, 045b, 463b, 9c2f, 6a3c897d3458), \
+    WPP_DEFINE_BIT(TRACE_DRIVER) \
+    WPP_DEFINE_BIT(TRACE_DEVICE) \
+    WPP_DEFINE_BIT(TRACE_SWAPCHAIN))
+
+#define WPP_LEVEL_FLAGS_LOGGER(level, flags) WPP_LEVEL_LOGGER(flags)
+#define WPP_LEVEL_FLAGS_ENABLED(level, flags) \
+  (WPP_LEVEL_ENABLED(flags) && WPP_CONTROL(WPP_BIT_##flags).Level >= level)
+
+// begin_wpp config
+// FUNC TraceEvents(LEVEL, FLAGS, MSG, ...);
+// end_wpp
+#include "driver_main.tmh"
+
 namespace {
   constexpr std::uint32_t kMaxPermanentDisplays = 4;
   constexpr std::uint32_t kMaxTemporaryDisplays = 8;
@@ -938,6 +955,7 @@ namespace {
         hr = create_device(adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN);
         if (SUCCEEDED(hr)) {
           TraceLoggingWrite(g_trace_provider, "RenderDeviceCreated", TraceLoggingString("Hardware", "DriverType"));
+          TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_SWAPCHAIN, "RenderDeviceCreated");
           return hr;
         }
       }
@@ -959,6 +977,7 @@ namespace {
     }
 
     TraceLoggingWrite(g_trace_provider, "RenderDeviceCreated", TraceLoggingString("WARP", "DriverType"));
+    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_SWAPCHAIN, "RenderDeviceCreated");
     return S_OK;
   }
 
@@ -1126,6 +1145,7 @@ namespace {
                 "RenderDeviceLost",
                 TraceLoggingUInt32(static_cast<std::uint32_t>(acquire_result), "HResult")
               );
+              TraceEvents(TRACE_LEVEL_WARNING, TRACE_SWAPCHAIN, "RenderDeviceLost");
               if (FAILED(reset_render_device(render_adapter_luid))) {
                 delete_swapchain();
                 return;
@@ -1403,6 +1423,7 @@ namespace {
         TraceLoggingBool(permanent, "Permanent"),
         TraceLoggingUInt32(arrival_out.OsTargetId, "OsTargetId")
       );
+      TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DEVICE, "MonitorArrived");
       return {
         vdd::BackendError::None,
         vdd::from_windows_luid(arrival_out.OsAdapterLuid),
@@ -1474,6 +1495,7 @@ namespace {
         monitors_.erase(monitor);
       }
       TraceLoggingWrite(g_trace_provider, "MonitorDeparted", TraceLoggingUInt64(display_id, "DisplayId"));
+      TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DEVICE, "MonitorDeparted");
       return vdd::BackendError::None;
     }
 
@@ -1536,6 +1558,7 @@ namespace {
         TraceLoggingInt32(args->RenderAdapterLuid.HighPart, "RenderAdapterHigh"),
         TraceLoggingUInt32(args->RenderAdapterLuid.LowPart, "RenderAdapterLow")
       );
+      TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_SWAPCHAIN, "SwapChainAssigned");
       return STATUS_SUCCESS;
     }
 
@@ -1574,6 +1597,7 @@ namespace {
       stop_swapchain_processor_without_delete(processor_to_stop);
       stop_swapchain_processors_without_delete(retired_processors_to_stop);
       TraceLoggingWrite(g_trace_provider, "SwapChainUnassigned", TraceLoggingUInt64(context->display_id, "DisplayId"));
+      TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_SWAPCHAIN, "SwapChainUnassigned");
       return STATUS_SUCCESS;
     }
 
@@ -1849,6 +1873,9 @@ EVT_IDD_CX_MONITOR_ASSIGN_SWAPCHAIN SunshineEvtAssignSwapChain;
 EVT_IDD_CX_MONITOR_UNASSIGN_SWAPCHAIN SunshineEvtUnassignSwapChain;
 
 extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING registry_path) {
+  WPP_INIT_TRACING(driver_object, registry_path);
+  TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, "DriverEntry");
+
   TraceLoggingRegister(g_trace_provider);
   TraceLoggingWrite(g_trace_provider, "DriverEntry");
 
@@ -1870,17 +1897,21 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING re
   );
   if (!NT_SUCCESS(status)) {
     TraceLoggingUnregister(g_trace_provider);
+    WPP_CLEANUP(driver_object);
   }
   return status;
 }
 
-void SunshineEvtDriverUnload(WDFDRIVER) {
+void SunshineEvtDriverUnload(WDFDRIVER driver) {
   TraceLoggingWrite(g_trace_provider, "DriverUnload");
   TraceLoggingUnregister(g_trace_provider);
+  TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, "DriverUnload");
+  WPP_CLEANUP(WdfDriverWdmGetDriverObject(driver));
 }
 
 NTSTATUS SunshineEvtDeviceAdd(WDFDRIVER driver, PWDFDEVICE_INIT device_init) {
   TraceLoggingWrite(g_trace_provider, "DeviceAdd");
+  TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DEVICE, "DeviceAdd");
 
   WDF_PNPPOWER_EVENT_CALLBACKS pnp_callbacks;
   WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&pnp_callbacks);
@@ -1948,6 +1979,7 @@ NTSTATUS SunshineEvtDeviceAdd(WDFDRIVER driver, PWDFDEVICE_INIT device_init) {
   }
 
   TraceLoggingWrite(g_trace_provider, "DeviceAddSucceeded");
+  TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DEVICE, "DeviceAddSucceeded");
   return STATUS_SUCCESS;
 }
 
@@ -2141,6 +2173,7 @@ void SunshineEvtIddCxDeviceIoControl(
     TraceLoggingUInt64(result.bytes_returned, "BytesReturned"),
     TraceLoggingInt32(completion_status, "Status")
   );
+  TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, "DeviceIoControl");
 
   WdfRequestCompleteWithInformation(
     request,
