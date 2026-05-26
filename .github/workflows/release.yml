@@ -53,16 +53,26 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($version)) {
             $version = '${{ github.ref_name }}'
           }
+          if ($version -notmatch '^v\d+\.\d+\.\d+([.-][0-9A-Za-z][0-9A-Za-z.-]*)?$') {
+            throw "Release version must be a v-prefixed semantic version tag: $version"
+          }
+          git fetch --force --tags origin $version
+          $commit = git rev-list -n 1 $version --
+          if ([string]::IsNullOrWhiteSpace($commit)) {
+            throw "Release tag does not exist: $version"
+          }
+          git checkout --detach $version
           $packageVersion = $version.TrimStart('v')
           "version=$version" >> $env:GITHUB_OUTPUT
           "package_version=$packageVersion" >> $env:GITHUB_OUTPUT
+          "commit=$commit" >> $env:GITHUB_OUTPUT
 
       - name: Validate release evidence
         shell: pwsh
         env:
           RELEASE_EVIDENCE_JSON: ${{ github.event.inputs.release_evidence_json || vars.LIBVIRTUALDISPLAY_RELEASE_EVIDENCE_JSON }}
         run: |
-          ./tools/validate_release_evidence.ps1 -EvidenceJson $env:RELEASE_EVIDENCE_JSON
+          ./tools/validate_release_evidence.ps1 -EvidenceJson $env:RELEASE_EVIDENCE_JSON -ExpectedTag '${{ steps.version.outputs.version }}' -ExpectedCommit '${{ steps.version.outputs.commit }}'
 
       - name: Verify WDK paths
         shell: pwsh
@@ -101,6 +111,13 @@ jobs:
 
       - name: Build release package
         run: cmake --build build-driver --target package --parallel
+
+      - name: Validate release package evidence
+        shell: pwsh
+        env:
+          RELEASE_EVIDENCE_JSON: ${{ github.event.inputs.release_evidence_json || vars.LIBVIRTUALDISPLAY_RELEASE_EVIDENCE_JSON }}
+        run: |
+          ./tools/validate_release_evidence.ps1 -EvidenceJson $env:RELEASE_EVIDENCE_JSON -ExpectedTag '${{ steps.version.outputs.version }}' -ExpectedCommit '${{ steps.version.outputs.commit }}' -PackagePath 'build-driver/libvirtualdisplay-*-windows-x64.zip'
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65

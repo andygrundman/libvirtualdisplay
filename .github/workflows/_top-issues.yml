@@ -20,7 +20,7 @@ concurrency:
 jobs:
   top-issues:
     name: Top issues
-    uses: LizardByte/.github/.github/workflows/__call-top-issues.yml@master
+    uses: LizardByte/.github/.github/workflows/__call-top-issues.yml@e870dffe4106859863743b27d4cd9301a3359b7f
     if: github.repository_owner == 'LizardByte'
     permissions:
       contents: read

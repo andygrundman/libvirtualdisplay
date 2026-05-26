@@ -103,6 +103,34 @@ namespace {
     buffer << file.rdbuf();
     return buffer.str();
   }
+
+  std::string read_top_issues_workflow() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
+                      ".github/workflows/_top-issues.yml";
+    std::ifstream file {path, std::ios::binary};
+    if (!file) {
+      ADD_FAILURE() << "Failed to open " << path.string();
+      return {};
+    }
+
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+  }
+
+  std::string read_tests_cmake() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
+                      "tests/CMakeLists.txt";
+    std::ifstream file {path, std::ios::binary};
+    if (!file) {
+      ADD_FAILURE() << "Failed to open " << path.string();
+      return {};
+    }
+
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+  }
 }  // namespace
 
 TEST(VirtualDisplayWindowsDriverContract, DeletesMonitorObjectWhenArrivalFails) {
@@ -422,15 +450,38 @@ TEST(VirtualDisplayWindowsDriverContract, ReleaseWorkflowRequiresCertificationEv
   const auto validator = read_release_evidence_validator();
 
   EXPECT_NE(workflow.find("release_evidence_json"), std::string::npos);
+  EXPECT_NE(workflow.find("Release version must be a v-prefixed semantic version tag"), std::string::npos);
+  EXPECT_NE(workflow.find("git checkout --detach $version"), std::string::npos);
   EXPECT_NE(workflow.find("Validate release evidence"), std::string::npos);
+  EXPECT_NE(workflow.find("Validate release package evidence"), std::string::npos);
   EXPECT_NE(workflow.find("tools/validate_release_evidence.ps1"), std::string::npos);
+  EXPECT_NE(workflow.find("-ExpectedTag '${{ steps.version.outputs.version }}'"), std::string::npos);
+  EXPECT_NE(workflow.find("-ExpectedCommit '${{ steps.version.outputs.commit }}'"), std::string::npos);
+  EXPECT_NE(workflow.find("-PackagePath 'build-driver/libvirtualdisplay-*-windows-x64.zip'"), std::string::npos);
   EXPECT_NE(validator.find("Production release signing channel must be HLK/WHQL."), std::string::npos);
+  EXPECT_NE(validator.find("Release evidence tag"), std::string::npos);
+  EXPECT_NE(validator.find("Release evidence commit"), std::string::npos);
+  EXPECT_NE(validator.find("package_sha256"), std::string::npos);
+  EXPECT_NE(validator.find("Get-FileHash"), std::string::npos);
   EXPECT_NE(validator.find("Indirect Display Mode Change"), std::string::npos);
   EXPECT_NE(validator.find("Indirect Display Render Adapter TDR"), std::string::npos);
   EXPECT_NE(validator.find("hvci_readiness_passed"), std::string::npos);
   EXPECT_NE(validator.find("memory_integrity_functional_passed"), std::string::npos);
   EXPECT_NE(validator.find("permanent_identity_retention_passed"), std::string::npos);
   EXPECT_NE(validator.find("temporary_cleanup_passed"), std::string::npos);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, ThirdPartyWorkflowInputsUseImmutableRefs) {
+  const auto top_issues = read_top_issues_workflow();
+  const auto tests_cmake = read_tests_cmake();
+
+  EXPECT_NE(
+    top_issues.find("LizardByte/.github/.github/workflows/__call-top-issues.yml@e870dffe4106859863743b27d4cd9301a3359b7f"),
+    std::string::npos
+  );
+  EXPECT_EQ(top_issues.find("__call-top-issues.yml@master"), std::string::npos);
+  EXPECT_NE(tests_cmake.find("GIT_TAG 52eb8108c5bdec04579160ae17225d66034bd723"), std::string::npos);
+  EXPECT_EQ(tests_cmake.find("GIT_TAG main"), std::string::npos);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, AbandonsInvalidatedSwapchainHandlesDuringTeardown) {

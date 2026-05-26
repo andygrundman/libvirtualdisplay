@@ -139,6 +139,8 @@ TEST(VirtualDisplayCliContract, DriverInstallSelfElevatesAndInstallsRootDevice) 
 
   expect_contains(source, "ShellExecuteExW(&execute)");
   expect_contains(source, "execute.lpVerb = L\"runas\"");
+  expect_contains(source, "quoted.append(backslashes * 2 + 1, L'\\\\')");
+  expect_contains(source, "quoted.append(backslashes * 2, L'\\\\')");
   expect_contains(source, "Root\\\\SunshineVirtualDisplay");
   expect_contains(source, "UpdateDriverForPlugAndPlayDevicesW");
   expect_contains(source, "driver_installed=1");

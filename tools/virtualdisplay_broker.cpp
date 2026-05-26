@@ -739,12 +739,25 @@ namespace {
 
   std::wstring quote_argument(const std::wstring &value) {
     std::wstring quoted {L"\""};
+    std::size_t backslashes = 0;
     for (wchar_t ch: value) {
       if (ch == L'"') {
-        quoted += L'\\';
+        quoted.append(backslashes * 2 + 1, L'\\');
+        quoted += ch;
+        backslashes = 0;
+        continue;
+      }
+      if (ch == L'\\') {
+        ++backslashes;
+        continue;
+      }
+      if (backslashes != 0) {
+        quoted.append(backslashes, L'\\');
+        backslashes = 0;
       }
       quoted += ch;
     }
+    quoted.append(backslashes * 2, L'\\');
     quoted += L'"';
     return quoted;
   }

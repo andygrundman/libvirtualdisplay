@@ -1,6 +1,9 @@
 param(
   [string] $EvidenceJson,
-  [string] $EvidencePath
+  [string] $EvidencePath,
+  [string] $ExpectedTag,
+  [string] $ExpectedCommit,
+  [string] $PackagePath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,8 +40,14 @@ function Require-Pass($Object, [string] $Name) {
 
 $evidence = Read-EvidenceText | ConvertFrom-Json
 
-Require-Value $evidence 'commit_sha' | Out-Null
-Require-Value $evidence 'tag' | Out-Null
+$commitSha = Require-Value $evidence 'commit_sha'
+$tag = Require-Value $evidence 'tag'
+if (-not [string]::IsNullOrWhiteSpace($ExpectedTag) -and $tag -ne $ExpectedTag) {
+  throw "Release evidence tag '$tag' does not match expected tag '$ExpectedTag'."
+}
+if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and $commitSha.ToLowerInvariant() -ne $ExpectedCommit.ToLowerInvariant()) {
+  throw "Release evidence commit '$commitSha' does not match expected commit '$ExpectedCommit'."
+}
 Require-Value $evidence 'windows_sdk_version' | Out-Null
 Require-Value $evidence 'wdk_version' | Out-Null
 Require-Value $evidence 'driver_package' | Out-Null
@@ -77,5 +86,17 @@ Require-Pass $evidence 'fresh_install_passed'
 Require-Pass $evidence 'upgrade_install_passed'
 Require-Pass $evidence 'permanent_identity_retention_passed'
 Require-Pass $evidence 'temporary_cleanup_passed'
+
+if (-not [string]::IsNullOrWhiteSpace($PackagePath)) {
+  $packages = @(Get-ChildItem -Path $PackagePath -File)
+  if ($packages.Count -ne 1) {
+    throw "Expected exactly one release package for '$PackagePath', found $($packages.Count)."
+  }
+  $expectedPackageHash = Require-Value $evidence 'package_sha256'
+  $actualPackageHash = (Get-FileHash -LiteralPath $packages[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($actualPackageHash -ne $expectedPackageHash.ToLowerInvariant()) {
+    throw "Release package SHA256 '$actualPackageHash' does not match evidence '$expectedPackageHash'."
+  }
+}
 
 Write-Host 'Release evidence gate passed.'

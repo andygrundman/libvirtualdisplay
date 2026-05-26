@@ -264,6 +264,8 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "kHelperProcessTimeoutMs");
   expect_contains(source, "WaitForMultipleObjects");
   expect_contains(source, "TerminateProcess(process.hProcess");
+  expect_contains(source, "quoted.append(backslashes * 2 + 1, L'\\\\')");
+  expect_contains(source, "quoted.append(backslashes * 2, L'\\\\')");
   expect_contains(source, "kPipeClientReadTimeoutMs");
   expect_contains(source, "PeekNamedPipe");
   expect_contains(source, "load_persisted_display_manifest");
