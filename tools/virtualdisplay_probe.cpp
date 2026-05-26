@@ -25,6 +25,21 @@
 namespace vdd = virtual_display::driver;
 
 namespace {
+#ifdef _WIN32
+  constexpr COLORPROFILESUBTYPE kStandardDisplayColorMode =
+  #ifdef CPST_STANDARD_DISPLAY_COLOR_MODE
+    CPST_STANDARD_DISPLAY_COLOR_MODE;
+  #else
+    static_cast<COLORPROFILESUBTYPE>(7);
+  #endif
+  constexpr COLORPROFILESUBTYPE kExtendedDisplayColorMode =
+  #ifdef CPST_EXTENDED_DISPLAY_COLOR_MODE
+    CPST_EXTENDED_DISPLAY_COLOR_MODE;
+  #else
+    static_cast<COLORPROFILESUBTYPE>(8);
+  #endif
+#endif
+
   void print_usage() {
     std::cout
       << "virtualdisplay_probe commands:\n"
@@ -547,6 +562,11 @@ namespace {
     requested_modes.push_back(target_mode);
 
     if (virtual_mode_aware) {
+#if defined(__MINGW32__)
+      requested_target.sourceInfo.sourceModeInfoIdx = source_mode_index;
+      requested_target.targetInfo.targetModeInfoIdx = target_mode_index;
+      requested_target.targetInfo.desktopModeInfoIdx = DISPLAYCONFIG_PATH_DESKTOP_IMAGE_IDX_INVALID;
+#else
       const auto desktop_mode_index = static_cast<UINT32>(requested_modes.size());
       DISPLAYCONFIG_MODE_INFO desktop_mode {};
       desktop_mode.infoType = DISPLAYCONFIG_MODE_INFO_TYPE_DESKTOP_IMAGE;
@@ -568,6 +588,7 @@ namespace {
       requested_target.sourceInfo.sourceModeInfoIdx = source_mode_index;
       requested_target.targetInfo.targetModeInfoIdx = target_mode_index;
       requested_target.targetInfo.desktopModeInfoIdx = desktop_mode_index;
+#endif
     } else {
       requested_target.sourceInfo.modeInfoIdx = source_mode_index;
       requested_target.targetInfo.modeInfoIdx = target_mode_index;
@@ -1004,7 +1025,85 @@ namespace {
     LPWSTR value_ {};
   };
 
+  class LocalProfileList {
+  public:
+    ~LocalProfileList() {
+      if (value_) {
+        LocalFree(value_);
+      }
+    }
+
+    [[nodiscard]] LPWSTR **put() {
+      if (value_) {
+        LocalFree(value_);
+        value_ = nullptr;
+      }
+      return &value_;
+    }
+
+    [[nodiscard]] LPWSTR *get() const {
+      return value_;
+    }
+
+  private:
+    LPWSTR *value_ {};
+  };
+
+  using ColorProfileGetDisplayDefaultFn = HRESULT (WINAPI *)(
+    WCS_PROFILE_MANAGEMENT_SCOPE,
+    LUID,
+    UINT32,
+    COLORPROFILETYPE,
+    COLORPROFILESUBTYPE,
+    LPWSTR *
+  );
+  using ColorProfileGetDisplayListFn = HRESULT (WINAPI *)(
+    WCS_PROFILE_MANAGEMENT_SCOPE,
+    LUID,
+    UINT32,
+    LPWSTR **,
+    PDWORD
+  );
+  using ColorProfileGetDisplayUserScopeFn = HRESULT (WINAPI *)(
+    LUID,
+    UINT32,
+    WCS_PROFILE_MANAGEMENT_SCOPE *
+  );
+
+  struct ColorProfileApi {
+    ColorProfileGetDisplayDefaultFn get_default {};
+    ColorProfileGetDisplayListFn get_list {};
+    ColorProfileGetDisplayUserScopeFn get_user_scope {};
+  };
+
+  const ColorProfileApi *load_color_profile_api() {
+    static const ColorProfileApi api = []() {
+      ColorProfileApi loaded {};
+      const HMODULE module = LoadLibraryW(L"mscms.dll");
+      if (!module) {
+        return loaded;
+      }
+
+      loaded.get_default = reinterpret_cast<ColorProfileGetDisplayDefaultFn>(
+        GetProcAddress(module, "ColorProfileGetDisplayDefault")
+      );
+      loaded.get_list = reinterpret_cast<ColorProfileGetDisplayListFn>(
+        GetProcAddress(module, "ColorProfileGetDisplayList")
+      );
+      loaded.get_user_scope = reinterpret_cast<ColorProfileGetDisplayUserScopeFn>(
+        GetProcAddress(module, "ColorProfileGetDisplayUserScope")
+      );
+      return loaded;
+    }();
+
+    if (!api.get_default || !api.get_list || !api.get_user_scope) {
+      return nullptr;
+    }
+    return &api;
+  }
+
   void print_default_color_profile(
+    const ColorProfileApi &api,
     const WCS_PROFILE_MANAGEMENT_SCOPE scope,
     const LUID &adapter_luid,
     const UINT32 source_id,
@@ -1012,7 +1111,7 @@ namespace {
     const char *label
   ) {
     LocalWideString profile_name;
-    const HRESULT result = ColorProfileGetDisplayDefault(
+    const HRESULT result = api.get_default(
       scope,
       adapter_luid,
       source_id,
@@ -1029,7 +1128,41 @@ namespace {
     std::wcout << label << L"_profile=\"" << profile_name.get() << L"\"\n";
   }
 
+  void print_color_profile_list(
+    const ColorProfileApi &api,
+    const WCS_PROFILE_MANAGEMENT_SCOPE scope,
+    const LUID &adapter_luid,
+    const UINT32 source_id
+  ) {
+    LocalProfileList profile_list;
+    DWORD profile_count = 0;
+    const HRESULT result = api.get_list(
+      scope,
+      adapter_luid,
+      source_id,
+      profile_list.put(),
+      &profile_count
+    );
+    if (FAILED(result)) {
+      std::cout << "associated_profiles_hresult=0x" << std::hex
+                << static_cast<unsigned long>(result) << std::dec << '\n';
+      return;
+    }
+
+    std::cout << "associated_profile_count=" << profile_count << '\n';
+    for (DWORD index = 0; index < profile_count; ++index) {
+      const wchar_t *profile_name = profile_list.get()[index] ? profile_list.get()[index] : L"";
+      std::wcout << L"associated_profile[" << index << L"]=\"" << profile_name << L"\"\n";
+    }
+  }
+
   int query_color_profiles() {
+    const ColorProfileApi *color_api = load_color_profile_api();
+    if (!color_api) {
+      std::cerr << "color profile display APIs are unavailable\n";
+      return 1;
+    }
+
     auto display_config = query_display_config(QDC_ONLY_ACTIVE_PATHS);
     if (!display_config) {
       std::cerr << "color profile query requires active DisplayConfig paths\n";
@@ -1043,7 +1176,7 @@ namespace {
       }
 
       WCS_PROFILE_MANAGEMENT_SCOPE scope {};
-      const HRESULT scope_result = ColorProfileGetDisplayUserScope(
+      const HRESULT scope_result = color_api->get_user_scope(
         path.targetInfo.adapterId,
         path.sourceInfo.id,
         &scope
@@ -1062,8 +1195,9 @@ namespace {
       }
 
       std::cout << " scope=" << static_cast<unsigned int>(scope) << '\n';
-      print_default_color_profile(scope, path.targetInfo.adapterId, path.sourceInfo.id, CPST_STANDARD_DISPLAY_COLOR_MODE, "standard");
-      print_default_color_profile(scope, path.targetInfo.adapterId, path.sourceInfo.id, CPST_EXTENDED_DISPLAY_COLOR_MODE, "extended");
+      print_color_profile_list(*color_api, scope, path.targetInfo.adapterId, path.sourceInfo.id);
+      print_default_color_profile(*color_api, scope, path.targetInfo.adapterId, path.sourceInfo.id, kStandardDisplayColorMode, "standard");
+      print_default_color_profile(*color_api, scope, path.targetInfo.adapterId, path.sourceInfo.id, kExtendedDisplayColorMode, "extended");
       ++queried;
     }
 

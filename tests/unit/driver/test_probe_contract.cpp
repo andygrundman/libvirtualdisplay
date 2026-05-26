@@ -82,6 +82,7 @@ TEST(VirtualDisplayProbeContract, DiagnoseRunsBeforeControlDeviceOpen) {
   expect_contains(source, "if (command == \"--query-color-profiles\")");
   expect_contains(source, "apply_extended_topology_result()");
   expect_contains(source, "ColorProfileGetDisplayUserScope");
+  expect_contains(source, "ColorProfileGetDisplayList");
   expect_contains(source, "ColorProfileGetDisplayDefault");
   expect_not_contains(source, "AssociateColorProfileWithDevice");
   expect_not_contains(source, "SetICMProfile");
@@ -132,6 +133,7 @@ TEST(VirtualDisplayProbeContract, HdrSelfTestVerifiesWindowsAdvancedColorState) 
   expect_contains(source, "DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO_2");
   expect_contains(source, "DISPLAYCONFIG_DEVICE_INFO_SET_HDR_STATE");
   expect_contains(source, "ColorProfileGetDisplayUserScope");
+  expect_contains(source, "ColorProfileGetDisplayList");
   expect_contains(source, "ColorProfileGetDisplayDefault");
   expect_contains(cmake, "target_link_libraries(virtualdisplay_probe PRIVATE libvirtualdisplay::driver mscms)");
   expect_contains(source, "const auto after = wait_for_advanced_color(");
