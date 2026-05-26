@@ -57,6 +57,21 @@ namespace {
     std::memcpy(profile.display_name, "Desk Display", 13);
     return manifest;
   }
+
+  std::string read_readme() {
+    const std::string readme_path =
+      std::string {LIBVIRTUALDISPLAY_SOURCE_DIR} +
+      "/README.md";
+    std::ifstream readme_file {readme_path};
+    if (!readme_file.is_open()) {
+      ADD_FAILURE() << readme_path;
+      return {};
+    }
+
+    std::ostringstream buffer;
+    buffer << readme_file.rdbuf();
+    return buffer.str();
+  }
 }  // namespace
 
 TEST(VirtualDisplayDriverControlProtocol, ComputesBufferedUnknownDeviceIoctlCodes) {
@@ -80,6 +95,19 @@ TEST(VirtualDisplayDriverControlProtocol, ProtocolVersionUsesDedicatedNamespace)
   EXPECT_EQ(version.major, vdd::kProtocolVersionMajor);
   EXPECT_EQ(version.minor, vdd::kProtocolVersionMinor);
   EXPECT_EQ(version.patch, vdd::kProtocolVersionPatch);
+}
+
+TEST(VirtualDisplayDriverControlProtocol, ReadmeDocumentsCurrentProtocolVersion) {
+  const auto readme = read_readme();
+  const std::string expected_version =
+    std::to_string(vdd::kProtocolVersionMajor) + "." +
+    std::to_string(vdd::kProtocolVersionMinor) + "." +
+    std::to_string(vdd::kProtocolVersionPatch);
+
+  EXPECT_NE(
+    readme.find("The current protocol version is `" + expected_version + "`."),
+    std::string::npos
+  );
 }
 
 TEST(VirtualDisplayDriverControlProtocol, WindowsGuidAdapterPreservesProtocolGuid) {
