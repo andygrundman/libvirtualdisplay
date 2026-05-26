@@ -1,8 +1,10 @@
 #include "virtual_display/driver/control_client.h"
+#include "virtual_display/driver/display_identity.h"
 #include "virtual_display/driver/lease_store.h"
 #include "virtual_display/driver/windows_control_client.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <cstdio>
@@ -80,6 +82,18 @@ namespace {
 
   bool parse_u32(const std::string_view value, std::uint32_t &parsed) {
     std::uint32_t output {};
+    const auto *begin = value.data();
+    const auto *end = value.data() + value.size();
+    const auto result = std::from_chars(begin, end, output);
+    if (result.ec != std::errc {} || result.ptr != end) {
+      return false;
+    }
+    parsed = output;
+    return true;
+  }
+
+  bool parse_i32(const std::string_view value, std::int32_t &parsed) {
+    std::int32_t output {};
     const auto *begin = value.data();
     const auto *end = value.data() + value.size();
     const auto result = std::from_chars(begin, end, output);
@@ -194,6 +208,38 @@ namespace {
     return output.str();
   }
 
+  std::string format_display_manifest(const vdd::DisplayManifest &manifest) {
+    std::ostringstream output;
+    output
+      << "manifest_version=" << manifest.version << '\n'
+      << "manifest_profiles=" << manifest.profile_count << '\n'
+      << "manifest_max_profiles=" << manifest.max_profile_count << '\n';
+
+    for (std::uint32_t index = 0; index < manifest.profile_count && index < vdd::kMaxPermanentDisplayProfiles; ++index) {
+      const auto &profile = manifest.profiles[index];
+      const auto &mode = profile.allowed_modes[profile.native_mode_index];
+      output
+        << "profile." << index << ".connector_index=" << profile.connector_index << '\n'
+        << "profile." << index << ".display_id=" << profile.display_id << '\n'
+        << "profile." << index << ".container_id=" << guid_string(profile.container_id) << '\n'
+        << "profile." << index << ".product_code=" << profile.product_code << '\n'
+        << "profile." << index << ".serial_number=" << profile.serial_number << '\n'
+        << "profile." << index << ".mode=" << mode.width << 'x' << mode.height << '@'
+        << (mode.refresh_rate_millihz / 1000.0) << "Hz\n"
+        << "profile." << index << ".physical_size_mm=" << profile.physical_width_mm << 'x'
+        << profile.physical_height_mm << '\n'
+        << "profile." << index << ".hdr_supported="
+        << ((profile.flags & vdd::kDisplayManifestProfileFlagHdrSupported) ? 1 : 0) << '\n'
+        << "profile." << index << ".retain_identity="
+        << ((profile.flags & vdd::kDisplayManifestProfileFlagRetainIdentity) ? 1 : 0) << '\n'
+        << "profile." << index << ".layout_policy=" << profile.layout_policy << '\n'
+        << "profile." << index << ".position=" << profile.position_x << ',' << profile.position_y << '\n'
+        << "profile." << index << ".name=" << display_name(profile.display_name) << '\n';
+    }
+
+    return output.str();
+  }
+
   std::optional<vdd::PermanentDisplayCountRequest> parse_permanent_set_command(const std::string_view command) {
     constexpr std::string_view prefix {"permanent-set "};
     if (!command.starts_with(prefix)) {
@@ -228,6 +274,81 @@ namespace {
     }
     set_display_name(request.display_name, payload.substr(name_offset));
     return request;
+  }
+
+  std::optional<vdd::DisplayManifestProfile> parse_manifest_profile_set_command(const std::string_view command) {
+    constexpr std::string_view prefix {"manifest-profile-set "};
+    if (!command.starts_with(prefix)) {
+      return std::nullopt;
+    }
+
+    const auto payload = command.substr(prefix.size());
+    const auto fields = split_words(payload, 10);
+    if (fields.size() != 10) {
+      return std::nullopt;
+    }
+
+    std::size_t name_offset = 0;
+    for (const auto field: fields) {
+      name_offset = static_cast<std::size_t>((field.data() + field.size()) - payload.data());
+    }
+    while (name_offset < payload.size() && payload[name_offset] == ' ') {
+      ++name_offset;
+    }
+    if (name_offset >= payload.size()) {
+      return std::nullopt;
+    }
+
+    std::uint32_t slot {};
+    std::uint32_t width {};
+    std::uint32_t height {};
+    std::uint32_t physical_width_mm {};
+    std::uint32_t physical_height_mm {};
+    std::uint32_t refresh_rate_millihz {};
+    std::uint32_t hdr_supported {};
+    std::uint32_t layout_policy {};
+    std::int32_t position_x {};
+    std::int32_t position_y {};
+    if (!parse_u32(fields[0], slot) ||
+        !parse_u32(fields[1], width) ||
+        !parse_u32(fields[2], height) ||
+        !parse_u32(fields[3], physical_width_mm) ||
+        !parse_u32(fields[4], physical_height_mm) ||
+        !parse_u32(fields[5], refresh_rate_millihz) ||
+        !parse_u32(fields[6], hdr_supported) ||
+        !parse_u32(fields[7], layout_policy) ||
+        !parse_i32(fields[8], position_x) ||
+        !parse_i32(fields[9], position_y)) {
+      return std::nullopt;
+    }
+
+    vdd::DisplayManifestProfile profile {};
+    profile.flags = vdd::kDisplayManifestProfileFlagRetainIdentity |
+      vdd::kDisplayManifestProfileFlagPermanentIdentity;
+    if (hdr_supported != 0) {
+      profile.flags |= vdd::kDisplayManifestProfileFlagHdrSupported;
+    }
+    profile.connector_index = slot;
+    profile.display_id = vdd::permanent_display_id(slot);
+    profile.container_id = vdd::container_guid_from_display_id(profile.display_id);
+    std::copy(
+      std::begin(vdd::kSunshineDriverManufacturerId),
+      std::end(vdd::kSunshineDriverManufacturerId),
+      std::begin(profile.manufacturer_id)
+    );
+    profile.product_code = vdd::permanent_product_code(slot);
+    profile.serial_number = vdd::serial_number_from_display_id(profile.display_id);
+    profile.physical_width_mm = physical_width_mm;
+    profile.physical_height_mm = physical_height_mm;
+    profile.native_mode_index = 0;
+    profile.allowed_mode_count = 1;
+    profile.layout_policy = layout_policy;
+    profile.position_x = position_x;
+    profile.position_y = position_y;
+    profile.orientation = vdd::kDisplayManifestOrientationDefault;
+    profile.allowed_modes[0] = vdd::DisplayMode {width, height, refresh_rate_millihz};
+    set_display_name(profile.display_name, payload.substr(name_offset));
+    return profile;
   }
 
 #ifdef _WIN32
@@ -342,6 +463,31 @@ namespace {
     attributes.lpSecurityDescriptor = descriptor;
     attributes.bInheritHandle = FALSE;
     return std::optional<PipeSecurity> {std::in_place, attributes, descriptor};
+  }
+
+  bool token_is_member_of_well_known_sid(HANDLE token, const WELL_KNOWN_SID_TYPE sid_type) {
+    std::array<BYTE, SECURITY_MAX_SID_SIZE> sid_buffer {};
+    DWORD sid_size = static_cast<DWORD>(sid_buffer.size());
+    if (!CreateWellKnownSid(sid_type, nullptr, sid_buffer.data(), &sid_size)) {
+      return false;
+    }
+
+    BOOL member = FALSE;
+    return CheckTokenMembership(token, sid_buffer.data(), &member) && member;
+  }
+
+  bool authorize_pipe_client(HANDLE pipe) {
+    if (!ImpersonateNamedPipeClient(pipe)) {
+      return false;
+    }
+
+    ScopedHandle token;
+    const bool opened_token = OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, token.put());
+    const bool authorized = opened_token &&
+      (token_is_member_of_well_known_sid(token.get(), WinLocalSystemSid) ||
+       token_is_member_of_well_known_sid(token.get(), WinBuiltinAdministratorsSid));
+    RevertToSelf();
+    return authorized;
   }
 
   class RegistryKey {
@@ -748,9 +894,7 @@ namespace {
       if (!result.ok()) {
         return "error " + format_status(result) + "\n";
       }
-      return "ok version=" + std::to_string(result.value.version) +
-             " profiles=" + std::to_string(result.value.profile_count) +
-             " max_profiles=" + std::to_string(result.value.max_profile_count) + "\n";
+      return "ok\n" + format_display_manifest(result.value);
     }
 
     if (command == "permanent-query") {
@@ -759,6 +903,42 @@ namespace {
         return "error " + format_status(result) + "\n";
       }
       return "ok\n" + format_permanent_state(result.value);
+    }
+
+    if (command.starts_with("manifest-profile-set ")) {
+      const auto profile = parse_manifest_profile_set_command(command);
+      if (!profile) {
+        return "error invalid_manifest_profile_set\n";
+      }
+
+      const auto current = client.query_permanent_display_count();
+      if (!current.ok()) {
+        return "error " + format_status(current) + "\n";
+      }
+      if (profile->connector_index >= current.value.max_display_count) {
+        return "error invalid_connector_index\n";
+      }
+
+      auto manifest = client.query_display_manifest();
+      if (!manifest.ok()) {
+        return "error " + format_status(manifest) + "\n";
+      }
+      if (profile->connector_index > manifest.value.profile_count) {
+        return "error invalid_connector_index\n";
+      }
+      manifest.value.max_profile_count = current.value.max_display_count;
+      manifest.value.profile_count = (std::max)(manifest.value.profile_count, profile->connector_index + 1);
+      manifest.value.profiles[profile->connector_index] = *profile;
+
+      const auto applied = client.set_display_manifest(manifest.value);
+      if (!applied.ok()) {
+        return "error " + format_status(applied) + "\n";
+      }
+      if (!save_display_manifest(applied.value, current.value.max_display_count)) {
+        report_event_log(EVENTLOG_ERROR_TYPE, kEventServiceFailed, L"Persist display manifest profile failed");
+        return "error persistence_failed\n";
+      }
+      return "ok\n" + format_display_manifest(applied.value);
     }
 
     if (command.starts_with("permanent-set ")) {
@@ -926,7 +1106,14 @@ namespace {
 
       const BOOL connected = ConnectNamedPipe(pipe, nullptr) ? TRUE : GetLastError() == ERROR_PIPE_CONNECTED;
       if (connected && !g_context.stop_requested.load(std::memory_order_acquire)) {
+      if (authorize_pipe_client(pipe)) {
         serve_pipe_client(pipe, client);
+      } else {
+        const char response[] = "error access_denied\n";
+        DWORD bytes_written = 0;
+        (void) WriteFile(pipe, response, sizeof(response) - 1, &bytes_written, nullptr);
+        FlushFileBuffers(pipe);
+      }
       }
 
       DisconnectNamedPipe(pipe);

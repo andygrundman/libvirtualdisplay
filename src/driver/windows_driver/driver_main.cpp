@@ -92,8 +92,8 @@ namespace {
     std::uint32_t width {1920};
     std::uint32_t height {1080};
     // Use standard 1080p CVT/CTA-ish totals for fallback paths. Requested
-    // per-monitor modes are normalized to active-only timings below to match
-    // the known-good SudoVDA IddCx mode contract for high refresh displays.
+    // per-monitor modes are normalized to active-only timings below for
+    // high-refresh target-mode reporting.
     std::uint32_t total_width {2200};
     std::uint32_t total_height {1125};
     std::uint64_t pixel_rate {148'500'000ull};
@@ -537,6 +537,15 @@ namespace {
     return NT_SUCCESS(status) ? vdd::BackendError::None : vdd::BackendError::Failed;
   }
 
+  bool has_hdr_iddcx_ddi() {
+    return IDD_IS_FIELD_AVAILABLE(IDD_CX_CLIENT_CONFIG, EvtIddCxAdapterQueryTargetInfo);
+  }
+
+  bool runtime_hdr_supported() {
+    return has_hdr_iddcx_ddi() &&
+           vdd::supports_windows_hdr_toggle(vdd::hdr_output_capabilities());
+  }
+
   vdd::DisplayDescriptor make_permanent_descriptor(
     const std::uint32_t index,
     const vdd::PermanentDisplayCountRequest &settings
@@ -553,7 +562,7 @@ namespace {
     options.physical_height_mm = settings.physical_height_mm;
     options.refresh_rate_millihz = settings.refresh_rate_millihz;
     options.monitor_name = vdd::trim_display_name(settings.display_name);
-    options.hdr_supported = true;
+    options.hdr_supported = runtime_hdr_supported();
 
     vdd::DisplayDescriptor descriptor {};
     descriptor.display_id = display_id;
@@ -585,7 +594,9 @@ namespace {
     options.physical_height_mm = profile.physical_height_mm;
     options.refresh_rate_millihz = mode.refresh_rate_millihz;
     options.monitor_name = vdd::trim_display_name(profile.display_name);
-    options.hdr_supported = (profile.flags & vdd::kDisplayManifestProfileFlagHdrSupported) != 0;
+    options.hdr_supported =
+      (profile.flags & vdd::kDisplayManifestProfileFlagHdrSupported) != 0 &&
+      runtime_hdr_supported();
 
     vdd::DisplayDescriptor descriptor {};
     descriptor.display_id = profile.display_id;
@@ -649,10 +660,6 @@ namespace {
     return edid_shape;
   }
 
-  bool has_hdr_iddcx_ddi() {
-    return IDD_IS_FIELD_AVAILABLE(IDD_CX_CLIENT_CONFIG, EvtIddCxAdapterQueryTargetInfo);
-  }
-
   IDDCX_BITS_PER_COMPONENT supported_hdr_bits_per_component() {
     const auto capabilities = vdd::hdr_output_capabilities();
     UINT bits = 0;
@@ -673,6 +680,27 @@ namespace {
     bits.YCbCr444 = IDDCX_BITS_PER_COMPONENT_NONE;
     bits.YCbCr422 = IDDCX_BITS_PER_COMPONENT_NONE;
     bits.YCbCr420 = IDDCX_BITS_PER_COMPONENT_NONE;
+  }
+
+  vdd::DisplayDescriptor descriptor_with_runtime_hdr_policy(const vdd::DisplayDescriptor &descriptor) {
+    if (runtime_hdr_supported() || !vdd::has_hdr_static_metadata(descriptor.edid)) {
+      return descriptor;
+    }
+
+    vdd::EdidOptions options {};
+    options.manufacturer_id = vdd::read_manufacturer_id(descriptor.edid);
+    options.product_code = vdd::read_product_code(descriptor.edid);
+    options.serial_number = vdd::read_serial_number(descriptor.edid);
+    options.width = descriptor.width;
+    options.height = descriptor.height;
+    options.physical_width_mm = descriptor.physical_width_mm;
+    options.physical_height_mm = descriptor.physical_height_mm;
+    options.refresh_rate_millihz = descriptor.refresh_rate_millihz;
+    options.hdr_supported = false;
+
+    auto downgraded = descriptor;
+    downgraded.edid = vdd::create_edid(options);
+    return downgraded;
   }
 
   DISPLAYCONFIG_VIDEO_SIGNAL_INFO make_signal_info(
@@ -1058,6 +1086,7 @@ namespace {
 
       HRESULT hr = reset_render_device(render_adapter_luid);
       if (FAILED(hr) || stop_requested_.load(std::memory_order_acquire)) {
+        delete_swapchain();
         return;
       }
 
@@ -1098,10 +1127,17 @@ namespace {
                 TraceLoggingUInt32(static_cast<std::uint32_t>(acquire_result), "HResult")
               );
               if (FAILED(reset_render_device(render_adapter_luid))) {
+                delete_swapchain();
                 return;
               }
               continue;
             }
+            TraceLoggingWrite(
+              g_trace_provider,
+              "SwapChainProcessingFailed",
+              TraceLoggingUInt32(static_cast<std::uint32_t>(acquire_result), "HResult")
+            );
+            delete_swapchain();
             return;
           }
 
@@ -1285,7 +1321,8 @@ namespace {
     }
 
   private:
-    vdd::BackendDisplayResult arrive_display(const vdd::DisplayDescriptor &descriptor, const bool permanent) {
+    vdd::BackendDisplayResult arrive_display(const vdd::DisplayDescriptor &requested_descriptor, const bool permanent) {
+      const auto descriptor = descriptor_with_runtime_hdr_policy(requested_descriptor);
       IDDCX_ADAPTER adapter {};
       {
         std::lock_guard lock {mutex_};
@@ -1464,7 +1501,8 @@ namespace {
       auto processor = std::make_unique<SwapChainProcessor>(args->hSwapChain, args->hNextSurfaceAvailable);
       const HRESULT hr = processor->start(args->RenderAdapterLuid);
       if (FAILED(hr)) {
-        return STATUS_UNSUCCESSFUL;
+        processor->abandon_swapchain();
+        return STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN;
       }
 
       {

@@ -62,12 +62,12 @@ TEST(VirtualDisplayDriverEdid, EncodesPhysicalSizeForDpiScaling) {
   EXPECT_EQ(read_detailed_physical_height_mm(edid), 390u);
 }
 
-TEST(VirtualDisplayDriverEdid, HdrEdidUsesReferencePreferredTiming) {
+TEST(VirtualDisplayDriverEdid, HdrEdidUsesRequestedPreferredTiming) {
   const auto edid = vdd::create_edid(default_options());
   const auto timing = vdd::read_preferred_timing(edid);
 
-  EXPECT_EQ(timing.horizontal_active, 3840u);
-  EXPECT_EQ(timing.vertical_active, 2160u);
+  EXPECT_EQ(timing.horizontal_active, 2560u);
+  EXPECT_EQ(timing.vertical_active, 1440u);
   EXPECT_GT(timing.horizontal_blanking, 0u);
   EXPECT_GT(timing.vertical_blanking, 0u);
   EXPECT_GT(timing.pixel_clock_10khz, 0u);
@@ -94,7 +94,7 @@ TEST(VirtualDisplayDriverEdid, HdrEdidDoesNotEncodeRequestedHighRefreshInBaseTim
   EXPECT_NEAR(static_cast<double>(effective_millihz), 60'000.0, 10.0);
 }
 
-TEST(VirtualDisplayDriverEdid, HdrEdidUsesReferenceRangeDescriptor) {
+TEST(VirtualDisplayDriverEdid, HdrEdidUsesRequestedRangeDescriptor) {
   auto options = default_options();
   options.width = 3840;
   options.height = 2160;
@@ -103,8 +103,8 @@ TEST(VirtualDisplayDriverEdid, HdrEdidUsesReferenceRangeDescriptor) {
   const auto edid = vdd::create_edid(options);
 
   EXPECT_EQ(edid[90 + 3], std::byte {0xfd});
-  EXPECT_EQ(edid[90 + 6], std::byte {255});
-  EXPECT_EQ(edid[90 + 9], std::byte {255});
+  EXPECT_EQ(edid[90 + 6], std::byte {240});
+  EXPECT_EQ(edid[90 + 9], std::byte {251});
 }
 
 TEST(VirtualDisplayDriverEdid, EmbedsHdrStaticMetadataWhenRequested) {

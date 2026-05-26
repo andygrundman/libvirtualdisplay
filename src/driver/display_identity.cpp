@@ -38,10 +38,14 @@ namespace virtual_display::driver {
   }
 
   EdidOptions edid_options_for_temporary_display(const TemporaryDisplayRecord &record) {
+    const auto identity_display_id = record.identity_display_id == 0 ?
+      record.display_id :
+      record.identity_display_id;
+
     EdidOptions options {};
     options.manufacturer_id = kSunshineDriverManufacturerId;
-    options.product_code = product_code_from_display_id(record.display_id);
-    options.serial_number = serial_number_from_display_id(record.display_id);
+    options.product_code = product_code_from_display_id(identity_display_id);
+    options.serial_number = serial_number_from_display_id(identity_display_id);
     options.width = record.width;
     options.height = record.height;
     options.physical_width_mm = record.physical_width_mm;

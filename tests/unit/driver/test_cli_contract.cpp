@@ -39,6 +39,7 @@ TEST(VirtualDisplayCliContract, ExposesFriendlyPermanentDisplayCommands) {
   expect_contains(source, "spawn [--width N] [--height N] [--physical-width-mm N] [--physical-height-mm N] [--refresh HZ] [--name TEXT]");
   expect_contains(source, "permanent query");
   expect_contains(source, "permanent set --count N [--width N] [--height N] [--physical-width-mm N] [--physical-height-mm N] [--refresh HZ] [--name TEXT]");
+  expect_contains(source, "permanent profile set --slot N");
   expect_contains(source, "permanent off");
   expect_contains(source, "require_broker_command(\"permanent-query\", true)");
   expect_contains(source, "require_broker_command(\"display-query\", true)");
@@ -89,7 +90,10 @@ TEST(VirtualDisplayCliContract, BrokerServiceCommandsManageWindowsService) {
   expect_contains(source, "kBrokerServiceSecurityDescriptor[] = L\"D:P(A;;GA;;;SY)(A;;GA;;;BA)\"");
   expect_contains(source, "ChangeServiceConfig2W");
   expect_contains(source, "SERVICE_CONFIG_SERVICE_SID_INFO");
+  expect_contains(source, "SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO");
+  expect_contains(source, "SERVICE_AUTO_START");
   expect_contains(source, "SERVICE_SID_TYPE_UNRESTRICTED");
+  expect_contains(source, "SeTcbPrivilege");
   expect_contains(source, "ConvertStringSecurityDescriptorToSecurityDescriptorW");
   expect_contains(source, "SetServiceObjectSecurity");
   expect_contains(source, "DACL_SECURITY_INFORMATION");
@@ -115,6 +119,7 @@ TEST(VirtualDisplayCliContract, PermanentCommandsApplyModeAndNameSettings) {
   expect_contains(source, "request.physical_height_mm = options.physical_height_mm");
   expect_contains(source, "request.refresh_rate_millihz = options.refresh_rate_millihz");
   expect_contains(source, "set_display_name(request.display_name, options.name)");
+  expect_contains(source, "manifest-profile-set ");
   expect_contains(source, "parse_refresh_millihz");
 }
 

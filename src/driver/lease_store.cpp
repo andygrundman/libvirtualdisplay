@@ -159,6 +159,10 @@ namespace virtual_display::driver {
       connector_reservations_by_display_id_[request.display_id] = connector_index;
     }
     const auto expires_at = now + std::chrono::milliseconds(validated.effective_timeout_ms);
+    constexpr std::uint64_t kEphemeralDisplayIdBase = 0x6000000000000000ull;
+    const auto identity_display_id = retain_identity ?
+      request.display_id :
+      (kEphemeralDisplayIdBase | next_ephemeral_identity_++);
 
     displays_by_id_.emplace(
       request.display_id,
@@ -174,7 +178,8 @@ namespace virtual_display::driver {
         connector_index,
         std::string {validated.display_name},
         expires_at,
-        retain_identity
+        retain_identity,
+        identity_display_id
       }
     );
 
@@ -391,11 +396,8 @@ namespace virtual_display::driver {
   }
 
   bool DisplayStore::is_temporary_connector_index(const std::uint32_t connector_index) const {
-    // Connector index maps directly to the Windows target id. When no permanent
-    // displays are active, temporary displays must be allowed to use connector 0
-    // or Windows may create a target that cannot be activated for the desktop.
-    return connector_index >= permanent_display_count_ &&
-           connector_index < permanent_display_count_ + max_temporary_displays_;
+    return connector_index >= max_permanent_displays_ &&
+           connector_index < max_permanent_displays_ + max_temporary_displays_;
   }
 
   bool DisplayStore::connector_index_is_active(const std::uint32_t connector_index) const {
@@ -454,8 +456,8 @@ namespace virtual_display::driver {
       }
     }
 
-    for (std::uint32_t connector_index = permanent_display_count_;
-         connector_index < permanent_display_count_ + max_temporary_displays_;
+    for (std::uint32_t connector_index = max_permanent_displays_;
+         connector_index < max_permanent_displays_ + max_temporary_displays_;
          ++connector_index) {
       if (!connector_index_is_active(connector_index) &&
           (retain_identity ?
@@ -465,8 +467,8 @@ namespace virtual_display::driver {
       }
     }
 
-    for (std::uint32_t connector_index = permanent_display_count_;
-         connector_index < permanent_display_count_ + max_temporary_displays_;
+    for (std::uint32_t connector_index = max_permanent_displays_;
+         connector_index < max_permanent_displays_ + max_temporary_displays_;
          ++connector_index) {
       if (!connector_index_is_active(connector_index)) {
         remove_connector_reservation(connector_index, display_id);
@@ -474,7 +476,7 @@ namespace virtual_display::driver {
       }
     }
 
-    return permanent_display_count_ + max_temporary_displays_;
+    return max_permanent_displays_ + max_temporary_displays_;
   }
 
   bool DisplayStore::lease_has_displays(const std::uint64_t lease_id) const {

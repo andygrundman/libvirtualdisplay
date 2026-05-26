@@ -41,6 +41,7 @@ namespace {
       << "  spawn [--width N] [--height N] [--physical-width-mm N] [--physical-height-mm N] [--refresh HZ] [--name TEXT]\n"
       << "  permanent query\n"
       << "  permanent set --count N [--width N] [--height N] [--physical-width-mm N] [--physical-height-mm N] [--refresh HZ] [--name TEXT]\n"
+      << "  permanent profile set --slot N [--width N] [--height N] [--physical-width-mm N] [--physical-height-mm N] [--refresh HZ] [--name TEXT] [--layout none|apply|persist] [--x N] [--y N] [--hdr 0|1]\n"
       << "  permanent off\n";
   }
 
@@ -58,6 +59,10 @@ namespace {
   constexpr wchar_t kBrokerServiceName[] = L"SunshineVirtualDisplayBroker";
   constexpr wchar_t kBrokerServiceDisplayName[] = L"Sunshine Virtual Display Broker";
   constexpr wchar_t kBrokerServiceSecurityDescriptor[] = L"D:P(A;;GA;;;SY)(A;;GA;;;BA)";
+  constexpr wchar_t kBrokerServiceRequiredPrivileges[] =
+    L"SeAssignPrimaryTokenPrivilege\0"
+    L"SeIncreaseQuotaPrivilege\0"
+    L"SeTcbPrivilege\0";
 
   struct DevInfoSet {
     HDEVINFO value {INVALID_HANDLE_VALUE};
@@ -290,6 +295,13 @@ namespace {
       return false;
     }
 
+    SERVICE_REQUIRED_PRIVILEGES_INFOW privileges {};
+    privileges.pmszRequiredPrivileges = const_cast<LPWSTR>(kBrokerServiceRequiredPrivileges);
+    if (!ChangeServiceConfig2W(service, SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO, &privileges)) {
+      std::cerr << "configure broker service privileges failed native_error=" << GetLastError() << '\n';
+      return false;
+    }
+
     return true;
   }
 
@@ -317,7 +329,7 @@ namespace {
       kBrokerServiceDisplayName,
       SERVICE_CHANGE_CONFIG | SERVICE_QUERY_STATUS | SERVICE_START,
       SERVICE_WIN32_OWN_PROCESS,
-      SERVICE_DEMAND_START,
+      SERVICE_AUTO_START,
       SERVICE_ERROR_NORMAL,
       command_line.c_str(),
       nullptr,
@@ -338,7 +350,7 @@ namespace {
       if (!ChangeServiceConfigW(
             service.value,
             SERVICE_NO_CHANGE,
-            SERVICE_DEMAND_START,
+            SERVICE_AUTO_START,
             SERVICE_ERROR_NORMAL,
             command_line.c_str(),
             nullptr,
@@ -802,6 +814,18 @@ namespace {
     return true;
   }
 
+  bool parse_i32(const std::string_view value, std::int32_t &parsed) {
+    std::int32_t output {};
+    const auto *begin = value.data();
+    const auto *end = value.data() + value.size();
+    const auto result = std::from_chars(begin, end, output);
+    if (result.ec != std::errc {} || result.ptr != end) {
+      return false;
+    }
+    parsed = output;
+    return true;
+  }
+
   bool parse_refresh_millihz(const std::string_view value, std::uint32_t &parsed) {
     std::string text {value};
     try {
@@ -905,6 +929,14 @@ namespace {
     std::string name {"Sunshine Display"};
   };
 
+  struct ProfileOptions: PermanentOptions {
+    std::uint32_t slot {};
+    std::uint32_t hdr_supported {1};
+    std::uint32_t layout_policy {vdd::kDisplayManifestLayoutPolicyNone};
+    std::int32_t position_x {};
+    std::int32_t position_y {};
+  };
+
 #ifdef _WIN32
   std::string permanent_set_broker_command(const PermanentOptions &options) {
     std::ostringstream command;
@@ -915,6 +947,23 @@ namespace {
       << ' ' << options.physical_width_mm
       << ' ' << options.physical_height_mm
       << ' ' << options.refresh_rate_millihz
+      << ' ' << options.name;
+    return command.str();
+  }
+
+  std::string manifest_profile_set_broker_command(const ProfileOptions &options) {
+    std::ostringstream command;
+    command
+      << "manifest-profile-set " << options.slot
+      << ' ' << options.width
+      << ' ' << options.height
+      << ' ' << options.physical_width_mm
+      << ' ' << options.physical_height_mm
+      << ' ' << options.refresh_rate_millihz
+      << ' ' << options.hdr_supported
+      << ' ' << options.layout_policy
+      << ' ' << options.position_x
+      << ' ' << options.position_y
       << ' ' << options.name;
     return command.str();
   }
@@ -1018,6 +1067,113 @@ namespace {
 
     if (require_count && !saw_count) {
       std::cerr << "permanent set requires --count\n";
+      return std::nullopt;
+    }
+    return options;
+  }
+
+  std::optional<ProfileOptions> parse_profile_options(
+    const std::vector<std::string> &args,
+    const std::size_t first
+  ) {
+    ProfileOptions options {};
+    bool saw_slot = false;
+
+    for (std::size_t index = first; index < args.size(); ++index) {
+      const auto &arg = args[index];
+      const auto need_value = [&]() -> std::optional<std::string> {
+        if (index + 1 >= args.size()) {
+          std::cerr << arg << " requires a value\n";
+          return std::nullopt;
+        }
+        return args[++index];
+      };
+
+      if (arg == "--slot") {
+        const auto value = need_value();
+        if (!value || !parse_u32(*value, options.slot)) {
+          std::cerr << "invalid --slot value\n";
+          return std::nullopt;
+        }
+        saw_slot = true;
+      } else if (arg == "--width") {
+        const auto value = need_value();
+        if (!value || !parse_u32(*value, options.width)) {
+          std::cerr << "invalid --width value\n";
+          return std::nullopt;
+        }
+      } else if (arg == "--height") {
+        const auto value = need_value();
+        if (!value || !parse_u32(*value, options.height)) {
+          std::cerr << "invalid --height value\n";
+          return std::nullopt;
+        }
+      } else if (arg == "--physical-width-mm") {
+        const auto value = need_value();
+        if (!value || !parse_u32(*value, options.physical_width_mm)) {
+          std::cerr << "invalid --physical-width-mm value\n";
+          return std::nullopt;
+        }
+      } else if (arg == "--physical-height-mm") {
+        const auto value = need_value();
+        if (!value || !parse_u32(*value, options.physical_height_mm)) {
+          std::cerr << "invalid --physical-height-mm value\n";
+          return std::nullopt;
+        }
+      } else if (arg == "--refresh") {
+        const auto value = need_value();
+        if (!value || !parse_refresh_millihz(*value, options.refresh_rate_millihz)) {
+          std::cerr << "invalid --refresh value\n";
+          return std::nullopt;
+        }
+      } else if (arg == "--name") {
+        const auto value = need_value();
+        if (!value || value->empty()) {
+          std::cerr << "invalid --name value\n";
+          return std::nullopt;
+        }
+        options.name = *value;
+      } else if (arg == "--layout") {
+        const auto value = need_value();
+        if (!value) {
+          return std::nullopt;
+        }
+        if (*value == "none") {
+          options.layout_policy = vdd::kDisplayManifestLayoutPolicyNone;
+        } else if (*value == "apply") {
+          options.layout_policy = vdd::kDisplayManifestLayoutPolicyApply;
+        } else if (*value == "persist") {
+          options.layout_policy = vdd::kDisplayManifestLayoutPolicyApplyAndPersist;
+        } else {
+          std::cerr << "invalid --layout value\n";
+          return std::nullopt;
+        }
+      } else if (arg == "--x") {
+        const auto value = need_value();
+        if (!value || !parse_i32(*value, options.position_x)) {
+          std::cerr << "invalid --x value\n";
+          return std::nullopt;
+        }
+      } else if (arg == "--y") {
+        const auto value = need_value();
+        if (!value || !parse_i32(*value, options.position_y)) {
+          std::cerr << "invalid --y value\n";
+          return std::nullopt;
+        }
+      } else if (arg == "--hdr") {
+        const auto value = need_value();
+        if (!value || !parse_u32(*value, options.hdr_supported) || options.hdr_supported > 1) {
+          std::cerr << "invalid --hdr value\n";
+          return std::nullopt;
+        }
+      } else {
+        std::cerr << "unknown option: " << arg << '\n';
+        return std::nullopt;
+      }
+    }
+
+    if (!saw_slot) {
+      std::cerr << "permanent profile set requires --slot\n";
       return std::nullopt;
     }
     return options;
@@ -1172,6 +1328,14 @@ int main(int argc, char **argv) {
       return 2;
     }
     return require_broker_command(permanent_set_broker_command(*options), true);
+  }
+
+  if (args[0] == "permanent" && args.size() >= 3 && args[1] == "profile" && args[2] == "set") {
+    const auto options = parse_profile_options(args, 3);
+    if (!options) {
+      return 2;
+    }
+    return require_broker_command(manifest_profile_set_broker_command(*options), true);
   }
 #endif
 

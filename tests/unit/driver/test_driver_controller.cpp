@@ -83,11 +83,11 @@ TEST(VirtualDisplayDriverController, CreateTemporaryDisplayArrivesBackendAndRetu
   EXPECT_TRUE(created.status.ok());
   EXPECT_EQ(created.result.os_adapter_luid, (vdd::AdapterLuid {44, 2}));
   EXPECT_EQ(created.result.target_id, 7u);
-  EXPECT_EQ(created.result.connector_index, 0u);
+  EXPECT_EQ(created.result.connector_index, 4u);
   ASSERT_EQ(backend.arrived.size(), 1u);
   EXPECT_EQ(backend.arrived[0].display_id, 0x12345678u);
   EXPECT_EQ(backend.arrived[0].container_id, vdd::container_guid_from_display_id(0x12345678u));
-  EXPECT_EQ(backend.arrived[0].connector_index, 0u);
+  EXPECT_EQ(backend.arrived[0].connector_index, 4u);
   EXPECT_EQ(backend.arrived[0].width, 2560u);
   EXPECT_EQ(backend.arrived[0].physical_width_mm, 590u);
   EXPECT_EQ(backend.arrived[0].physical_height_mm, 330u);
@@ -105,7 +105,7 @@ TEST(VirtualDisplayDriverController, CreateTemporaryDisplayReservesIdentityBefor
   ASSERT_EQ(backend.reserved.size(), 1u);
   ASSERT_EQ(backend.arrived.size(), 1u);
   EXPECT_EQ(backend.reserved[0].display_id, 0x12345678u);
-  EXPECT_EQ(backend.reserved[0].connector_index, 0u);
+  EXPECT_EQ(backend.reserved[0].connector_index, 4u);
   EXPECT_EQ(backend.reserved[0].container_id, vdd::container_guid_from_display_id(0x12345678u));
   EXPECT_EQ(backend.events, (std::vector<std::string> {"reserve", "arrive"}));
 }
@@ -122,6 +122,7 @@ TEST(VirtualDisplayDriverController, CreateEphemeralTemporaryDisplaySkipsIdentit
   EXPECT_TRUE(backend.reserved.empty());
   ASSERT_EQ(backend.arrived.size(), 1u);
   EXPECT_FALSE(backend.arrived[0].retain_identity);
+  EXPECT_NE(backend.arrived[0].container_id, vdd::container_guid_from_display_id(request.display_id));
   EXPECT_EQ(backend.events, (std::vector<std::string> {"arrive"}));
 }
 
@@ -342,8 +343,8 @@ TEST(VirtualDisplayDriverController, QueryDisplayStateReportsPermanentAndTempora
   EXPECT_EQ(state.entries[1].kind, vdd::kDisplayStateKindTemporary);
   EXPECT_EQ(state.entries[1].display_id, 0x12345678u);
   EXPECT_EQ(state.entries[1].lease_id, 100u);
-  EXPECT_EQ(state.entries[1].container_id, vdd::container_guid_from_display_id(0x12345678u));
-  EXPECT_EQ(state.entries[1].product_code, vdd::product_code_from_display_id(0x12345678u));
+  EXPECT_NE(state.entries[1].container_id, vdd::container_guid_from_display_id(0x12345678u));
+  EXPECT_NE(state.entries[1].product_code, vdd::product_code_from_display_id(0x12345678u));
   EXPECT_EQ(state.entries[1].flags & vdd::kDisplayStateFlagRetainIdentity, 0u);
   EXPECT_EQ(state.entries[1].physical_width_mm, temporary.physical_width_mm);
 }

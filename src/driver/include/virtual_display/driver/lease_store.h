@@ -39,6 +39,7 @@ namespace virtual_display::driver {
     std::string display_name {};
     std::chrono::steady_clock::time_point expires_at {};
     bool retain_identity {true};
+    std::uint64_t identity_display_id {};
   };
 
   struct StoreResult {
@@ -108,6 +109,7 @@ namespace virtual_display::driver {
     std::map<std::uint64_t, TemporaryDisplayRecord> displays_by_id_ {};
     std::map<std::uint64_t, LeaseRecord> leases_by_id_ {};
     std::map<std::uint64_t, std::uint32_t> connector_reservations_by_display_id_ {};
+    std::uint64_t next_ephemeral_identity_ {1};
   };
 
   const char *to_string(StoreError error);

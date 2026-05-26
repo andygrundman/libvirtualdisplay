@@ -210,6 +210,7 @@ TEST(VirtualDisplayWindowsDriverContract, RecoversRenderDeviceBeforeAbandoningSw
   EXPECT_NE(source.find("is_device_lost_hresult"), std::string::npos);
   EXPECT_NE(source.find("DXGI_ERROR_DEVICE_REMOVED"), std::string::npos);
   EXPECT_NE(source.find("DXGI_ERROR_DEVICE_RESET"), std::string::npos);
+  EXPECT_NE(source.find("SwapChainProcessingFailed"), std::string::npos);
 
   const auto process_frames = source.find("void process_frames(const LUID render_adapter_luid)");
   ASSERT_NE(process_frames, std::string::npos);
@@ -222,6 +223,26 @@ TEST(VirtualDisplayWindowsDriverContract, RecoversRenderDeviceBeforeAbandoningSw
   const auto abandon = source.find("return;", reset);
   ASSERT_NE(abandon, std::string::npos);
   EXPECT_LT(reset, abandon);
+  EXPECT_NE(source.find("delete_swapchain();", reset), std::string::npos);
+  const auto assign_swapchain = source.find("NTSTATUS assign_swapchain");
+  ASSERT_NE(assign_swapchain, std::string::npos);
+  const auto unassign_swapchain = source.find("NTSTATUS unassign_swapchain", assign_swapchain);
+  ASSERT_NE(unassign_swapchain, std::string::npos);
+  EXPECT_EQ(
+    source.substr(assign_swapchain, unassign_swapchain - assign_swapchain).find("return STATUS_UNSUCCESSFUL;"),
+    std::string::npos
+  );
+}
+
+TEST(VirtualDisplayWindowsDriverContract, GatesHdrDescriptorsOnRuntimeIddCxSupport) {
+  const auto source = read_windows_driver_source();
+
+  EXPECT_NE(source.find("bool runtime_hdr_supported()"), std::string::npos);
+  EXPECT_NE(source.find("has_hdr_iddcx_ddi() &&"), std::string::npos);
+  EXPECT_NE(source.find("vdd::supports_windows_hdr_toggle(vdd::hdr_output_capabilities())"), std::string::npos);
+  EXPECT_NE(source.find("options.hdr_supported = runtime_hdr_supported();"), std::string::npos);
+  EXPECT_NE(source.find("descriptor_with_runtime_hdr_policy"), std::string::npos);
+  EXPECT_NE(source.find("options.hdr_supported = false;"), std::string::npos);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, RegistersTraceLoggingProvider) {

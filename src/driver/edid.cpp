@@ -216,12 +216,9 @@ namespace virtual_display::driver {
       put_le32(base, 12, options.serial_number);
       base[21] = byte(physical_size_cm(options.physical_width_mm));
       base[22] = byte(physical_size_cm(options.physical_height_mm));
-      const auto physical_width = physical_size_mm(options.physical_width_mm);
-      const auto physical_height = physical_size_mm(options.physical_height_mm);
-      base[66] = byte(physical_width);
-      base[67] = byte(physical_height);
-      base[68] = byte(((physical_width >> 8) << 4) | (physical_height >> 8));
+      write_detailed_timing(base, 54, options);
       write_edid_string_field(base, 0x4d, std::to_string(options.serial_number));
+      write_range_descriptor(base, 90, options);
       write_edid_string_field(base, 0x71, options.monitor_name);
       write_checksum(base);
       return edid;
@@ -299,9 +296,8 @@ namespace virtual_display::driver {
         std::byte {0x00}, std::byte {0xe6}, std::byte {0x06}, std::byte {0x0f},
         std::byte {0x01}, std::byte {0xc8}, std::byte {0xc8}, std::byte {0x00}
       };
-      // Windows ignores our minimal CTA HDR block for HDR classification; keep
-      // the complete SudoVDA CTA block collection while the base EDID remains
-      // generated per display identity and preferred timing.
+      // Windows HDR classification expects the complete CTA metadata block set.
+      // Keep that block stable while the base EDID remains identity-specific.
       std::copy(hdr_cta_blocks.begin(), hdr_cta_blocks.end(), extension.begin() + 4);
       data_offset += hdr_cta_blocks.size();
       extension[3] = std::byte {0xf0};

@@ -118,7 +118,7 @@ TEST(VirtualDisplayDriverControlProtocol, WindowsGuidAdapterPreservesProtocolGui
 #endif
 }
 
-TEST(VirtualDisplayDriverControlProtocol, InfRegistersControlInterfaceWithAdminOnlyAccess) {
+TEST(VirtualDisplayDriverControlProtocol, InfRegistersControlInterfaceWithServiceOnlyAccess) {
   const std::string inf_path =
     std::string {LIBVIRTUALDISPLAY_SOURCE_DIR} +
     "/src/driver/windows_driver/SunshineVirtualDisplayDriver.inf";
@@ -135,13 +135,14 @@ TEST(VirtualDisplayDriverControlProtocol, InfRegistersControlInterfaceWithAdminO
   );
   EXPECT_NE(inf.find("[ControlInterface_AddReg]"), std::string::npos);
   EXPECT_NE(
-    inf.find("HKR,,Security,,\"D:P(A;;GA;;;SY)(A;;GA;;;BA)\""),
+    inf.find("HKR,,Security,,\"D:P(A;;GA;;;SY)(A;;GA;;;S-1-5-80-2333729190-1599198784-3320592948-2337414441-3098439965)\""),
     std::string::npos
   );
+  EXPECT_EQ(inf.find("(A;;GA;;;BA)"), std::string::npos);
   EXPECT_EQ(inf.find("(A;;GRGW;;;AU)"), std::string::npos);
 }
 
-TEST(VirtualDisplayDriverControlProtocol, InfRestrictsDeviceSecurityToSystemAndAdmins) {
+TEST(VirtualDisplayDriverControlProtocol, InfRestrictsDeviceSecurityToSystemAndBrokerService) {
   const std::string inf_path =
     std::string {LIBVIRTUALDISPLAY_SOURCE_DIR} +
     "/src/driver/windows_driver/SunshineVirtualDisplayDriver.inf";
@@ -153,9 +154,10 @@ TEST(VirtualDisplayDriverControlProtocol, InfRestrictsDeviceSecurityToSystemAndA
   const auto inf = buffer.str();
 
   EXPECT_NE(
-    inf.find("HKR,,Security,,\"D:P(A;;GA;;;SY)(A;;GA;;;BA)\""),
+    inf.find("HKR,,Security,,\"D:P(A;;GA;;;SY)(A;;GA;;;S-1-5-80-2333729190-1599198784-3320592948-2337414441-3098439965)\""),
     std::string::npos
   );
+  EXPECT_EQ(inf.find("(A;;GA;;;BA)"), std::string::npos);
   EXPECT_EQ(inf.find("(A;;GRGW;;;WD)"), std::string::npos);
   EXPECT_EQ(inf.find("(A;;GA;;;WD)"), std::string::npos);
   EXPECT_EQ(inf.find("(A;;GA;;;AU)"), std::string::npos);

@@ -243,7 +243,10 @@ namespace virtual_display::driver {
     DisplayDescriptor descriptor {};
     descriptor.lease_id = record.lease_id;
     descriptor.display_id = record.display_id;
-    descriptor.container_id = container_guid_from_display_id(record.display_id);
+    const auto identity_display_id = record.identity_display_id == 0 ?
+      record.display_id :
+      record.identity_display_id;
+    descriptor.container_id = container_guid_from_display_id(identity_display_id);
     descriptor.connector_index = record.connector_index;
     descriptor.width = record.width;
     descriptor.height = record.height;
@@ -264,10 +267,13 @@ namespace virtual_display::driver {
     }
     entry.lease_id = record.lease_id;
     entry.display_id = record.display_id;
-    entry.container_id = container_guid_from_display_id(record.display_id);
+    const auto identity_display_id = record.identity_display_id == 0 ?
+      record.display_id :
+      record.identity_display_id;
+    entry.container_id = container_guid_from_display_id(identity_display_id);
     entry.connector_index = record.connector_index;
-    entry.product_code = product_code_from_display_id(record.display_id);
-    entry.serial_number = serial_number_from_display_id(record.display_id);
+    entry.product_code = product_code_from_display_id(identity_display_id);
+    entry.serial_number = serial_number_from_display_id(identity_display_id);
     entry.width = record.width;
     entry.height = record.height;
     entry.physical_width_mm = record.physical_width_mm;
