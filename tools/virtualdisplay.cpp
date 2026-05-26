@@ -16,9 +16,11 @@
 #include <vector>
 
 #ifdef _WIN32
+#include <Aclapi.h>
 #include <NewDev.h>
 #include <SetupAPI.h>
 #include <Shellapi.h>
+#include <sddl.h>
 #endif
 
 namespace vdd = virtual_display::driver;
@@ -54,6 +56,7 @@ namespace {
   constexpr wchar_t kBrokerPipeName[] = L"\\\\.\\pipe\\SunshineVirtualDisplayBroker";
   constexpr wchar_t kBrokerServiceName[] = L"SunshineVirtualDisplayBroker";
   constexpr wchar_t kBrokerServiceDisplayName[] = L"Sunshine Virtual Display Broker";
+  constexpr wchar_t kBrokerServiceSecurityDescriptor[] = L"D:P(A;;GA;;;SY)(A;;GA;;;BA)";
 
   struct DevInfoSet {
     HDEVINFO value {INVALID_HANDLE_VALUE};
@@ -87,6 +90,27 @@ namespace {
 
     ServiceHandle(const ServiceHandle &) = delete;
     ServiceHandle &operator=(const ServiceHandle &) = delete;
+  };
+
+  struct LocalMemory {
+    HLOCAL value {};
+
+    explicit LocalMemory(const HLOCAL handle):
+        value {handle} {
+    }
+
+    ~LocalMemory() {
+      if (value) {
+        LocalFree(value);
+      }
+    }
+
+    void *get() const {
+      return value;
+    }
+
+    LocalMemory(const LocalMemory &) = delete;
+    LocalMemory &operator=(const LocalMemory &) = delete;
   };
 
   struct BrokerResponse {
@@ -240,6 +264,34 @@ namespace {
     return 0;
   }
 
+  bool harden_broker_service(SC_HANDLE service) {
+    SERVICE_SID_INFO sid_info {};
+    sid_info.dwServiceSidType = SERVICE_SID_TYPE_UNRESTRICTED;
+    if (!ChangeServiceConfig2W(service, SERVICE_CONFIG_SERVICE_SID_INFO, &sid_info)) {
+      std::cerr << "configure broker service SID failed native_error=" << GetLastError() << '\n';
+      return false;
+    }
+
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+          kBrokerServiceSecurityDescriptor,
+          SDDL_REVISION_1,
+          &descriptor,
+          nullptr
+        )) {
+      std::cerr << "build broker service security failed native_error=" << GetLastError() << '\n';
+      return false;
+    }
+
+    const LocalMemory security_descriptor {descriptor};
+    if (!SetServiceObjectSecurity(service, DACL_SECURITY_INFORMATION, security_descriptor.get())) {
+      std::cerr << "apply broker service security failed native_error=" << GetLastError() << '\n';
+      return false;
+    }
+
+    return true;
+  }
+
   int install_broker_service(const std::vector<std::string> &args) {
     if (!is_process_elevated()) {
       return relaunch_elevated(args);
@@ -298,6 +350,9 @@ namespace {
         std::cerr << "update broker service failed native_error=" << GetLastError() << '\n';
         return 1;
       }
+      if (!harden_broker_service(service.value)) {
+        return 1;
+      }
       updated = true;
       std::cout << "broker_service_installed=1\n";
       std::cout << "broker_service_updated=1\n";
@@ -310,6 +365,9 @@ namespace {
     }
 
     ServiceHandle service {service_handle};
+    if (!harden_broker_service(service.value)) {
+      return 1;
+    }
     std::cout << "broker_service_installed=1\n";
     std::cout << "broker_service_updated=" << (updated ? 1 : 0) << '\n';
     return print_broker_service_status(service.value);

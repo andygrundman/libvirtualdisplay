@@ -80,6 +80,14 @@ TEST(VirtualDisplayCliContract, BrokerServiceCommandsManageWindowsService) {
   expect_contains(source, "OpenSCManagerW");
   expect_contains(source, "CreateServiceW");
   expect_contains(source, "ChangeServiceConfigW");
+  expect_contains(source, "kBrokerServiceSecurityDescriptor[] = L\"D:P(A;;GA;;;SY)(A;;GA;;;BA)\"");
+  expect_contains(source, "ChangeServiceConfig2W");
+  expect_contains(source, "SERVICE_CONFIG_SERVICE_SID_INFO");
+  expect_contains(source, "SERVICE_SID_TYPE_UNRESTRICTED");
+  expect_contains(source, "ConvertStringSecurityDescriptorToSecurityDescriptorW");
+  expect_contains(source, "SetServiceObjectSecurity");
+  expect_contains(source, "DACL_SECURITY_INFORMATION");
+  expect_contains(source, "harden_broker_service(service.value)");
   expect_contains(source, "StartServiceW");
   expect_contains(source, "ControlService");
   expect_contains(source, "QueryServiceStatusEx");
