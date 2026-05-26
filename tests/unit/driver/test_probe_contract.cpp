@@ -334,4 +334,15 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "kEventHelperFinished");
   expect_contains(source, "--run-console");
   expect_contains(source, "--service");
+
+  const auto connected = source.find("if (connected && !g_context.stop_requested.load(std::memory_order_acquire))");
+  const auto authorize = source.find("authorize_pipe_client(pipe)", connected);
+  const auto serve = source.find("serve_pipe_client(pipe, client)", connected);
+  const auto denied = source.find("\"error access_denied\\n\"", connected);
+  ASSERT_NE(connected, std::string::npos);
+  ASSERT_NE(authorize, std::string::npos);
+  ASSERT_NE(serve, std::string::npos);
+  ASSERT_NE(denied, std::string::npos);
+  EXPECT_LT(authorize, serve);
+  EXPECT_LT(authorize, denied);
 }

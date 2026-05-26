@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 namespace vdd = virtual_display::driver;
 
@@ -75,6 +76,52 @@ namespace {
     buffer << readme_file.rdbuf();
     return buffer.str();
   }
+
+  std::string read_driver_inf() {
+    const std::string inf_path =
+      std::string {LIBVIRTUALDISPLAY_SOURCE_DIR} +
+      "/src/driver/windows_driver/SunshineVirtualDisplayDriver.inf";
+    std::ifstream inf_file {inf_path};
+    if (!inf_file.is_open()) {
+      ADD_FAILURE() << inf_path;
+      return {};
+    }
+
+    std::ostringstream buffer;
+    buffer << inf_file.rdbuf();
+    return buffer.str();
+  }
+
+  std::string_view inf_section(const std::string &inf, const std::string_view name) {
+    const auto header = "[" + std::string {name} + "]";
+    const auto section_begin = inf.find(header);
+    if (section_begin == std::string::npos) {
+      ADD_FAILURE() << "missing INF section: " << name;
+      return {};
+    }
+
+    const auto body_begin = inf.find('\n', section_begin);
+    if (body_begin == std::string::npos) {
+      return {};
+    }
+
+    const auto next_section = inf.find("\n[", body_begin + 1);
+    const auto body_end = next_section == std::string::npos ? inf.size() : next_section + 1;
+    return std::string_view {inf}.substr(body_begin + 1, body_end - body_begin - 1);
+  }
+
+  void expect_section_security_only(
+    const std::string_view section,
+    const std::string_view expected_sddl
+  ) {
+    const auto expected_line = "HKR,,Security,,\"" + std::string {expected_sddl} + "\"";
+    EXPECT_NE(section.find(expected_line), std::string_view::npos);
+    EXPECT_EQ(section.find("(A;;GA;;;BA)"), std::string_view::npos);
+    EXPECT_EQ(section.find("(A;;GRGW;;;AU)"), std::string_view::npos);
+    EXPECT_EQ(section.find("(A;;GRGW;;;WD)"), std::string_view::npos);
+    EXPECT_EQ(section.find("(A;;GA;;;AU)"), std::string_view::npos);
+    EXPECT_EQ(section.find("(A;;GA;;;WD)"), std::string_view::npos);
+  }
 }  // namespace
 
 TEST(VirtualDisplayDriverControlProtocol, ComputesBufferedUnknownDeviceIoctlCodes) {
@@ -83,9 +130,9 @@ TEST(VirtualDisplayDriverControlProtocol, ComputesBufferedUnknownDeviceIoctlCode
   EXPECT_EQ(vdd::kIoctlRemoveTemporaryDisplay, 0x0022e408u);
   EXPECT_EQ(vdd::kIoctlFeedLease, 0x0022e40cu);
   EXPECT_EQ(vdd::kIoctlReleaseLease, 0x0022e410u);
-  EXPECT_EQ(vdd::kIoctlQueryLease, 0x0022e414u);
+  EXPECT_EQ(vdd::kIoctlQueryLease, 0x00226414u);
   EXPECT_EQ(vdd::kIoctlSetPermanentDisplayCount, 0x0022e418u);
-  EXPECT_EQ(vdd::kIoctlQueryPermanentDisplayCount, 0x0022e41cu);
+  EXPECT_EQ(vdd::kIoctlQueryPermanentDisplayCount, 0x0022641cu);
   EXPECT_EQ(vdd::kIoctlQueryDisplayState, 0x00226420u);
   EXPECT_EQ(vdd::kIoctlSetDisplayManifest, 0x0022e424u);
   EXPECT_EQ(vdd::kIoctlQueryDisplayManifest, 0x00226428u);
@@ -122,48 +169,27 @@ TEST(VirtualDisplayDriverControlProtocol, WindowsGuidAdapterPreservesProtocolGui
 }
 
 TEST(VirtualDisplayDriverControlProtocol, InfRegistersControlInterfaceWithServiceOnlyAccess) {
-  const std::string inf_path =
-    std::string {LIBVIRTUALDISPLAY_SOURCE_DIR} +
-    "/src/driver/windows_driver/SunshineVirtualDisplayDriver.inf";
-  std::ifstream inf_file {inf_path};
-  ASSERT_TRUE(inf_file.is_open()) << inf_path;
-
-  std::ostringstream buffer;
-  buffer << inf_file.rdbuf();
-  const auto inf = buffer.str();
+  const auto inf = read_driver_inf();
+  const auto control_section = inf_section(inf, "ControlInterface_AddReg");
 
   EXPECT_NE(
     inf.find("AddInterface={5f894d6c-3a69-48a2-86ef-e4c671932d63},,ControlInterface"),
     std::string::npos
   );
-  EXPECT_NE(inf.find("[ControlInterface_AddReg]"), std::string::npos);
-  EXPECT_NE(
-    inf.find("HKR,,Security,,\"D:P(A;;GA;;;SY)(A;;GA;;;S-1-5-80-2333729190-1599198784-3320592948-2337414441-3098439965)\""),
-    std::string::npos
+  expect_section_security_only(
+    control_section,
+    "D:P(A;;GA;;;SY)(A;;GA;;;S-1-5-80-2333729190-1599198784-3320592948-2337414441-3098439965)"
   );
-  EXPECT_EQ(inf.find("(A;;GA;;;BA)"), std::string::npos);
-  EXPECT_EQ(inf.find("(A;;GRGW;;;AU)"), std::string::npos);
 }
 
 TEST(VirtualDisplayDriverControlProtocol, InfRestrictsDeviceSecurityToSystemAndBrokerService) {
-  const std::string inf_path =
-    std::string {LIBVIRTUALDISPLAY_SOURCE_DIR} +
-    "/src/driver/windows_driver/SunshineVirtualDisplayDriver.inf";
-  std::ifstream inf_file {inf_path};
-  ASSERT_TRUE(inf_file.is_open()) << inf_path;
+  const auto inf = read_driver_inf();
+  const auto device_section = inf_section(inf, "Device_Install_Hw_AddReg");
 
-  std::ostringstream buffer;
-  buffer << inf_file.rdbuf();
-  const auto inf = buffer.str();
-
-  EXPECT_NE(
-    inf.find("HKR,,Security,,\"D:P(A;;GA;;;SY)(A;;GA;;;S-1-5-80-2333729190-1599198784-3320592948-2337414441-3098439965)\""),
-    std::string::npos
+  expect_section_security_only(
+    device_section,
+    "D:P(A;;GA;;;SY)(A;;GA;;;S-1-5-80-2333729190-1599198784-3320592948-2337414441-3098439965)"
   );
-  EXPECT_EQ(inf.find("(A;;GA;;;BA)"), std::string::npos);
-  EXPECT_EQ(inf.find("(A;;GRGW;;;WD)"), std::string::npos);
-  EXPECT_EQ(inf.find("(A;;GA;;;WD)"), std::string::npos);
-  EXPECT_EQ(inf.find("(A;;GA;;;AU)"), std::string::npos);
 }
 
 TEST(VirtualDisplayDriverControlProtocol, NormalizesLeaseTimeouts) {
@@ -329,6 +355,13 @@ TEST(VirtualDisplayDriverControlProtocol, ValidatesPermanentDisplayCount) {
   EXPECT_EQ(
     vdd::validate_permanent_display_count(request, 2),
     vdd::ValidationError::PermanentDisplayCountTooHigh
+  );
+
+  request = {};
+  request.flags = 0x80000000u;
+  EXPECT_EQ(
+    vdd::validate_permanent_display_count(request, 2),
+    vdd::ValidationError::InvalidFlags
   );
 
   request = {};

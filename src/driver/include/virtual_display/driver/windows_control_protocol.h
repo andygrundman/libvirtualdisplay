@@ -66,11 +66,17 @@ namespace virtual_display::driver {
   inline constexpr DWORD kWinIoctlReleaseLease =
     CTL_CODE(FILE_DEVICE_UNKNOWN, static_cast<DWORD>(IoctlFunction::ReleaseLease), METHOD_BUFFERED, FILE_READ_DATA | FILE_WRITE_DATA);
   inline constexpr DWORD kWinIoctlQueryLease =
-    CTL_CODE(FILE_DEVICE_UNKNOWN, static_cast<DWORD>(IoctlFunction::QueryLease), METHOD_BUFFERED, FILE_READ_DATA | FILE_WRITE_DATA);
+    CTL_CODE(FILE_DEVICE_UNKNOWN, static_cast<DWORD>(IoctlFunction::QueryLease), METHOD_BUFFERED, FILE_READ_DATA);
   inline constexpr DWORD kWinIoctlSetPermanentDisplayCount =
     CTL_CODE(FILE_DEVICE_UNKNOWN, static_cast<DWORD>(IoctlFunction::SetPermanentDisplayCount), METHOD_BUFFERED, FILE_READ_DATA | FILE_WRITE_DATA);
   inline constexpr DWORD kWinIoctlQueryPermanentDisplayCount =
-    CTL_CODE(FILE_DEVICE_UNKNOWN, static_cast<DWORD>(IoctlFunction::QueryPermanentDisplayCount), METHOD_BUFFERED, FILE_READ_DATA | FILE_WRITE_DATA);
+    CTL_CODE(FILE_DEVICE_UNKNOWN, static_cast<DWORD>(IoctlFunction::QueryPermanentDisplayCount), METHOD_BUFFERED, FILE_READ_DATA);
+  inline constexpr DWORD kWinIoctlQueryDisplayState =
+    CTL_CODE(FILE_DEVICE_UNKNOWN, static_cast<DWORD>(IoctlFunction::QueryDisplayState), METHOD_BUFFERED, FILE_READ_DATA);
+  inline constexpr DWORD kWinIoctlSetDisplayManifest =
+    CTL_CODE(FILE_DEVICE_UNKNOWN, static_cast<DWORD>(IoctlFunction::SetDisplayManifest), METHOD_BUFFERED, FILE_READ_DATA | FILE_WRITE_DATA);
+  inline constexpr DWORD kWinIoctlQueryDisplayManifest =
+    CTL_CODE(FILE_DEVICE_UNKNOWN, static_cast<DWORD>(IoctlFunction::QueryDisplayManifest), METHOD_BUFFERED, FILE_READ_DATA);
 
   static_assert(sizeof(GUID) == sizeof(Guid));
   static_assert(sizeof(LUID) == sizeof(AdapterLuid));
@@ -82,6 +88,9 @@ namespace virtual_display::driver {
   static_assert(kWinIoctlQueryLease == kIoctlQueryLease);
   static_assert(kWinIoctlSetPermanentDisplayCount == kIoctlSetPermanentDisplayCount);
   static_assert(kWinIoctlQueryPermanentDisplayCount == kIoctlQueryPermanentDisplayCount);
+  static_assert(kWinIoctlQueryDisplayState == kIoctlQueryDisplayState);
+  static_assert(kWinIoctlSetDisplayManifest == kIoctlSetDisplayManifest);
+  static_assert(kWinIoctlQueryDisplayManifest == kIoctlQueryDisplayManifest);
 }  // namespace virtual_display::driver
 
 #endif

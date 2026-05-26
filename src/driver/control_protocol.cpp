@@ -150,6 +150,9 @@ namespace virtual_display::driver {
     if (!is_valid_api_namespace(request.api_namespace)) {
       return ValidationError::WrongApiNamespace;
     }
+    if ((request.flags & ~kPermanentDisplayCountKnownFlags) != 0) {
+      return ValidationError::InvalidFlags;
+    }
     if (request.display_count > max_display_count) {
       return ValidationError::PermanentDisplayCountTooHigh;
     }

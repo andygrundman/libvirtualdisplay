@@ -54,6 +54,7 @@ namespace virtual_display::driver {
   inline constexpr std::uint32_t kCreateTemporaryDisplayFlagEphemeralIdentity = 0x00000001u;
   inline constexpr std::uint32_t kCreateTemporaryDisplayKnownFlags =
     kCreateTemporaryDisplayFlagEphemeralIdentity;
+  inline constexpr std::uint32_t kPermanentDisplayCountKnownFlags = 0;
   inline constexpr std::uint32_t kMaxDisplayStateEntries = 16;
   inline constexpr std::uint32_t kDisplayStateKindPermanent = 1;
   inline constexpr std::uint32_t kDisplayStateKindTemporary = 2;
@@ -115,11 +116,11 @@ namespace virtual_display::driver {
   inline constexpr std::uint32_t kIoctlReleaseLease =
     ioctl_code(IoctlFunction::ReleaseLease, IoctlAccess::ReadWrite);
   inline constexpr std::uint32_t kIoctlQueryLease =
-    ioctl_code(IoctlFunction::QueryLease, IoctlAccess::ReadWrite);
+    ioctl_code(IoctlFunction::QueryLease, IoctlAccess::Read);
   inline constexpr std::uint32_t kIoctlSetPermanentDisplayCount =
     ioctl_code(IoctlFunction::SetPermanentDisplayCount, IoctlAccess::ReadWrite);
   inline constexpr std::uint32_t kIoctlQueryPermanentDisplayCount =
-    ioctl_code(IoctlFunction::QueryPermanentDisplayCount, IoctlAccess::ReadWrite);
+    ioctl_code(IoctlFunction::QueryPermanentDisplayCount, IoctlAccess::Read);
   inline constexpr std::uint32_t kIoctlQueryDisplayState =
     ioctl_code(IoctlFunction::QueryDisplayState, IoctlAccess::Read);
   inline constexpr std::uint32_t kIoctlSetDisplayManifest =
