@@ -1063,7 +1063,11 @@ namespace {
         return E_OUTOFMEMORY;
       }
 
-      return S_OK;
+      std::unique_lock lock {startup_mutex_};
+      startup_ready_.wait(lock, [this]() {
+        return startup_result_.has_value();
+      });
+      return *startup_result_;
     }
 
     void stop() {
@@ -1155,6 +1159,7 @@ namespace {
       MmcssRegistration mmcss {kSwapchainMmcssTask};
 
       HRESULT hr = reset_render_device(render_adapter_luid);
+      publish_startup_result(hr);
       if (FAILED(hr) || stop_requested_.load(std::memory_order_acquire)) {
         delete_swapchain();
         return;
@@ -1169,6 +1174,12 @@ namespace {
           continue;
         }
         if (wait_result != WAIT_OBJECT_0) {
+          TraceLoggingWrite(
+            g_trace_provider,
+            "SwapChainWaitFailed",
+            TraceLoggingUInt32(wait_result, "WaitResult"),
+            TraceLoggingUInt32(GetLastError(), "LastError")
+          );
           break;
         }
 
@@ -1217,7 +1228,16 @@ namespace {
           // Drop the acquired surface before reporting the frame complete so
           // IddCx can reclaim the buffer during unassign/departure.
           surface.Reset();
-          (void) IddCxSwapChainFinishedProcessingFrame(swapchain_);
+          const HRESULT finished_result = IddCxSwapChainFinishedProcessingFrame(swapchain_);
+          if (FAILED(finished_result)) {
+            TraceLoggingWrite(
+              g_trace_provider,
+              "SwapChainFinishedFrameFailed",
+              TraceLoggingUInt32(static_cast<std::uint32_t>(finished_result), "HResult")
+            );
+            delete_swapchain();
+            return;
+          }
 
           if (stop_requested_.load(std::memory_order_acquire)) {
             break;
@@ -1227,10 +1247,21 @@ namespace {
 
     }
 
+    void publish_startup_result(const HRESULT hr) {
+      {
+        std::lock_guard lock {startup_mutex_};
+        startup_result_ = hr;
+      }
+      startup_ready_.notify_all();
+    }
+
     IDDCX_SWAPCHAIN swapchain_ {};
     HANDLE next_surface_available_ {};
     std::atomic<bool> stop_requested_ {false};
     std::thread worker_ {};
+    std::mutex startup_mutex_ {};
+    std::condition_variable startup_ready_ {};
+    std::optional<HRESULT> startup_result_ {};
     Microsoft::WRL::ComPtr<ID3D11Device> device_;
     Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device_;
   };
@@ -1391,6 +1422,7 @@ namespace {
 
       // The async callback status is the point where IddCx says monitor arrival
       // is legal. Keep DeviceAdd successful, but block display creation until then.
+      std::lock_guard lock {mutex_};
       adapter_ready_ = NT_SUCCESS(args->AdapterInitStatus);
       return STATUS_SUCCESS;
     }
@@ -1535,10 +1567,10 @@ namespace {
           TraceLoggingInt32(status, "Status")
         );
         std::lock_guard lock {mutex_};
-        if (const auto monitor = monitors_.find(display_id); monitor != monitors_.end()) {
-          monitor->second.departing = false;
-          monitor->second.swapchain_processor = std::move(processor_to_stop);
-          monitor->second.retired_swapchain_processors = std::move(retired_processors_to_stop);
+        if (const auto monitor = monitors_.find(display_id);
+            monitor != monitors_.end() &&
+            monitor->second.monitor == monitor_handle) {
+          monitors_.erase(monitor);
         }
         return vdd::BackendError::Failed;
       }
@@ -1980,13 +2012,15 @@ NTSTATUS SunshineEvtDeviceAdd(WDFDRIVER driver, PWDFDEVICE_INIT device_init) {
   idd_config.EvtIddCxMonitorGetDefaultDescriptionModes = SunshineEvtGetDefaultDescriptionModes;
   idd_config.EvtIddCxMonitorAssignSwapChain = SunshineEvtAssignSwapChain;
   idd_config.EvtIddCxMonitorUnassignSwapChain = SunshineEvtUnassignSwapChain;
+  if (IDD_IS_FIELD_AVAILABLE(IDD_CX_CLIENT_CONFIG, EvtIddCxMonitorSetGammaRamp)) {
+    idd_config.EvtIddCxMonitorSetGammaRamp = SunshineEvtSetGammaRamp;
+  }
   if (has_hdr_iddcx_ddi()) {
     idd_config.EvtIddCxParseMonitorDescription2 = SunshineEvtParseMonitorDescription2;
     idd_config.EvtIddCxAdapterQueryTargetInfo = SunshineEvtAdapterQueryTargetInfo;
     idd_config.EvtIddCxAdapterCommitModes2 = SunshineEvtCommitModes2;
     idd_config.EvtIddCxMonitorSetDefaultHdrMetaData = SunshineEvtSetDefaultHdrMetadata;
     idd_config.EvtIddCxMonitorQueryTargetModes2 = SunshineEvtQueryTargetModes2;
-    idd_config.EvtIddCxMonitorSetGammaRamp = SunshineEvtSetGammaRamp;
   } else {
     idd_config.EvtIddCxParseMonitorDescription = SunshineEvtParseMonitorDescription;
     idd_config.EvtIddCxMonitorQueryTargetModes = SunshineEvtQueryTargetModes;

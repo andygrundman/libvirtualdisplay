@@ -214,6 +214,31 @@ TEST(VirtualDisplayWindowsDriverContract, SetsSwapChainDeviceFromProcessingThrea
   EXPECT_NE(source.find("HandleNewSwapChain still owns IddCx's internal OPM cleanup", assign), std::string::npos);
 }
 
+TEST(VirtualDisplayWindowsDriverContract, SwapChainStartupReportsInitialDeviceAssignment) {
+  const auto source = read_windows_driver_source();
+
+  const auto start = source.find("HRESULT start(const LUID &render_adapter_luid)");
+  ASSERT_NE(start, std::string::npos);
+  EXPECT_NE(source.find("startup_ready_.wait(lock", start), std::string::npos);
+  EXPECT_NE(source.find("return *startup_result_;", start), std::string::npos);
+
+  const auto process_frames = source.find("void process_frames(const LUID render_adapter_luid)");
+  ASSERT_NE(process_frames, std::string::npos);
+  EXPECT_NE(source.find("publish_startup_result(hr);", process_frames), std::string::npos);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, StopsSwapChainOnFrameCompletionFailure) {
+  const auto source = read_windows_driver_source();
+
+  const auto process_frames = source.find("void process_frames(const LUID render_adapter_luid)");
+  ASSERT_NE(process_frames, std::string::npos);
+  const auto finished = source.find("const HRESULT finished_result = IddCxSwapChainFinishedProcessingFrame(swapchain_);", process_frames);
+  ASSERT_NE(finished, std::string::npos);
+  const auto failure = source.find("SwapChainFinishedFrameFailed", finished);
+  ASSERT_NE(failure, std::string::npos);
+  EXPECT_NE(source.find("delete_swapchain();", failure), std::string::npos);
+}
+
 TEST(VirtualDisplayWindowsDriverContract, RegistersSwapChainWorkerWithMmcss) {
   const auto source = read_windows_driver_source();
 
@@ -229,6 +254,18 @@ TEST(VirtualDisplayWindowsDriverContract, RegistersSwapChainWorkerWithMmcss) {
   const auto create_device = source.find("reset_render_device(render_adapter_luid);", process_frames);
   ASSERT_NE(create_device, std::string::npos);
   EXPECT_LT(mmcss, create_device);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, SynchronizesAdapterReadinessPublication) {
+  const auto source = read_windows_driver_source();
+
+  const auto init_finished = source.find("NTSTATUS adapter_init_finished");
+  ASSERT_NE(init_finished, std::string::npos);
+  const auto lock = source.find("std::lock_guard lock {mutex_};", init_finished);
+  ASSERT_NE(lock, std::string::npos);
+  const auto ready = source.find("adapter_ready_ = NT_SUCCESS(args->AdapterInitStatus);", init_finished);
+  ASSERT_NE(ready, std::string::npos);
+  EXPECT_LT(lock, ready);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, RecoversRenderDeviceBeforeAbandoningSwapChain) {
@@ -332,6 +369,18 @@ TEST(VirtualDisplayWindowsDriverContract, RecordsAdvancedColorCallbacksPerMonito
   EXPECT_NE(source.find("return context->backend->set_gamma_ramp(monitor, args);"), std::string::npos);
 }
 
+TEST(VirtualDisplayWindowsDriverContract, RegistersGammaRampIndependentOfHdrCallbacks) {
+  const auto source = read_windows_driver_source();
+
+  const auto device_add = source.find("SunshineEvtDeviceAdd");
+  ASSERT_NE(device_add, std::string::npos);
+  const auto gamma = source.find("EvtIddCxMonitorSetGammaRamp = SunshineEvtSetGammaRamp;", device_add);
+  ASSERT_NE(gamma, std::string::npos);
+  const auto hdr = source.find("if (has_hdr_iddcx_ddi())", device_add);
+  ASSERT_NE(hdr, std::string::npos);
+  EXPECT_LT(gamma, hdr);
+}
+
 TEST(VirtualDisplayWindowsDriverContract, LinksTraceLoggingRuntime) {
   const auto cmake = read_windows_driver_cmake();
   EXPECT_NE(cmake.find("advapi32"), std::string::npos);
@@ -408,6 +457,18 @@ TEST(VirtualDisplayWindowsDriverContract, AbandonsInvalidatedSwapchainHandlesDur
     source.find("stop_swapchain_processors_without_delete(retired_processors_to_stop);", unassign_swapchain),
     std::string::npos
   );
+}
+
+TEST(VirtualDisplayWindowsDriverContract, MonitorDepartureFailureDoesNotRestoreStoppedProcessors) {
+  const auto source = read_windows_driver_source();
+
+  const auto depart_display = source.find("vdd::BackendError depart_display");
+  ASSERT_NE(depart_display, std::string::npos);
+  const auto failure = source.find("MonitorDepartureFailed", depart_display);
+  ASSERT_NE(failure, std::string::npos);
+  EXPECT_NE(source.find("monitors_.erase(monitor);", failure), std::string::npos);
+  EXPECT_EQ(source.find("monitor->second.departing = false;", failure), std::string::npos);
+  EXPECT_EQ(source.find("monitor->second.swapchain_processor = std::move(processor_to_stop);", failure), std::string::npos);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, TargetModesUseRequestedDescriptorTiming) {
