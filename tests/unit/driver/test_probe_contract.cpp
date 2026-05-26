@@ -71,6 +71,10 @@ TEST(VirtualDisplayProbeContract, ExposesTemporaryAndPermanentRuntimeChecks) {
   expect_contains(source, "--self-test-hdr [width height refresh_hz]");
   expect_contains(source, "--qa-multi-temp-lease [count timeout_ms]");
   expect_contains(source, "--qa-temp-identity-retention [width height refresh_hz timeout_ms]");
+  expect_contains(source, "refresh_millihz_from_hz(refresh_hz)");
+  expect_contains(source, "saturating_mul_u64");
+  expect_contains(source, "saturating_u32(static_cast<std::uint64_t>(refresh_hz) * height)");
+  expect_not_contains(source, "refresh_hz * 1000u");
 }
 
 TEST(VirtualDisplayProbeContract, DiagnoseRunsBeforeControlDeviceOpen) {
@@ -258,6 +262,7 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "ConvertStringSecurityDescriptorToSecurityDescriptorW");
   expect_contains(source, "RegCreateKeyExW");
   expect_contains(source, "RegSetKeySecurity");
+  expect_contains(source, "RegSetKeySecurity(key.get(), DACL_SECURITY_INFORMATION, security->attributes.lpSecurityDescriptor) != ERROR_SUCCESS");
   expect_contains(source, "RegQueryValueExW");
   expect_contains(source, "RegSetValueExW");
   expect_contains(source, "profile.native_mode_index < profile.allowed_mode_count");
@@ -273,6 +278,7 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "restore_persisted_display_manifest(client)");
   expect_contains(source, "CreateNamedPipeW");
   expect_contains(source, "ImpersonateNamedPipeClient");
+  expect_contains(source, "if (!RevertToSelf())");
   expect_contains(source, "CheckTokenMembership");
   expect_contains(source, "authorize_pipe_client(pipe)");
   expect_contains(source, "open_first_control_device()");
@@ -285,6 +291,10 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "vdd::display_manifest_from_permanent_settings(*request");
   expect_contains(source, "client.set_display_manifest(manifest)");
   expect_contains(source, "command.starts_with(\"manifest-profile-set \")");
+  expect_contains(source, "manifest.value.profiles[index].connector_index == profile->connector_index");
+  expect_contains(source, "return \"error manifest_full\\n\"");
+  expect_contains(source, "if (!save_display_manifest(manifest.value, current.value.max_display_count))");
+  expect_contains(source, "(void) save_display_manifest(original_manifest, current.value.max_display_count)");
   expect_contains(source, "command == \"permanent-query\"");
   expect_contains(source, "command.starts_with(\"permanent-set \")");
   expect_contains(source, "helper_arguments_for_broker_command");

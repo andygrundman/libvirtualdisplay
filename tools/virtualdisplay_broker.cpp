@@ -499,7 +499,9 @@ namespace {
     const bool authorized = opened_token &&
       (token_is_member_of_well_known_sid(token.get(), WinLocalSystemSid) ||
        token_is_member_of_well_known_sid(token.get(), WinBuiltinAdministratorsSid));
-    RevertToSelf();
+    if (!RevertToSelf()) {
+      return false;
+    }
     return authorized;
   }
 
@@ -610,7 +612,9 @@ namespace {
     if (status != ERROR_SUCCESS) {
       return std::nullopt;
     }
-    (void) RegSetKeySecurity(key.get(), DACL_SECURITY_INFORMATION, security->attributes.lpSecurityDescriptor);
+    if (RegSetKeySecurity(key.get(), DACL_SECURITY_INFORMATION, security->attributes.lpSecurityDescriptor) != ERROR_SUCCESS) {
+      return std::nullopt;
+    }
     return std::optional<RegistryKey> {std::move(key)};
   }
 
@@ -960,20 +964,35 @@ namespace {
       if (!manifest.ok()) {
         return "error " + format_status(manifest) + "\n";
       }
-      if (profile->connector_index > manifest.value.profile_count) {
-        return "error invalid_connector_index\n";
-      }
+      const auto original_manifest = manifest.value;
       manifest.value.max_profile_count = current.value.max_display_count;
-      manifest.value.profile_count = (std::max)(manifest.value.profile_count, profile->connector_index + 1);
-      manifest.value.profiles[profile->connector_index] = *profile;
-
-      const auto applied = client.set_display_manifest(manifest.value);
-      if (!applied.ok()) {
-        return "error " + format_status(applied) + "\n";
+      const auto bounded_profile_count =
+        (std::min)(manifest.value.profile_count, vdd::kMaxPermanentDisplayProfiles);
+      std::optional<std::uint32_t> profile_index;
+      for (std::uint32_t index = 0; index < bounded_profile_count; ++index) {
+        if (manifest.value.profiles[index].connector_index == profile->connector_index) {
+          profile_index = index;
+          break;
+        }
       }
-      if (!save_display_manifest(applied.value, current.value.max_display_count)) {
+      if (!profile_index) {
+        if (bounded_profile_count >= manifest.value.max_profile_count ||
+            bounded_profile_count >= vdd::kMaxPermanentDisplayProfiles) {
+          return "error manifest_full\n";
+        }
+        profile_index = bounded_profile_count;
+        manifest.value.profile_count = bounded_profile_count + 1;
+      }
+      manifest.value.profiles[*profile_index] = *profile;
+
+      if (!save_display_manifest(manifest.value, current.value.max_display_count)) {
         report_event_log(EVENTLOG_ERROR_TYPE, kEventServiceFailed, L"Persist display manifest profile failed");
         return "error persistence_failed\n";
+      }
+      const auto applied = client.set_display_manifest(manifest.value);
+      if (!applied.ok()) {
+        (void) save_display_manifest(original_manifest, current.value.max_display_count);
+        return "error " + format_status(applied) + "\n";
       }
       return "ok\n" + format_display_manifest(applied.value);
     }

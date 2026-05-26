@@ -4,9 +4,11 @@
 #include <array>
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <random>
 #include <string>
@@ -109,6 +111,24 @@ namespace {
     return value;
   }
 
+  std::uint64_t saturating_mul_u64(const std::uint64_t lhs, const std::uint64_t rhs) {
+    if (lhs != 0 && rhs > (std::numeric_limits<std::uint64_t>::max)() / lhs) {
+      return (std::numeric_limits<std::uint64_t>::max)();
+    }
+    return lhs * rhs;
+  }
+
+  std::uint32_t saturating_u32(const std::uint64_t value) {
+    return static_cast<std::uint32_t>((std::min<std::uint64_t>)(
+      value,
+      (std::numeric_limits<std::uint32_t>::max)()
+    ));
+  }
+
+  std::uint32_t refresh_millihz_from_hz(const std::uint32_t refresh_hz) {
+    return saturating_u32(static_cast<std::uint64_t>(refresh_hz) * 1000ull);
+  }
+
   vdd::CreateTemporaryDisplayRequest make_temporary_request(
     const std::uint32_t width,
     const std::uint32_t height,
@@ -119,7 +139,7 @@ namespace {
     request.display_id = transient_id(0x51dd15c0);
     request.width = width;
     request.height = height;
-    request.refresh_rate_millihz = refresh_hz * 1000u;
+    request.refresh_rate_millihz = refresh_millihz_from_hz(refresh_hz);
     request.requested_timeout_ms = 10'000;
     std::strncpy(request.display_name, "Sunshine Probe", sizeof(request.display_name) - 1);
     return request;
@@ -890,13 +910,18 @@ namespace {
     const std::uint32_t refresh_hz
   ) {
     DISPLAYCONFIG_VIDEO_SIGNAL_INFO signal {};
-    const auto total_width = (std::max)(width + width / 5u, width);
-    const auto total_height = (std::max)(height + height / 20u, height);
-    signal.pixelRate = static_cast<std::uint64_t>(total_width) * total_height * refresh_hz;
-    signal.hSyncFreq.Numerator = static_cast<UINT32>((std::min<std::uint64_t>)(signal.pixelRate, UINT32_MAX));
-    signal.hSyncFreq.Denominator = total_width;
-    signal.vSyncFreq.Numerator = static_cast<UINT32>((std::min<std::uint64_t>)(signal.pixelRate, UINT32_MAX));
-    signal.vSyncFreq.Denominator = total_width * total_height;
+    const auto total_width = saturating_u32(static_cast<std::uint64_t>(width) + width / 5u);
+    const auto total_height = saturating_u32(static_cast<std::uint64_t>(height) + height / 20u);
+    signal.pixelRate = saturating_mul_u64(
+      saturating_mul_u64(total_width, total_height),
+      refresh_hz
+    );
+    signal.hSyncFreq.Numerator = saturating_u32(signal.pixelRate);
+    signal.hSyncFreq.Denominator = total_width == 0 ? 1 : total_width;
+    signal.vSyncFreq.Numerator = saturating_u32(signal.pixelRate);
+    signal.vSyncFreq.Denominator = saturating_u32(
+      (std::max<std::uint64_t>)(1, saturating_mul_u64(total_width, total_height))
+    );
     signal.activeSize.cx = width;
     signal.activeSize.cy = height;
     signal.totalSize.cx = total_width;
@@ -913,11 +938,11 @@ namespace {
     const std::uint32_t refresh_hz
   ) {
     DISPLAYCONFIG_VIDEO_SIGNAL_INFO signal {};
-    signal.pixelRate =
-      static_cast<std::uint64_t>(width) *
-      static_cast<std::uint64_t>(height) *
-      static_cast<std::uint64_t>(refresh_hz);
-    signal.hSyncFreq.Numerator = refresh_hz * height;
+    signal.pixelRate = saturating_mul_u64(
+      saturating_mul_u64(width, height),
+      refresh_hz
+    );
+    signal.hSyncFreq.Numerator = saturating_u32(static_cast<std::uint64_t>(refresh_hz) * height);
     signal.hSyncFreq.Denominator = 1;
     signal.vSyncFreq.Numerator = refresh_hz;
     signal.vSyncFreq.Denominator = 1;
@@ -1024,7 +1049,7 @@ namespace {
     const std::uint32_t height,
     const std::uint32_t refresh_hz
   ) {
-    const auto requested_refresh = refresh_hz * 1000u;
+    const auto requested_refresh = refresh_millihz_from_hz(refresh_hz);
     const auto refresh_delta = path.refresh_millihz > requested_refresh ?
       path.refresh_millihz - requested_refresh :
       requested_refresh - path.refresh_millihz;
