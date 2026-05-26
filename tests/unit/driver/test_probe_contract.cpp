@@ -59,6 +59,7 @@ TEST(VirtualDisplayProbeContract, ExposesTemporaryAndPermanentRuntimeChecks) {
 
   expect_contains(source, "--diagnose");
   expect_contains(source, "--apply-extended-topology");
+  expect_contains(source, "--query-color-profiles");
   expect_contains(source, "--check");
   expect_contains(source, "--query-permanent");
   expect_contains(source, "--set-permanent <count>");
@@ -77,19 +78,27 @@ TEST(VirtualDisplayProbeContract, DiagnoseRunsBeforeControlDeviceOpen) {
   expect_contains(source, "control_interface_count=");
   expect_contains(source, "if (command == \"--diagnose\")");
   expect_contains(source, "if (command == \"--apply-extended-topology\")");
+  expect_contains(source, "if (command == \"--query-color-profiles\")");
   expect_contains(source, "apply_extended_topology_result()");
+  expect_contains(source, "ColorProfileGetDisplayUserScope");
+  expect_contains(source, "ColorProfileGetDisplayDefault");
+  expect_not_contains(source, "AssociateColorProfileWithDevice");
+  expect_not_contains(source, "SetICMProfile");
 
   const auto command_pos = source.find("const std::string command {argv[1]}");
   const auto diagnose_pos = source.find("if (command == \"--diagnose\")");
   const auto topology_pos = source.find("if (command == \"--apply-extended-topology\")");
+  const auto color_profile_pos = source.find("if (command == \"--query-color-profiles\")");
   const auto open_pos = source.find("auto opened = vdd::open_first_control_device()");
   ASSERT_NE(command_pos, std::string::npos);
   ASSERT_NE(diagnose_pos, std::string::npos);
   ASSERT_NE(topology_pos, std::string::npos);
+  ASSERT_NE(color_profile_pos, std::string::npos);
   ASSERT_NE(open_pos, std::string::npos);
   EXPECT_LT(command_pos, open_pos);
   EXPECT_LT(diagnose_pos, open_pos);
   EXPECT_LT(topology_pos, open_pos);
+  EXPECT_LT(color_profile_pos, open_pos);
 }
 
 TEST(VirtualDisplayProbeContract, PermanentSelfTestRestoresOriginalCount) {
@@ -103,9 +112,13 @@ TEST(VirtualDisplayProbeContract, PermanentSelfTestRestoresOriginalCount) {
 
 TEST(VirtualDisplayProbeContract, HdrSelfTestVerifiesWindowsAdvancedColorState) {
   const auto source = read_probe_source();
+  const auto cmake = read_driver_cmake();
 
   expect_contains(source, "DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO_2");
   expect_contains(source, "DISPLAYCONFIG_DEVICE_INFO_SET_HDR_STATE");
+  expect_contains(source, "ColorProfileGetDisplayUserScope");
+  expect_contains(source, "ColorProfileGetDisplayDefault");
+  expect_contains(cmake, "target_link_libraries(virtualdisplay_probe PRIVATE libvirtualdisplay::driver mscms)");
   expect_contains(source, "const auto after = wait_for_advanced_color(");
   expect_contains(source, "created.value.os_adapter_luid");
   expect_contains(source, "created.value.target_id");
@@ -118,6 +131,7 @@ TEST(VirtualDisplayProbeContract, DisplayConfigCommandsRequireInteractiveSession
 
   expect_contains(source, "command_uses_display_config");
   expect_contains(source, "--apply-extended-topology");
+  expect_contains(source, "--query-color-profiles");
   expect_contains(source, "--self-test-4k240");
   expect_contains(source, "--self-test-hdr");
   expect_contains(source, "--qa-temp-identity-retention");

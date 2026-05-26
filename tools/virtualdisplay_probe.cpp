@@ -18,6 +18,7 @@
   #ifndef WIN32_LEAN_AND_MEAN
     #define WIN32_LEAN_AND_MEAN
   #endif
+  #include <Icm.h>
   #include <windows.h>
 #endif
 
@@ -29,6 +30,7 @@ namespace {
       << "virtualdisplay_probe commands:\n"
       << "  --diagnose\n"
       << "  --apply-extended-topology\n"
+      << "  --query-color-profiles\n"
       << "  --check\n"
       << "  --query-permanent\n"
       << "  --set-permanent <count>\n"
@@ -226,6 +228,7 @@ namespace {
 
   bool command_uses_display_config(const std::string_view command) {
     return command == "--apply-extended-topology" ||
+           command == "--query-color-profiles" ||
            command == "--self-test-4k240" ||
            command == "--self-test-hdr" ||
            command == "--qa-temp-identity-retention" ||
@@ -876,6 +879,97 @@ namespace {
     return std::wstring {source_name.viewGdiDeviceName};
   }
 
+  class LocalWideString {
+  public:
+    ~LocalWideString() {
+      if (value_) {
+        LocalFree(value_);
+      }
+    }
+
+    [[nodiscard]] LPWSTR *put() {
+      if (value_) {
+        LocalFree(value_);
+        value_ = nullptr;
+      }
+      return &value_;
+    }
+
+    [[nodiscard]] const wchar_t *get() const {
+      return value_ ? value_ : L"";
+    }
+
+  private:
+    LPWSTR value_ {};
+  };
+
+  void print_default_color_profile(
+    const WCS_PROFILE_MANAGEMENT_SCOPE scope,
+    const LUID &adapter_luid,
+    const UINT32 source_id,
+    const COLORPROFILESUBTYPE subtype,
+    const char *label
+  ) {
+    LocalWideString profile_name;
+    const HRESULT result = ColorProfileGetDisplayDefault(
+      scope,
+      adapter_luid,
+      source_id,
+      CPT_ICC,
+      subtype,
+      profile_name.put()
+    );
+    if (FAILED(result)) {
+      std::cout << label << "_profile_hresult=0x" << std::hex
+                << static_cast<unsigned long>(result) << std::dec << '\n';
+      return;
+    }
+
+    std::wcout << label << L"_profile=\"" << profile_name.get() << L"\"\n";
+  }
+
+  int query_color_profiles() {
+    auto display_config = query_display_config(QDC_ONLY_ACTIVE_PATHS);
+    if (!display_config) {
+      std::cerr << "color profile query requires active DisplayConfig paths\n";
+      return 1;
+    }
+
+    std::size_t queried = 0;
+    for (const auto &path: display_config->paths) {
+      if ((path.flags & DISPLAYCONFIG_PATH_ACTIVE) == 0) {
+        continue;
+      }
+
+      WCS_PROFILE_MANAGEMENT_SCOPE scope {};
+      const HRESULT scope_result = ColorProfileGetDisplayUserScope(
+        path.targetInfo.adapterId,
+        path.sourceInfo.id,
+        &scope
+      );
+
+      std::cout << "color_profile_path[" << queried << "]"
+                << " source_luid=" << path.sourceInfo.adapterId.HighPart << ':' << path.sourceInfo.adapterId.LowPart
+                << " source_id=" << path.sourceInfo.id
+                << " target_luid=" << path.targetInfo.adapterId.HighPart << ':' << path.targetInfo.adapterId.LowPart
+                << " target_id=" << path.targetInfo.id;
+      if (FAILED(scope_result)) {
+        std::cout << " scope_hresult=0x" << std::hex
+                  << static_cast<unsigned long>(scope_result) << std::dec << '\n';
+        ++queried;
+        continue;
+      }
+
+      std::cout << " scope=" << static_cast<unsigned int>(scope) << '\n';
+      print_default_color_profile(scope, path.targetInfo.adapterId, path.sourceInfo.id, CPST_STANDARD_DISPLAY_COLOR_MODE, "standard");
+      print_default_color_profile(scope, path.targetInfo.adapterId, path.sourceInfo.id, CPST_EXTENDED_DISPLAY_COLOR_MODE, "extended");
+      ++queried;
+    }
+
+    std::cout << "color_profile_paths=" << queried << '\n';
+    return queried == 0 ? 1 : 0;
+  }
+
   LONG set_active_display_mode(
     const vdd::AdapterLuid &adapter_luid,
     const std::uint32_t target_id,
@@ -1125,6 +1219,13 @@ int main(const int argc, char **argv) {
 
     std::cout << "extended_topology_applied=1\n";
     return 0;
+  }
+
+  if (command == "--query-color-profiles") {
+    if (const int session_status = require_active_console_session(command); session_status != 0) {
+      return session_status;
+    }
+    return query_color_profiles();
   }
 
   auto opened = vdd::open_first_control_device();
