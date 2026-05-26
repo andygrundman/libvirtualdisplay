@@ -221,6 +221,28 @@ TEST(VirtualDisplayWindowsDriverContract, RegistersTraceLoggingProvider) {
   EXPECT_NE(source.find("TraceLoggingWrite("), std::string::npos);
   EXPECT_NE(source.find("\"DeviceIoControl\""), std::string::npos);
   EXPECT_NE(source.find("\"RenderDeviceLost\""), std::string::npos);
+  EXPECT_NE(source.find("\"RenderDeviceCreated\""), std::string::npos);
+  EXPECT_NE(source.find("\"MonitorArrived\""), std::string::npos);
+  EXPECT_NE(source.find("\"MonitorDeparted\""), std::string::npos);
+  EXPECT_NE(source.find("\"SwapChainAssigned\""), std::string::npos);
+  EXPECT_NE(source.find("\"SwapChainUnassigned\""), std::string::npos);
+  EXPECT_NE(source.find("\"DefaultHdrMetadataSet\""), std::string::npos);
+  EXPECT_NE(source.find("\"GammaRampSet\""), std::string::npos);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, RecordsAdvancedColorCallbacksPerMonitor) {
+  const auto source = read_windows_driver_source();
+
+  EXPECT_NE(source.find("IDDCX_DEFAULT_HDR_METADATA_TYPE default_hdr_metadata_type"), std::string::npos);
+  EXPECT_NE(source.find("IDDCX_GAMMARAMP_TYPE gamma_ramp_type"), std::string::npos);
+  EXPECT_NE(source.find("NTSTATUS set_default_hdr_metadata("), std::string::npos);
+  EXPECT_NE(source.find("record->second.default_hdr_metadata_type = args->Type;"), std::string::npos);
+  EXPECT_NE(source.find("record->second.default_hdr_metadata_size = args->Size;"), std::string::npos);
+  EXPECT_NE(source.find("NTSTATUS set_gamma_ramp("), std::string::npos);
+  EXPECT_NE(source.find("record->second.gamma_ramp_type = args->Type;"), std::string::npos);
+  EXPECT_NE(source.find("record->second.gamma_ramp_size = args->GammaRampSizeInBytes;"), std::string::npos);
+  EXPECT_NE(source.find("return context->backend->set_default_hdr_metadata(monitor, args);"), std::string::npos);
+  EXPECT_NE(source.find("return context->backend->set_gamma_ramp(monitor, args);"), std::string::npos);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, LinksTraceLoggingRuntime) {

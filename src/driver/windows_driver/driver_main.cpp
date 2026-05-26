@@ -82,6 +82,10 @@ namespace {
     std::vector<std::unique_ptr<SwapChainProcessor>> retired_swapchain_processors {};
     bool permanent {};
     bool departing {};
+    IDDCX_DEFAULT_HDR_METADATA_TYPE default_hdr_metadata_type {IDDCX_HDRMETADATA_TYPE_UNINITIALIZED};
+    UINT default_hdr_metadata_size {};
+    IDDCX_GAMMARAMP_TYPE gamma_ramp_type {IDDCX_GAMMARAMP_TYPE_UNINITIALIZED};
+    UINT gamma_ramp_size {};
   };
 
   struct ModeShape {
@@ -905,6 +909,7 @@ namespace {
       if (SUCCEEDED(hr)) {
         hr = create_device(adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN);
         if (SUCCEEDED(hr)) {
+          TraceLoggingWrite(g_trace_provider, "RenderDeviceCreated", TraceLoggingString("Hardware", "DriverType"));
           return hr;
         }
       }
@@ -925,6 +930,7 @@ namespace {
       return hr;
     }
 
+    TraceLoggingWrite(g_trace_provider, "RenderDeviceCreated", TraceLoggingString("WARP", "DriverType"));
     return S_OK;
   }
 
@@ -1352,6 +1358,14 @@ namespace {
         return {vdd::BackendError::Failed, {}, 0};
       }
 
+      TraceLoggingWrite(
+        g_trace_provider,
+        "MonitorArrived",
+        TraceLoggingUInt64(descriptor.display_id, "DisplayId"),
+        TraceLoggingUInt32(descriptor.connector_index, "ConnectorIndex"),
+        TraceLoggingBool(permanent, "Permanent"),
+        TraceLoggingUInt32(arrival_out.OsTargetId, "OsTargetId")
+      );
       return {
         vdd::BackendError::None,
         vdd::from_windows_luid(arrival_out.OsAdapterLuid),
@@ -1401,6 +1415,12 @@ namespace {
       // callbacks from re-entering a locked monitor map.
       const auto status = IddCxMonitorDeparture(monitor_handle);
       if (!NT_SUCCESS(status)) {
+        TraceLoggingWrite(
+          g_trace_provider,
+          "MonitorDepartureFailed",
+          TraceLoggingUInt64(display_id, "DisplayId"),
+          TraceLoggingInt32(status, "Status")
+        );
         std::lock_guard lock {mutex_};
         if (const auto monitor = monitors_.find(display_id); monitor != monitors_.end()) {
           monitor->second.departing = false;
@@ -1416,6 +1436,7 @@ namespace {
           monitor->second.monitor == monitor_handle) {
         monitors_.erase(monitor);
       }
+      TraceLoggingWrite(g_trace_provider, "MonitorDeparted", TraceLoggingUInt64(display_id, "DisplayId"));
       return vdd::BackendError::None;
     }
 
@@ -1470,6 +1491,13 @@ namespace {
         }
       }
 
+      TraceLoggingWrite(
+        g_trace_provider,
+        "SwapChainAssigned",
+        TraceLoggingUInt64(context->display_id, "DisplayId"),
+        TraceLoggingInt32(args->RenderAdapterLuid.HighPart, "RenderAdapterHigh"),
+        TraceLoggingUInt32(args->RenderAdapterLuid.LowPart, "RenderAdapterLow")
+      );
       return STATUS_SUCCESS;
     }
 
@@ -1507,6 +1535,70 @@ namespace {
       // longer valid. Do not WdfObjectDelete that handle from our destructor.
       stop_swapchain_processor_without_delete(processor_to_stop);
       stop_swapchain_processors_without_delete(retired_processors_to_stop);
+      TraceLoggingWrite(g_trace_provider, "SwapChainUnassigned", TraceLoggingUInt64(context->display_id, "DisplayId"));
+      return STATUS_SUCCESS;
+    }
+
+    NTSTATUS set_default_hdr_metadata(
+      IDDCX_MONITOR monitor,
+      const IDARG_IN_MONITOR_SET_DEFAULT_HDR_METADATA *args
+    ) {
+      if (!monitor || !args || (args->Size > 0 && !args->Data.pHdr10)) {
+        return STATUS_INVALID_PARAMETER;
+      }
+
+      auto *context = GetMonitorContext(monitor);
+      if (!context || !context->backend) {
+        return STATUS_DEVICE_NOT_READY;
+      }
+
+      {
+        std::lock_guard lock {mutex_};
+        const auto record = monitors_.find(context->display_id);
+        if (record == monitors_.end()) {
+          return STATUS_DEVICE_NOT_READY;
+        }
+        record->second.default_hdr_metadata_type = args->Type;
+        record->second.default_hdr_metadata_size = args->Size;
+      }
+
+      TraceLoggingWrite(
+        g_trace_provider,
+        "DefaultHdrMetadataSet",
+        TraceLoggingUInt64(context->display_id, "DisplayId"),
+        TraceLoggingUInt32(static_cast<std::uint32_t>(args->Type), "Type"),
+        TraceLoggingUInt32(args->Size, "Size")
+      );
+      return STATUS_SUCCESS;
+    }
+
+    NTSTATUS set_gamma_ramp(IDDCX_MONITOR monitor, const IDARG_IN_SET_GAMMARAMP *args) {
+      if (!monitor || !args || (args->GammaRampSizeInBytes > 0 && !args->pGammaRampData)) {
+        return STATUS_INVALID_PARAMETER;
+      }
+
+      auto *context = GetMonitorContext(monitor);
+      if (!context || !context->backend) {
+        return STATUS_DEVICE_NOT_READY;
+      }
+
+      {
+        std::lock_guard lock {mutex_};
+        const auto record = monitors_.find(context->display_id);
+        if (record == monitors_.end()) {
+          return STATUS_DEVICE_NOT_READY;
+        }
+        record->second.gamma_ramp_type = args->Type;
+        record->second.gamma_ramp_size = args->GammaRampSizeInBytes;
+      }
+
+      TraceLoggingWrite(
+        g_trace_provider,
+        "GammaRampSet",
+        TraceLoggingUInt64(context->display_id, "DisplayId"),
+        TraceLoggingUInt32(static_cast<std::uint32_t>(args->Type), "Type"),
+        TraceLoggingUInt32(args->GammaRampSizeInBytes, "Size")
+      );
       return STATUS_SUCCESS;
     }
 
@@ -1905,19 +1997,35 @@ NTSTATUS SunshineEvtCommitModes2(IDDCX_ADAPTER, const IDARG_IN_COMMITMODES2 *) {
 }
 
 NTSTATUS SunshineEvtSetDefaultHdrMetadata(
-  IDDCX_MONITOR,
-  const IDARG_IN_MONITOR_SET_DEFAULT_HDR_METADATA *
+  IDDCX_MONITOR monitor,
+  const IDARG_IN_MONITOR_SET_DEFAULT_HDR_METADATA *args
 ) {
-  return STATUS_SUCCESS;
+  if (!monitor) {
+    return STATUS_INVALID_PARAMETER;
+  }
+
+  auto *context = GetMonitorContext(monitor);
+  if (!context || !context->backend) {
+    return STATUS_DEVICE_NOT_READY;
+  }
+
+  return context->backend->set_default_hdr_metadata(monitor, args);
 }
 
 NTSTATUS SunshineEvtSetGammaRamp(
-  IDDCX_MONITOR,
+  IDDCX_MONITOR monitor,
   const IDARG_IN_SET_GAMMARAMP *args
 ) {
-  // The driver does not transform pixels itself, but Windows probes this DDI
-  // after we advertise software gamma support for HDR/high-color targets.
-  return args ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+  if (!monitor) {
+    return STATUS_INVALID_PARAMETER;
+  }
+
+  auto *context = GetMonitorContext(monitor);
+  if (!context || !context->backend) {
+    return STATUS_DEVICE_NOT_READY;
+  }
+
+  return context->backend->set_gamma_ramp(monitor, args);
 }
 
 NTSTATUS SunshineEvtQueryTargetModes2(
