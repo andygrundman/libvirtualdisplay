@@ -11,6 +11,10 @@ on:
         description: 'Release version, for example v0.1.0'
         required: true
         type: string
+      release_evidence_json:
+        description: 'JSON evidence proving HLK/WHQL, HVCI, Memory Integrity, install, identity, and cleanup gates.'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -52,6 +56,13 @@ jobs:
           $packageVersion = $version.TrimStart('v')
           "version=$version" >> $env:GITHUB_OUTPUT
           "package_version=$packageVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Validate release evidence
+        shell: pwsh
+        env:
+          RELEASE_EVIDENCE_JSON: ${{ github.event.inputs.release_evidence_json || vars.LIBVIRTUALDISPLAY_RELEASE_EVIDENCE_JSON }}
+        run: |
+          ./tools/validate_release_evidence.ps1 -EvidenceJson $env:RELEASE_EVIDENCE_JSON
 
       - name: Verify WDK paths
         shell: pwsh

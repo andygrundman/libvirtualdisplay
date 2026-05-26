@@ -75,6 +75,34 @@ namespace {
     buffer << file.rdbuf();
     return buffer.str();
   }
+
+  std::string read_release_workflow() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
+                      ".github/workflows/release.yml";
+    std::ifstream file {path, std::ios::binary};
+    if (!file) {
+      ADD_FAILURE() << "Failed to open " << path.string();
+      return {};
+    }
+
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+  }
+
+  std::string read_release_evidence_validator() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
+                      "tools/validate_release_evidence.ps1";
+    std::ifstream file {path, std::ios::binary};
+    if (!file) {
+      ADD_FAILURE() << "Failed to open " << path.string();
+      return {};
+    }
+
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+  }
 }  // namespace
 
 TEST(VirtualDisplayWindowsDriverContract, DeletesMonitorObjectWhenArrivalFails) {
@@ -298,6 +326,8 @@ TEST(VirtualDisplayWindowsDriverContract, DocumentsSupportDiagnosticsCapture) {
   EXPECT_NE(docs.find("broker query-state"), std::string::npos);
   EXPECT_NE(docs.find("broker helper-query-color-profiles"), std::string::npos);
   EXPECT_NE(docs.find("HKLM\\SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers"), std::string::npos);
+  EXPECT_NE(docs.find("IddCxDebugCtrl=0x0f4"), std::string::npos);
+  EXPECT_NE(docs.find("logman create trace IddCx"), std::string::npos);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, PackagesDriverSymbolsWithReleaseZip) {
@@ -312,6 +342,22 @@ TEST(VirtualDisplayWindowsDriverContract, PackagesDriverSymbolsWithReleaseZip) {
     readme.find("driver/SunshineVirtualDisplayDriver.pdb"),
     std::string::npos
   );
+}
+
+TEST(VirtualDisplayWindowsDriverContract, ReleaseWorkflowRequiresCertificationEvidence) {
+  const auto workflow = read_release_workflow();
+  const auto validator = read_release_evidence_validator();
+
+  EXPECT_NE(workflow.find("release_evidence_json"), std::string::npos);
+  EXPECT_NE(workflow.find("Validate release evidence"), std::string::npos);
+  EXPECT_NE(workflow.find("tools/validate_release_evidence.ps1"), std::string::npos);
+  EXPECT_NE(validator.find("Production release signing channel must be HLK/WHQL."), std::string::npos);
+  EXPECT_NE(validator.find("Indirect Display Mode Change"), std::string::npos);
+  EXPECT_NE(validator.find("Indirect Display Render Adapter TDR"), std::string::npos);
+  EXPECT_NE(validator.find("hvci_readiness_passed"), std::string::npos);
+  EXPECT_NE(validator.find("memory_integrity_functional_passed"), std::string::npos);
+  EXPECT_NE(validator.find("permanent_identity_retention_passed"), std::string::npos);
+  EXPECT_NE(validator.find("temporary_cleanup_passed"), std::string::npos);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, AbandonsInvalidatedSwapchainHandlesDuringTeardown) {

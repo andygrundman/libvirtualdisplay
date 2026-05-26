@@ -57,4 +57,23 @@ registry settings under:
 
 Record the original values, apply only the requested debug settings, reproduce
 the issue, collect the driver ETW and broker/helper Event Log evidence above,
-then restore the original registry state.
+then restore the original registry state. Microsoft's IddCx debugging reference
+documents these common values:
+
+- `TerminateIndirectOnStall`: disabling this watchdog is for local debugging
+  only because it will fail HLK.
+- `IddCxDebugCtrl=0x0001`: break into the debugger when IddCx detects an error.
+- `IddCxDebugCtrl=0x0f4`: capture normal IddCx WPP logging on Windows build
+  `19041` and later.
+- `IddCxDebugCtrl=0x1f4`: include high-frequency frame-related IddCx WPP
+  logging when frame timing is the issue.
+
+Capture the IddCx class-extension WPP trace alongside the driver provider:
+
+```powershell
+logman create trace IddCx -o IddCx.etl -ets -ow -mode sequential -p "{D92BCB52-FA78-406F-A9A5-2037509FADEA}" 0x0f4 0xff
+# Reproduce the issue.
+logman stop IddCx -ets
+```
+
+Source: <https://learn.microsoft.com/en-us/windows-hardware/drivers/display/indirect-display-debugging>
