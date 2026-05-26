@@ -294,6 +294,7 @@ namespace virtual_display::driver {
     InvalidLayoutPolicy,
     InvalidOrientation,
     InvalidManufacturerId,
+    InvalidProductCode,
     DuplicateManifestIdentity,
   };
 

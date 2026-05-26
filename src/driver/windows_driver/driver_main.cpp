@@ -654,7 +654,9 @@ namespace {
       profile.manufacturer_id[1],
       profile.manufacturer_id[2]
     };
-    options.product_code = static_cast<std::uint16_t>(profile.product_code);
+    options.product_code = profile.product_code > 0xffffu ?
+      0xffffu :
+      static_cast<std::uint16_t>(profile.product_code);
     options.serial_number = profile.serial_number;
     options.width = mode.width;
     options.height = mode.height;
@@ -764,6 +766,8 @@ namespace {
     options.physical_width_mm = descriptor.physical_width_mm;
     options.physical_height_mm = descriptor.physical_height_mm;
     options.refresh_rate_millihz = descriptor.refresh_rate_millihz;
+    const auto monitor_name = vdd::read_monitor_name(descriptor.edid);
+    options.monitor_name = monitor_name.value_or("Sunshine Display");
     options.hdr_supported = false;
 
     auto downgraded = descriptor;

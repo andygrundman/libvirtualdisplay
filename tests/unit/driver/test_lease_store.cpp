@@ -3,6 +3,7 @@
 #include "virtual_display/driver/lease_store.h"
 
 #include <cstring>
+#include <limits>
 #include <string>
 
 namespace vdd = virtual_display::driver;
@@ -69,6 +70,20 @@ TEST(VirtualDisplayDriverLeaseStore, RejectsTemporaryDisplayLimit) {
   const auto now = std::chrono::steady_clock::now();
 
   ASSERT_EQ(store.create_temporary_display(make_create_request(lease_id(1), 10), now).status.error, vdd::StoreError::None);
+  EXPECT_EQ(
+    store.create_temporary_display(make_create_request(lease_id(2), 20), now).status.error,
+    vdd::StoreError::TemporaryDisplayLimitReached
+  );
+}
+
+TEST(VirtualDisplayDriverLeaseStore, ClampsOverflowingTemporaryConnectorRange) {
+  vdd::DisplayStore store {(std::numeric_limits<std::uint32_t>::max)() - 1u, 4};
+  const auto now = std::chrono::steady_clock::now();
+
+  const auto created = store.create_temporary_display(make_create_request(lease_id(1), 10), now);
+  EXPECT_EQ(created.status.error, vdd::StoreError::None);
+  EXPECT_EQ(created.result.connector_index, (std::numeric_limits<std::uint32_t>::max)() - 1u);
+
   EXPECT_EQ(
     store.create_temporary_display(make_create_request(lease_id(2), 20), now).status.error,
     vdd::StoreError::TemporaryDisplayLimitReached

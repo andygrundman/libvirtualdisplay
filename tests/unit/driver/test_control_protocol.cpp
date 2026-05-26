@@ -384,6 +384,10 @@ TEST(VirtualDisplayDriverControlProtocol, ValidatesDisplayManifest) {
   EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidManufacturerId);
 
   manifest = valid_display_manifest();
+  manifest.profiles[0].product_code = 0x1'0000u;
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidProductCode);
+
+  manifest = valid_display_manifest();
   manifest.profiles[0].connector_index = 2;
   EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidConnectorIndex);
 

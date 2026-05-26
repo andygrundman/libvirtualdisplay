@@ -3,7 +3,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 
 namespace virtual_display::driver {
@@ -38,5 +40,6 @@ namespace virtual_display::driver {
   std::array<char, 3> read_manufacturer_id(std::span<const std::byte, kEdidSize> edid);
   std::uint16_t read_product_code(std::span<const std::byte, kEdidSize> edid);
   std::uint32_t read_serial_number(std::span<const std::byte, kEdidSize> edid);
+  std::optional<std::string> read_monitor_name(std::span<const std::byte, kEdidSize> edid);
   PreferredTiming read_preferred_timing(std::span<const std::byte, kEdidSize> edid);
 }  // namespace virtual_display::driver

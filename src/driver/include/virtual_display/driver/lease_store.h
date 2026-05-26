@@ -93,6 +93,7 @@ namespace virtual_display::driver {
     };
 
     bool is_temporary_connector_index(std::uint32_t connector_index) const;
+    std::uint32_t temporary_connector_limit() const;
     bool connector_index_is_active(std::uint32_t connector_index) const;
     bool connector_index_is_reserved(std::uint32_t connector_index) const;
     bool connector_index_is_reserved_for_other_display(std::uint32_t connector_index, std::uint64_t display_id) const;

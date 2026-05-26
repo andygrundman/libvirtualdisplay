@@ -37,6 +37,7 @@ TEST(VirtualDisplayDriverDisplayIdentity, DerivesStableNonzeroSerialFromDisplayI
 TEST(VirtualDisplayDriverDisplayIdentity, DerivesPermanentDisplayIdentityFromSlot) {
   EXPECT_EQ(vdd::permanent_display_id(0), 0x7000000000000001ull);
   EXPECT_EQ(vdd::permanent_display_id(3), 0x7000000000000004ull);
+  EXPECT_EQ(vdd::permanent_display_id(0xffffffffu), 0x7000000100000000ull);
   EXPECT_EQ(vdd::permanent_product_code(0), 0x4000u);
   EXPECT_EQ(vdd::permanent_product_code(3), 0x4003u);
 }
@@ -76,5 +77,6 @@ TEST(VirtualDisplayDriverDisplayIdentity, BuildsHdrEdidOptionsFromDisplayRecord)
   const auto edid = vdd::create_edid(options);
   EXPECT_EQ(vdd::read_manufacturer_id(edid), (std::array<char, 3> {'S', 'D', 'D'}));
   EXPECT_EQ(vdd::read_product_code(edid), 0x5678u);
+  EXPECT_EQ(vdd::read_monitor_name(edid), record.display_name);
   EXPECT_TRUE(vdd::has_hdr_static_metadata(edid));
 }

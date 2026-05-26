@@ -2,7 +2,7 @@
 
 namespace virtual_display::driver {
   std::uint64_t permanent_display_id(const std::uint32_t index) {
-    return kPermanentDisplayIdBase | static_cast<std::uint64_t>(index + 1);
+    return kPermanentDisplayIdBase | (static_cast<std::uint64_t>(index) + 1ull);
   }
 
   std::uint16_t permanent_product_code(const std::uint32_t index) {

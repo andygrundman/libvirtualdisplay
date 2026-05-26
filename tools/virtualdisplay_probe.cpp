@@ -2120,7 +2120,7 @@ int main(const int argc, char **argv) {
       return 1;
     }
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(timeout_ms + 2'000u));
+    std::this_thread::sleep_for(std::chrono::milliseconds(active.value.effective_timeout_ms + 2'000u));
     const auto expired = client.query_lease(lease_request);
     if (!expired.ok()) {
       (void) client.release_lease(lease_request);

@@ -236,6 +236,7 @@ TEST(VirtualDisplayProbeContract, MultiTemporaryLeaseQaCreatesAndExpiresSeveralD
   expect_contains(source, "multi-temp QA reused connector index");
   expect_contains(source, "read_u32_arg(argc, argv, 2, 3u, \"count\", count)");
   expect_contains(source, "active.value.temporary_display_count != count");
+  expect_contains(source, "std::chrono::milliseconds(active.value.effective_timeout_ms + 2'000u)");
   expect_contains(source, "multi-temp QA lease did not expire cleanly");
   expect_contains(source, "qa_multi_temp_lease=1");
 }

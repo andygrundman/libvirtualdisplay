@@ -562,7 +562,10 @@ TEST(VirtualDisplayWindowsDriverContract, PermanentDisplaysUseControlPlaneModeSe
   EXPECT_NE(source.find("vdd::set_default_permanent_display_settings(normalized);"), std::string::npos);
   EXPECT_NE(source.find("make_permanent_descriptor(const vdd::DisplayManifestProfile &profile)"), std::string::npos);
   EXPECT_NE(source.find("profile.manufacturer_id[0]"), std::string::npos);
-  EXPECT_NE(source.find("options.product_code = static_cast<std::uint16_t>(profile.product_code);"), std::string::npos);
+  EXPECT_NE(source.find("profile.product_code > 0xffffu"), std::string::npos);
+  EXPECT_NE(source.find("static_cast<std::uint16_t>(profile.product_code)"), std::string::npos);
+  EXPECT_NE(source.find("const auto monitor_name = vdd::read_monitor_name(descriptor.edid);"), std::string::npos);
+  EXPECT_NE(source.find("options.monitor_name = monitor_name.value_or(\"Sunshine Display\");"), std::string::npos);
   EXPECT_NE(source.find("vdd::BackendError apply_display_manifest(const vdd::DisplayManifest &manifest) override"), std::string::npos);
 }
 

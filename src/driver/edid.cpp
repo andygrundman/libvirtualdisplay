@@ -402,6 +402,34 @@ namespace virtual_display::driver {
            (static_cast<std::uint32_t>(to_u8(edid[15])) << 24);
   }
 
+  std::optional<std::string> read_monitor_name(const std::span<const std::byte, kEdidSize> edid) {
+    constexpr std::array<std::size_t, 4> kDescriptorOffsets {54, 72, 90, 108};
+    for (const auto offset: kDescriptorOffsets) {
+      if (edid[offset] != std::byte {0x00} ||
+          edid[offset + 1] != std::byte {0x00} ||
+          edid[offset + 2] != std::byte {0x00} ||
+          edid[offset + 3] != std::byte {0xfc} ||
+          edid[offset + 4] != std::byte {0x00}) {
+        continue;
+      }
+
+      std::string name;
+      name.reserve(13);
+      for (std::size_t index = offset + 5; index < offset + 18; ++index) {
+        name.push_back(static_cast<char>(to_u8(edid[index])));
+      }
+      while (!name.empty() &&
+             (name.back() == '\0' || name.back() == '\n' || name.back() == '\r' || name.back() == ' ')) {
+        name.pop_back();
+      }
+      if (!name.empty()) {
+        return name;
+      }
+    }
+
+    return std::nullopt;
+  }
+
   PreferredTiming read_preferred_timing(const std::span<const std::byte, kEdidSize> edid) {
     constexpr std::size_t offset = 54;
 

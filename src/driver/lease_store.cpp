@@ -3,6 +3,7 @@
 #include "virtual_display/driver/display_identity.h"
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace virtual_display::driver {
@@ -396,8 +397,16 @@ namespace virtual_display::driver {
   }
 
   bool DisplayStore::is_temporary_connector_index(const std::uint32_t connector_index) const {
+    const auto limit = temporary_connector_limit();
     return connector_index >= max_permanent_displays_ &&
-           connector_index < max_permanent_displays_ + max_temporary_displays_;
+           connector_index < limit;
+  }
+
+  std::uint32_t DisplayStore::temporary_connector_limit() const {
+    if (max_temporary_displays_ > (std::numeric_limits<std::uint32_t>::max)() - max_permanent_displays_) {
+      return (std::numeric_limits<std::uint32_t>::max)();
+    }
+    return max_permanent_displays_ + max_temporary_displays_;
   }
 
   bool DisplayStore::connector_index_is_active(const std::uint32_t connector_index) const {
@@ -456,8 +465,9 @@ namespace virtual_display::driver {
       }
     }
 
+    const auto connector_limit = temporary_connector_limit();
     for (std::uint32_t connector_index = max_permanent_displays_;
-         connector_index < max_permanent_displays_ + max_temporary_displays_;
+         connector_index < connector_limit;
          ++connector_index) {
       if (!connector_index_is_active(connector_index) &&
           (retain_identity ?
@@ -468,7 +478,7 @@ namespace virtual_display::driver {
     }
 
     for (std::uint32_t connector_index = max_permanent_displays_;
-         connector_index < max_permanent_displays_ + max_temporary_displays_;
+         connector_index < connector_limit;
          ++connector_index) {
       if (!connector_index_is_active(connector_index)) {
         remove_connector_reservation(connector_index, display_id);
@@ -476,7 +486,7 @@ namespace virtual_display::driver {
       }
     }
 
-    return max_permanent_displays_ + max_temporary_displays_;
+    return connector_limit;
   }
 
   bool DisplayStore::lease_has_displays(const std::uint64_t lease_id) const {

@@ -224,6 +224,9 @@ namespace virtual_display::driver {
           profile.serial_number == 0) {
         return ValidationError::DuplicateManifestIdentity;
       }
+      if (profile.product_code > 0xffffu) {
+        return ValidationError::InvalidProductCode;
+      }
       for (std::uint32_t previous = 0; previous < index; ++previous) {
         if (used_display_ids[previous] == profile.display_id ||
             used_container_ids[previous] == profile.container_id ||
@@ -315,6 +318,8 @@ namespace virtual_display::driver {
         return "invalid_orientation";
       case ValidationError::InvalidManufacturerId:
         return "invalid_manufacturer_id";
+      case ValidationError::InvalidProductCode:
+        return "invalid_product_code";
       case ValidationError::DuplicateManifestIdentity:
         return "duplicate_manifest_identity";
     }
