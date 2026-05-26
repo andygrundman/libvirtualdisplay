@@ -1274,49 +1274,11 @@ namespace {
     vdd::BackendError set_permanent_display_count(const vdd::PermanentDisplayCountRequest &request) override {
       auto normalized = request;
       vdd::set_default_permanent_display_settings(normalized);
-      const auto display_count = normalized.display_count;
-      if (display_count > kMaxPermanentDisplays) {
+      if (normalized.display_count > kMaxPermanentDisplays) {
         return vdd::BackendError::Failed;
       }
 
-      const auto previous_display_count = permanent_display_count_;
-      std::vector<std::uint64_t> added;
-      for (auto index = permanent_display_count_; index < display_count; ++index) {
-        const auto descriptor = make_permanent_descriptor(index, normalized);
-        const auto result = arrive_display(descriptor, true);
-        if (result.error != vdd::BackendError::None) {
-          for (const auto display_id: added) {
-            (void) depart_display(display_id);
-          }
-          return vdd::BackendError::Failed;
-        }
-        added.push_back(descriptor.display_id);
-      }
-
-      for (auto index = permanent_display_count_; index > display_count; --index) {
-        const auto display_id = vdd::permanent_display_id(index - 1);
-        if (depart_display(display_id) != vdd::BackendError::None) {
-          return vdd::BackendError::Failed;
-        }
-      }
-
-      for (auto index = 0u; index < (std::min)(previous_display_count, display_count); ++index) {
-        const auto display_id = vdd::permanent_display_id(index);
-        if (depart_display(display_id) != vdd::BackendError::None) {
-          return vdd::BackendError::Failed;
-        }
-        const auto descriptor = make_permanent_descriptor(index, normalized);
-        if (arrive_display(descriptor, true).error != vdd::BackendError::None) {
-          return vdd::BackendError::Failed;
-        }
-      }
-
-      permanent_display_count_ = display_count;
-      const auto manifest = vdd::display_manifest_from_permanent_settings(normalized, kMaxPermanentDisplays);
-      if (save_display_manifest(driver_, device_, manifest) == vdd::BackendError::None) {
-        persisted_manifest_ = manifest;
-      }
-      return vdd::BackendError::None;
+      return apply_display_manifest(vdd::display_manifest_from_permanent_settings(normalized, kMaxPermanentDisplays));
     }
 
     vdd::BackendError apply_display_manifest(const vdd::DisplayManifest &manifest) override {
@@ -1324,21 +1286,26 @@ namespace {
         return vdd::BackendError::Failed;
       }
 
-      std::vector<std::uint64_t> active_permanent_ids;
+      std::vector<vdd::DisplayDescriptor> active_permanent_descriptors;
       {
         std::lock_guard lock {mutex_};
-        active_permanent_ids.reserve(monitors_.size());
+        active_permanent_descriptors.reserve(monitors_.size());
         for (const auto &[display_id, record]: monitors_) {
           if (record.permanent) {
-            active_permanent_ids.push_back(display_id);
+            active_permanent_descriptors.push_back(record.descriptor);
           }
         }
       }
 
-      for (const auto display_id: active_permanent_ids) {
-        if (depart_display(display_id) != vdd::BackendError::None) {
+      std::vector<vdd::DisplayDescriptor> departed;
+      for (const auto &descriptor: active_permanent_descriptors) {
+        if (depart_display(descriptor.display_id) != vdd::BackendError::None) {
+          for (const auto &restore_descriptor: departed) {
+            (void) arrive_display(restore_descriptor, true);
+          }
           return vdd::BackendError::Failed;
         }
+        departed.push_back(descriptor);
       }
 
       std::vector<std::uint64_t> added;
@@ -1348,6 +1315,9 @@ namespace {
         if (result.error != vdd::BackendError::None) {
           for (const auto display_id: added) {
             (void) depart_display(display_id);
+          }
+          for (const auto &restore_descriptor: active_permanent_descriptors) {
+            (void) arrive_display(restore_descriptor, true);
           }
           return vdd::BackendError::Failed;
         }

@@ -277,3 +277,15 @@ TEST(VirtualDisplayWindowsDriverContract, PermanentDisplaysUseControlPlaneModeSe
   EXPECT_NE(source.find("options.product_code = static_cast<std::uint16_t>(profile.product_code);"), std::string::npos);
   EXPECT_NE(source.find("vdd::BackendError apply_display_manifest(const vdd::DisplayManifest &manifest) override"), std::string::npos);
 }
+
+TEST(VirtualDisplayWindowsDriverContract, PermanentManifestUpdatesRestorePreviousDisplaysOnFailure) {
+  const auto source = read_windows_driver_source();
+
+  EXPECT_NE(source.find("return apply_display_manifest(vdd::display_manifest_from_permanent_settings(normalized, kMaxPermanentDisplays));"), std::string::npos);
+  EXPECT_NE(source.find("std::vector<vdd::DisplayDescriptor> active_permanent_descriptors"), std::string::npos);
+  EXPECT_NE(source.find("active_permanent_descriptors.push_back(record.descriptor);"), std::string::npos);
+  EXPECT_NE(source.find("std::vector<vdd::DisplayDescriptor> departed;"), std::string::npos);
+  EXPECT_NE(source.find("departed.push_back(descriptor);"), std::string::npos);
+  EXPECT_NE(source.find("(void) arrive_display(restore_descriptor, true);"), std::string::npos);
+  EXPECT_NE(source.find("save_display_manifest(driver_, device_, manifest)"), std::string::npos);
+}
