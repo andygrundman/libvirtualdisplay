@@ -141,6 +141,26 @@ TEST(VirtualDisplayDriverControlProtocol, InfRegistersControlInterfaceWithAdminO
   EXPECT_EQ(inf.find("(A;;GRGW;;;AU)"), std::string::npos);
 }
 
+TEST(VirtualDisplayDriverControlProtocol, InfRestrictsDeviceSecurityToSystemAndAdmins) {
+  const std::string inf_path =
+    std::string {LIBVIRTUALDISPLAY_SOURCE_DIR} +
+    "/src/driver/windows_driver/SunshineVirtualDisplayDriver.inf";
+  std::ifstream inf_file {inf_path};
+  ASSERT_TRUE(inf_file.is_open()) << inf_path;
+
+  std::ostringstream buffer;
+  buffer << inf_file.rdbuf();
+  const auto inf = buffer.str();
+
+  EXPECT_NE(
+    inf.find("HKR,,Security,,\"D:P(A;;GA;;;SY)(A;;GA;;;BA)\""),
+    std::string::npos
+  );
+  EXPECT_EQ(inf.find("(A;;GRGW;;;WD)"), std::string::npos);
+  EXPECT_EQ(inf.find("(A;;GA;;;WD)"), std::string::npos);
+  EXPECT_EQ(inf.find("(A;;GA;;;AU)"), std::string::npos);
+}
+
 TEST(VirtualDisplayDriverControlProtocol, NormalizesLeaseTimeouts) {
   EXPECT_EQ(vdd::normalize_timeout_ms(0), vdd::kDefaultLeaseTimeoutMs);
   EXPECT_EQ(vdd::normalize_timeout_ms(1), vdd::kMinLeaseTimeoutMs);
