@@ -216,6 +216,7 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "helper_arguments_for_broker_command");
   expect_contains(source, "return L\"--diagnose\"");
   expect_contains(source, "return L\"--apply-extended-topology\"");
+  expect_contains(source, "return L\"--query-color-profiles\"");
   expect_contains(source, "launch_console_helper(*helper_arguments)");
   expect_contains(source, "WTSGetActiveConsoleSessionId()");
   expect_contains(source, "WTSQueryUserToken(session_id");

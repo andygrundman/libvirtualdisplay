@@ -30,6 +30,7 @@ TEST(VirtualDisplayCliContract, ExposesFriendlyPermanentDisplayCommands) {
   expect_contains(source, "status");
   expect_contains(source, "broker protocol|query-state|query-manifest");
   expect_contains(source, "helper-apply-extended-topology");
+  expect_contains(source, "helper-query-color-profiles");
   expect_contains(source, "display query");
   expect_contains(source, "driver install [--inf PATH]");
   expect_contains(source, "spawn [--width N] [--height N] [--physical-width-mm N] [--physical-height-mm N] [--refresh HZ] [--name TEXT]");
@@ -53,6 +54,7 @@ TEST(VirtualDisplayCliContract, BrokerCommandsUseSecuredIpcPath) {
   expect_contains(source, "args[1] == \"query-manifest\"");
   expect_contains(source, "args[1] == \"helper-diagnose\"");
   expect_contains(source, "args[1] == \"helper-apply-extended-topology\"");
+  expect_contains(source, "args[1] == \"helper-query-color-profiles\"");
 
   const auto broker_command = source.find("if (args[0] == \"broker\")");
   const auto direct_open = source.find("const auto opened = vdd::open_first_control_device()");

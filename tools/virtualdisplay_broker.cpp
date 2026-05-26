@@ -306,6 +306,9 @@ namespace {
     if (command == "helper-apply-extended-topology") {
       return L"--apply-extended-topology";
     }
+    if (command == "helper-query-color-profiles") {
+      return L"--query-color-profiles";
+    }
     return std::nullopt;
   }
 
