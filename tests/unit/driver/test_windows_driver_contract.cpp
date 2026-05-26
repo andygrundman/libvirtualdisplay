@@ -412,6 +412,9 @@ TEST(VirtualDisplayWindowsDriverContract, RegistersGammaRampIndependentOfHdrCall
 TEST(VirtualDisplayWindowsDriverContract, LinksTraceLoggingRuntime) {
   const auto cmake = read_windows_driver_cmake();
   EXPECT_NE(cmake.find("advapi32"), std::string::npos);
+  EXPECT_NE(cmake.find("SUNSHINE_DRIVER_INF2CAT_OS"), std::string::npos);
+  EXPECT_NE(cmake.find("/os:${SUNSHINE_DRIVER_INF2CAT_OS}"), std::string::npos);
+  EXPECT_EQ(cmake.find("/os:10_X64"), std::string::npos);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, DocumentsSupportDiagnosticsCapture) {

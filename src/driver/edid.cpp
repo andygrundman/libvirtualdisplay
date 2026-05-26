@@ -89,6 +89,16 @@ namespace virtual_display::driver {
       return safe_options;
     }
 
+    EdidOptions sanitized_options(const EdidOptions &options) {
+      auto safe = options;
+      safe.width = std::clamp(safe.width, 1u, 4095u);
+      safe.height = std::clamp(safe.height, 1u, 4095u);
+      safe.refresh_rate_millihz = std::clamp(safe.refresh_rate_millihz, 1u, 1'000'000u);
+      safe.physical_width_mm = std::clamp(safe.physical_width_mm, 1u, 4095u);
+      safe.physical_height_mm = std::clamp(safe.physical_height_mm, 1u, 4095u);
+      return safe;
+    }
+
     void write_detailed_timing(std::span<std::byte> data, const std::size_t offset, const EdidOptions &options) {
       const auto timing = make_preferred_timing(detailed_timing_options(options));
       const auto h_sync_offset = std::clamp<std::uint16_t>(timing.horizontal_blanking / 3u, 8u, 255u);
@@ -226,9 +236,7 @@ namespace virtual_display::driver {
   }  // namespace
 
   std::array<std::byte, kEdidSize> create_edid(const EdidOptions &options) {
-    if (options.hdr_supported) {
-      return create_static_hdr_edid(options);
-    }
+    const auto safe_options = sanitized_options(options);
 
     std::array<std::byte, kEdidSize> edid {};
     auto base = std::span<std::byte> {edid.data(), kEdidBlockSize};
@@ -240,18 +248,18 @@ namespace virtual_display::driver {
     };
     std::copy(header.begin(), header.end(), base.begin());
 
-    const auto manufacturer = encode_manufacturer_id(options.manufacturer_id);
+    const auto manufacturer = encode_manufacturer_id(safe_options.manufacturer_id);
     base[8] = byte(manufacturer >> 8);
     base[9] = byte(manufacturer);
-    put_le16(base, 10, options.product_code);
-    put_le32(base, 12, options.serial_number);
+    put_le16(base, 10, safe_options.product_code);
+    put_le32(base, 12, safe_options.serial_number);
     base[16] = std::byte {1};
     base[17] = std::byte {36};
     base[18] = std::byte {1};
     base[19] = std::byte {4};
     base[20] = std::byte {0xa5};
-    base[21] = byte(physical_size_cm(options.physical_width_mm));
-    base[22] = byte(physical_size_cm(options.physical_height_mm));
+    base[21] = byte(physical_size_cm(safe_options.physical_width_mm));
+    base[22] = byte(physical_size_cm(safe_options.physical_height_mm));
     base[23] = std::byte {0x78};
     base[24] = std::byte {0x0a};
     base[25] = std::byte {0xee};
@@ -266,10 +274,10 @@ namespace virtual_display::driver {
     base[34] = std::byte {0x54};
 
     std::fill(base.begin() + 38, base.begin() + 54, std::byte {0x01});
-    write_detailed_timing(base, 54, options);
-    write_text_descriptor(base, 72, std::byte {0xff}, std::to_string(options.serial_number));
-    write_text_descriptor(base, 90, std::byte {0xfc}, options.monitor_name);
-    write_range_descriptor(base, 108, options);
+    write_detailed_timing(base, 54, safe_options);
+    write_text_descriptor(base, 72, std::byte {0xff}, std::to_string(safe_options.serial_number));
+    write_text_descriptor(base, 90, std::byte {0xfc}, safe_options.monitor_name);
+    write_range_descriptor(base, 108, safe_options);
     base[126] = std::byte {1};
     write_checksum(base);
 
@@ -277,7 +285,7 @@ namespace virtual_display::driver {
     extension[1] = std::byte {0x03};
 
     std::size_t data_offset = 4;
-    if (options.hdr_supported) {
+    if (safe_options.hdr_supported) {
       constexpr std::array<std::byte, 64> hdr_cta_blocks {
         std::byte {0x51}, std::byte {0x5d}, std::byte {0x5e}, std::byte {0x5f},
         std::byte {0x60}, std::byte {0x61}, std::byte {0x10}, std::byte {0x1f},
@@ -334,11 +342,11 @@ namespace virtual_display::driver {
       const auto header = to_u8(extension[offset]);
       const auto tag = header >> 5;
       const auto length = header & 0x1f;
-      if (length == 0 || offset + length >= data_end + 1) {
+      if (length == 0 || offset >= data_end || length > data_end - offset - 1) {
         break;
       }
 
-      if (tag == 0x07 && extension[offset + 1] == std::byte {0x06}) {
+      if (tag == 0x07 && length >= 3 && extension[offset + 1] == std::byte {0x06}) {
         const auto eotf = to_u8(extension[offset + 2]);
         return (eotf & 0x04u) != 0;
       }
@@ -360,7 +368,7 @@ namespace virtual_display::driver {
       const auto header = to_u8(extension[offset]);
       const auto tag = header >> 5;
       const auto length = header & 0x1f;
-      if (length == 0 || offset + length >= data_end + 1) {
+      if (length == 0 || offset >= data_end || length > data_end - offset - 1) {
         break;
       }
 

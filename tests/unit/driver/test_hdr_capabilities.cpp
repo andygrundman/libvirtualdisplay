@@ -36,12 +36,8 @@ TEST(VirtualDisplayDriverHdrCapabilities, RequiresFp16HighColorAndTenBitPathForH
   capabilities = vdd::hdr_output_capabilities();
   capabilities.output_bits.rgb_10bpc = false;
   EXPECT_FALSE(vdd::supports_windows_hdr_toggle(capabilities));
-}
 
-TEST(VirtualDisplayDriverHdrCapabilities, AcceptsDitheredEightBitPathAsHdrFallback) {
-  auto capabilities = vdd::hdr_output_capabilities();
-  capabilities.output_bits.rgb_10bpc = false;
-  capabilities.dithering_bits.rgb_8bpc = true;
-
-  EXPECT_TRUE(vdd::supports_windows_hdr_toggle(capabilities));
+  capabilities = vdd::hdr_output_capabilities();
+  capabilities.dithering_bits.rgb_10bpc = false;
+  EXPECT_FALSE(vdd::supports_windows_hdr_toggle(capabilities));
 }

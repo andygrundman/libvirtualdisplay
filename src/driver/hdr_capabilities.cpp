@@ -29,6 +29,7 @@ namespace virtual_display::driver {
     return capabilities.fp16_swapchain &&
            capabilities.wide_color_space &&
            capabilities.high_color_space &&
-           (capabilities.output_bits.rgb_10bpc || capabilities.dithering_bits.rgb_8bpc);
+           capabilities.output_bits.rgb_10bpc &&
+           capabilities.dithering_bits.rgb_10bpc;
   }
 }  // namespace virtual_display::driver

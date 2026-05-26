@@ -102,9 +102,27 @@ TEST(VirtualDisplayDriverEdid, HdrEdidUsesRequestedRangeDescriptor) {
 
   const auto edid = vdd::create_edid(options);
 
-  EXPECT_EQ(edid[90 + 3], std::byte {0xfd});
-  EXPECT_EQ(edid[90 + 6], std::byte {240});
-  EXPECT_EQ(edid[90 + 9], std::byte {251});
+  EXPECT_EQ(edid[108 + 3], std::byte {0xfd});
+  EXPECT_EQ(edid[108 + 6], std::byte {240});
+  EXPECT_EQ(edid[108 + 9], std::byte {251});
+}
+
+TEST(VirtualDisplayDriverEdid, ClampsTimingInputsBeforeEncoding) {
+  auto options = default_options();
+  options.width = 100'000;
+  options.height = 100'000;
+  options.physical_width_mm = 100'000;
+  options.physical_height_mm = 100'000;
+  options.refresh_rate_millihz = 10'000'000;
+
+  const auto edid = vdd::create_edid(options);
+  const auto timing = vdd::read_preferred_timing(edid);
+
+  EXPECT_EQ(timing.horizontal_active, 4095u);
+  EXPECT_EQ(timing.vertical_active, 4095u);
+  EXPECT_EQ(read_detailed_physical_width_mm(edid), 4095u);
+  EXPECT_EQ(read_detailed_physical_height_mm(edid), 4095u);
+  EXPECT_TRUE(vdd::has_valid_edid_checksums(edid));
 }
 
 TEST(VirtualDisplayDriverEdid, EmbedsHdrStaticMetadataWhenRequested) {
