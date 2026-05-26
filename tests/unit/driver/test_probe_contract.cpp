@@ -61,6 +61,7 @@ TEST(VirtualDisplayProbeContract, ExposesTemporaryAndPermanentRuntimeChecks) {
   expect_contains(source, "--apply-extended-topology");
   expect_contains(source, "--apply-manifest-topology");
   expect_contains(source, "--query-color-profiles");
+  expect_contains(source, "--associate-color-profile <source_luid high:low> <source_id> <profile> [--advanced-color] [--default]");
   expect_contains(source, "--check");
   expect_contains(source, "--query-permanent");
   expect_contains(source, "--set-permanent <count>");
@@ -80,10 +81,14 @@ TEST(VirtualDisplayProbeContract, DiagnoseRunsBeforeControlDeviceOpen) {
   expect_contains(source, "if (command == \"--diagnose\")");
   expect_contains(source, "if (command == \"--apply-extended-topology\")");
   expect_contains(source, "if (command == \"--query-color-profiles\")");
+  expect_contains(source, "if (command == \"--associate-color-profile\")");
   expect_contains(source, "apply_extended_topology_result()");
   expect_contains(source, "ColorProfileGetDisplayUserScope");
   expect_contains(source, "ColorProfileGetDisplayList");
   expect_contains(source, "ColorProfileGetDisplayDefault");
+  expect_contains(source, "ColorProfileAddDisplayAssociation");
+  expect_contains(source, "color_api->add_association(");
+  expect_contains(source, "associate_color_profile(*source_luid, source_id");
   expect_not_contains(source, "AssociateColorProfileWithDevice");
   expect_not_contains(source, "SetICMProfile");
 
@@ -91,16 +96,19 @@ TEST(VirtualDisplayProbeContract, DiagnoseRunsBeforeControlDeviceOpen) {
   const auto diagnose_pos = source.find("if (command == \"--diagnose\")");
   const auto topology_pos = source.find("if (command == \"--apply-extended-topology\")");
   const auto color_profile_pos = source.find("if (command == \"--query-color-profiles\")");
+  const auto color_association_pos = source.find("if (command == \"--associate-color-profile\")");
   const auto open_pos = source.find("auto opened = vdd::open_first_control_device()");
   ASSERT_NE(command_pos, std::string::npos);
   ASSERT_NE(diagnose_pos, std::string::npos);
   ASSERT_NE(topology_pos, std::string::npos);
   ASSERT_NE(color_profile_pos, std::string::npos);
+  ASSERT_NE(color_association_pos, std::string::npos);
   ASSERT_NE(open_pos, std::string::npos);
   EXPECT_LT(command_pos, open_pos);
   EXPECT_LT(diagnose_pos, open_pos);
   EXPECT_LT(topology_pos, open_pos);
   EXPECT_LT(color_profile_pos, open_pos);
+  EXPECT_LT(color_association_pos, open_pos);
 }
 
 TEST(VirtualDisplayProbeContract, ManifestTopologyAppliesStoredLayoutPolicy) {
@@ -257,6 +265,10 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "return L\"--apply-extended-topology\"");
   expect_contains(source, "return L\"--apply-manifest-topology\"");
   expect_contains(source, "return L\"--query-color-profiles\"");
+  expect_contains(source, "helper-associate-color-profile ");
+  expect_contains(source, "--associate-color-profile ");
+  expect_contains(source, "--advanced-color");
+  expect_contains(source, "--default");
   expect_contains(source, "launch_console_helper(*helper_arguments)");
   expect_contains(source, "WTSGetActiveConsoleSessionId()");
   expect_contains(source, "WTSQueryUserToken(session_id");

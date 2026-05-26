@@ -35,6 +35,7 @@ namespace {
       << "  driver install [--inf PATH]\n"
       << "  broker install|start|stop|status|uninstall\n"
       << "  broker protocol|query-state|query-manifest|helper-diagnose|helper-apply-extended-topology|helper-apply-manifest-topology|helper-query-color-profiles\n"
+      << "  broker helper-associate-color-profile <source_luid high:low> <source_id> <profile> [--advanced-color] [--default]\n"
       << "  status\n"
       << "  display query\n"
       << "  spawn [--width N] [--height N] [--physical-width-mm N] [--physical-height-mm N] [--refresh HZ] [--name TEXT]\n"
@@ -917,6 +918,34 @@ namespace {
       << ' ' << options.name;
     return command.str();
   }
+
+  std::optional<std::string> color_profile_association_broker_command(const std::vector<std::string> &args) {
+    if (args.size() < 5) {
+      return std::nullopt;
+    }
+
+    bool advanced_color = false;
+    bool set_default = false;
+    for (std::size_t index = 5; index < args.size(); ++index) {
+      if (args[index] == "--advanced-color") {
+        advanced_color = true;
+      } else if (args[index] == "--default") {
+        set_default = true;
+      } else {
+        return std::nullopt;
+      }
+    }
+
+    std::ostringstream command;
+    command
+      << "helper-associate-color-profile "
+      << args[2] << ' '
+      << args[3] << ' '
+      << (advanced_color ? "advanced" : "standard") << ' '
+      << (set_default ? "default" : "nodefault") << ' '
+      << args[4];
+    return command.str();
+  }
 #endif
 
   std::optional<PermanentOptions> parse_permanent_options(
@@ -1091,6 +1120,19 @@ int main(int argc, char **argv) {
          args[1] == "helper-query-color-profiles")) {
 #ifdef _WIN32
       return query_broker(args[1]);
+#else
+      std::cerr << "broker queries are only supported on Windows.\n";
+      return 1;
+#endif
+    }
+    if (args.size() >= 5 && args[1] == "helper-associate-color-profile") {
+#ifdef _WIN32
+      const auto command = color_profile_association_broker_command(args);
+      if (!command) {
+        print_usage();
+        return 2;
+      }
+      return query_broker(*command);
 #else
       std::cerr << "broker queries are only supported on Windows.\n";
       return 1;

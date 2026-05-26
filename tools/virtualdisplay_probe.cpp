@@ -31,6 +31,8 @@ namespace {
   constexpr DWORD kEventHelperTopologyFailed = 0x3001;
   constexpr DWORD kEventHelperColorQueryCompleted = 0x3100;
   constexpr DWORD kEventHelperColorQueryFailed = 0x3101;
+  constexpr DWORD kEventHelperColorAssociationCompleted = 0x3102;
+  constexpr DWORD kEventHelperColorAssociationFailed = 0x3103;
   constexpr COLORPROFILESUBTYPE kStandardDisplayColorMode =
   #ifdef CPST_STANDARD_DISPLAY_COLOR_MODE
     CPST_STANDARD_DISPLAY_COLOR_MODE;
@@ -77,6 +79,7 @@ namespace {
       << "  --apply-extended-topology\n"
       << "  --apply-manifest-topology\n"
       << "  --query-color-profiles\n"
+      << "  --associate-color-profile <source_luid high:low> <source_id> <profile> [--advanced-color] [--default]\n"
       << "  --check\n"
       << "  --query-permanent\n"
       << "  --set-permanent <count>\n"
@@ -276,6 +279,7 @@ namespace {
     return command == "--apply-extended-topology" ||
            command == "--apply-manifest-topology" ||
            command == "--query-color-profiles" ||
+           command == "--associate-color-profile" ||
            command == "--self-test-4k240" ||
            command == "--self-test-hdr" ||
            command == "--qa-temp-identity-retention" ||
@@ -1121,11 +1125,20 @@ namespace {
     UINT32,
     WCS_PROFILE_MANAGEMENT_SCOPE *
   );
+  using ColorProfileAddDisplayAssociationFn = HRESULT (WINAPI *)(
+    WCS_PROFILE_MANAGEMENT_SCOPE,
+    PCWSTR,
+    LUID,
+    UINT32,
+    BOOL,
+    BOOL
+  );
 
   struct ColorProfileApi {
     ColorProfileGetDisplayDefaultFn get_default {};
     ColorProfileGetDisplayListFn get_list {};
     ColorProfileGetDisplayUserScopeFn get_user_scope {};
+    ColorProfileAddDisplayAssociationFn add_association {};
   };
 
   const ColorProfileApi *load_color_profile_api() {
@@ -1144,6 +1157,9 @@ namespace {
       );
       loaded.get_user_scope = reinterpret_cast<ColorProfileGetDisplayUserScopeFn>(
         GetProcAddress(module, "ColorProfileGetDisplayUserScope")
+      );
+      loaded.add_association = reinterpret_cast<ColorProfileAddDisplayAssociationFn>(
+        GetProcAddress(module, "ColorProfileAddDisplayAssociation")
       );
       return loaded;
     }();
@@ -1262,6 +1278,71 @@ namespace {
       "Color profile query paths=" + std::to_string(queried)
     );
     return queried == 0 ? 1 : 0;
+  }
+
+  std::optional<LUID> parse_luid(const std::string_view text) {
+    const auto separator = text.find(':');
+    if (separator == std::string_view::npos || separator == 0 || separator + 1 >= text.size()) {
+      return std::nullopt;
+    }
+
+    try {
+      LUID luid {};
+      luid.HighPart = static_cast<LONG>(std::stol(std::string {text.substr(0, separator)}));
+      luid.LowPart = static_cast<DWORD>(std::stoul(std::string {text.substr(separator + 1)}));
+      return luid;
+    } catch (...) {
+      return std::nullopt;
+    }
+  }
+
+  int associate_color_profile(
+    const LUID &source_luid,
+    const UINT32 source_id,
+    const std::wstring &profile_name,
+    const bool advanced_color,
+    const bool set_default
+  ) {
+    const ColorProfileApi *color_api = load_color_profile_api();
+    if (!color_api || !color_api->add_association) {
+      std::cerr << "color profile display association API is unavailable\n";
+      report_helper_event(EVENTLOG_ERROR_TYPE, kEventHelperColorAssociationFailed, L"Color profile display association API is unavailable");
+      return 1;
+    }
+    if (profile_name.empty()) {
+      std::cerr << "color profile association requires a profile name\n";
+      report_helper_event(EVENTLOG_ERROR_TYPE, kEventHelperColorAssociationFailed, L"Color profile association requires a profile name");
+      return 1;
+    }
+
+    WCS_PROFILE_MANAGEMENT_SCOPE scope {};
+    HRESULT result = color_api->get_user_scope(source_luid, source_id, &scope);
+    if (FAILED(result)) {
+      std::cerr << "color profile scope query failed hresult=0x" << std::hex
+                << static_cast<unsigned long>(result) << std::dec << '\n';
+      report_helper_event(EVENTLOG_ERROR_TYPE, kEventHelperColorAssociationFailed, L"Color profile scope query failed");
+      return 1;
+    }
+
+    result = color_api->add_association(
+      scope,
+      profile_name.c_str(),
+      source_luid,
+      source_id,
+      set_default ? TRUE : FALSE,
+      advanced_color ? TRUE : FALSE
+    );
+    std::cout << "color_profile_association_hresult=0x" << std::hex
+              << static_cast<unsigned long>(result) << std::dec << '\n'
+              << "advanced_color_association=" << (advanced_color ? 1 : 0) << '\n'
+              << "set_default=" << (set_default ? 1 : 0) << '\n';
+    if (FAILED(result)) {
+      report_helper_event(EVENTLOG_ERROR_TYPE, kEventHelperColorAssociationFailed, L"Color profile association failed");
+      return 1;
+    }
+
+    report_helper_event(EVENTLOG_INFORMATION_TYPE, kEventHelperColorAssociationCompleted, L"Color profile association completed");
+    return 0;
   }
 
   LONG set_active_display_mode(
@@ -1520,6 +1601,46 @@ int main(const int argc, char **argv) {
       return session_status;
     }
     return query_color_profiles();
+  }
+
+  if (command == "--associate-color-profile") {
+    if (argc < 5) {
+      print_usage();
+      return 2;
+    }
+    if (const int session_status = require_active_console_session(command); session_status != 0) {
+      return session_status;
+    }
+
+    const auto source_luid = parse_luid(argv[2]);
+    if (!source_luid) {
+      std::cerr << "invalid source_luid\n";
+      return 2;
+    }
+
+    bool advanced_color = false;
+    bool set_default = false;
+    for (int index = 5; index < argc; ++index) {
+      const std::string_view flag {argv[index]};
+      if (flag == "--advanced-color") {
+        advanced_color = true;
+      } else if (flag == "--default") {
+        set_default = true;
+      } else {
+        print_usage();
+        return 2;
+      }
+    }
+
+    UINT32 source_id {};
+    try {
+      source_id = static_cast<UINT32>(std::stoul(argv[3]));
+    } catch (...) {
+      std::cerr << "invalid source_id\n";
+      return 2;
+    }
+
+    return associate_color_profile(*source_luid, source_id, widen_ascii(argv[4]), advanced_color, set_default);
   }
 
   auto opened = vdd::open_first_control_device();

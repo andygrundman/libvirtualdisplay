@@ -674,6 +674,43 @@ namespace {
     if (command == "helper-query-color-profiles") {
       return L"--query-color-profiles";
     }
+    constexpr std::string_view associate_prefix {"helper-associate-color-profile "};
+    if (command.starts_with(associate_prefix)) {
+      const auto payload = command.substr(associate_prefix.size());
+      const auto fields = split_words(payload, 4);
+      if (fields.size() != 4) {
+        return std::nullopt;
+      }
+
+      std::size_t profile_offset = 0;
+      for (const auto field: fields) {
+        profile_offset = static_cast<std::size_t>((field.data() + field.size()) - payload.data());
+      }
+      while (profile_offset < payload.size() && payload[profile_offset] == ' ') {
+        ++profile_offset;
+      }
+      if (profile_offset >= payload.size()) {
+        return std::nullopt;
+      }
+
+      std::wstring arguments = L"--associate-color-profile ";
+      arguments += widen_ascii(fields[0]);
+      arguments += L" ";
+      arguments += widen_ascii(fields[1]);
+      arguments += L" ";
+      arguments += quote_argument(widen_ascii(payload.substr(profile_offset)));
+      if (fields[2] == "advanced") {
+        arguments += L" --advanced-color";
+      } else if (fields[2] != "standard") {
+        return std::nullopt;
+      }
+      if (fields[3] == "default") {
+        arguments += L" --default";
+      } else if (fields[3] != "nodefault") {
+        return std::nullopt;
+      }
+      return arguments;
+    }
     return std::nullopt;
   }
 
