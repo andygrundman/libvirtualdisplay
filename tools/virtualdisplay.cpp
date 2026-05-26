@@ -4,11 +4,16 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cerrno>
+#include <cctype>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cwchar>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -64,6 +69,9 @@ namespace {
     L"SeAssignPrimaryTokenPrivilege\0"
     L"SeIncreaseQuotaPrivilege\0"
     L"SeTcbPrivilege\0";
+  constexpr DWORD kBrokerServiceStateTimeoutMs {30'000};
+  constexpr DWORD kBrokerServiceStatePollMs {250};
+  constexpr std::size_t kMaxBrokerResponseBytes {1024 * 1024};
 
   struct DevInfoSet {
     HDEVINFO value {INVALID_HANDLE_VALUE};
@@ -335,6 +343,36 @@ namespace {
     return 0;
   }
 
+  bool wait_for_broker_service_state(SC_HANDLE service, const DWORD target_state) {
+    const ULONGLONG deadline = GetTickCount64() + kBrokerServiceStateTimeoutMs;
+    std::uint32_t native_error {};
+    std::optional<SERVICE_STATUS_PROCESS> last_status;
+
+    do {
+      last_status = query_broker_service_status(service, native_error);
+      if (!last_status) {
+        std::cerr << "query broker service failed native_error=" << native_error << '\n';
+        return false;
+      }
+      if (last_status->dwCurrentState == target_state) {
+        return true;
+      }
+
+      const ULONGLONG now = GetTickCount64();
+      if (now >= deadline) {
+        break;
+      }
+      Sleep(static_cast<DWORD>((std::min<ULONGLONG>)(kBrokerServiceStatePollMs, deadline - now)));
+    } while (true);
+
+    std::cerr
+      << "broker service did not reach " << service_state_name(target_state)
+      << " state current_state=" << service_state_name(last_status ? last_status->dwCurrentState : 0)
+      << " current_state_code=" << (last_status ? last_status->dwCurrentState : 0)
+      << '\n';
+    return false;
+  }
+
   bool harden_broker_service(SC_HANDLE service) {
     SERVICE_SID_INFO sid_info {};
     sid_info.dwServiceSidType = SERVICE_SID_TYPE_UNRESTRICTED;
@@ -481,6 +519,9 @@ namespace {
         return 1;
       }
     }
+    if (!wait_for_broker_service_state(service.value, SERVICE_RUNNING)) {
+      return 1;
+    }
 
     std::cout << "broker_service_started=1\n";
     return print_broker_service_status(service.value);
@@ -518,6 +559,9 @@ namespace {
           return 1;
         }
       }
+    }
+    if (!wait_for_broker_service_state(service.value, SERVICE_STOPPED)) {
+      return 1;
     }
 
     std::cout << "broker_service_stopped=1\n";
@@ -828,23 +872,40 @@ namespace {
       return {true, false, "error write_failed\n", error};
     }
 
+    std::string text;
     std::array<char, 4096> response {};
-    DWORD bytes_read = 0;
-    if (!ReadFile(
-          pipe,
-          response.data(),
-          static_cast<DWORD>(response.size() - 1),
-          &bytes_read,
-          nullptr
-        )) {
-      const auto error = GetLastError();
-      CloseHandle(pipe);
-      return {true, false, "error read_failed\n", error};
+    while (true) {
+      DWORD bytes_read = 0;
+      bool more_data = false;
+      if (!ReadFile(
+            pipe,
+            response.data(),
+            static_cast<DWORD>(response.size()),
+            &bytes_read,
+            nullptr
+          )) {
+        const auto error = GetLastError();
+        if (error != ERROR_MORE_DATA) {
+          CloseHandle(pipe);
+          return {true, false, "error read_failed\n", error};
+        }
+        more_data = true;
+      }
+
+      if (bytes_read != 0) {
+        if (text.size() + bytes_read > kMaxBrokerResponseBytes) {
+          CloseHandle(pipe);
+          return {true, false, "error response_too_large\n", ERROR_MORE_DATA};
+        }
+        text.append(response.data(), bytes_read);
+      }
+
+      if (!more_data) {
+        break;
+      }
     }
 
-    response[(std::min<DWORD>)(bytes_read, static_cast<DWORD>(response.size() - 1))] = '\0';
     CloseHandle(pipe);
-    const std::string text {response.data()};
     return {true, text.starts_with("ok ") || text.starts_with("ok\n"), text, ERROR_SUCCESS};
   }
 
@@ -921,16 +982,28 @@ namespace {
 
   bool parse_refresh_millihz(const std::string_view value, std::uint32_t &parsed) {
     std::string text {value};
-    try {
-      const auto refresh = std::stod(text);
-      if (refresh <= 0.0) {
-        return false;
-      }
-      parsed = static_cast<std::uint32_t>(refresh <= 1000.0 ? refresh * 1000.0 : refresh);
-      return true;
-    } catch (...) {
+    if (text.empty() || std::any_of(text.begin(), text.end(), [](const unsigned char ch) {
+          return std::isspace(ch) != 0;
+        })) {
       return false;
     }
+
+    errno = 0;
+    char *end = nullptr;
+    const double refresh = std::strtod(text.c_str(), &end);
+    if (errno == ERANGE || end != text.c_str() + text.size() || !std::isfinite(refresh) || refresh <= 0.0) {
+      return false;
+    }
+
+    const double millihz = refresh <= 1000.0 ? refresh * 1000.0 : refresh;
+    if (!std::isfinite(millihz) ||
+        millihz < 1.0 ||
+        millihz > static_cast<double>((std::numeric_limits<std::uint32_t>::max)())) {
+      return false;
+    }
+
+    parsed = static_cast<std::uint32_t>(millihz);
+    return true;
   }
 
   void set_display_name(char (&target)[vdd::kDisplayNameChars], const std::string &name) {
@@ -940,6 +1013,34 @@ namespace {
 
   std::string display_name(const char (&value)[vdd::kDisplayNameChars]) {
     return std::string {vdd::trim_display_name(value)};
+  }
+
+  std::string escape_key_value(const std::string_view value) {
+    constexpr char kHex[] = "0123456789ABCDEF";
+    std::string output;
+    output.reserve(value.size());
+    for (const unsigned char ch : value) {
+      if (ch == '\\') {
+        output += "\\\\";
+      } else if (ch == '\n') {
+        output += "\\n";
+      } else if (ch == '\r') {
+        output += "\\r";
+      } else if (ch == '\t') {
+        output += "\\t";
+      } else if (ch < 0x20 || ch == 0x7f) {
+        output += "\\x";
+        output += kHex[ch >> 4];
+        output += kHex[ch & 0x0f];
+      } else {
+        output += static_cast<char>(ch);
+      }
+    }
+    return output;
+  }
+
+  std::string output_display_name(const char (&value)[vdd::kDisplayNameChars]) {
+    return escape_key_value(display_name(value));
   }
 
   std::string guid_string(const vdd::Guid &guid) {
@@ -981,7 +1082,7 @@ namespace {
       << "mode=" << state.width << 'x' << state.height << '@'
       << (state.refresh_rate_millihz / 1000.0) << "Hz\n"
       << "physical_size_mm=" << state.physical_width_mm << 'x' << state.physical_height_mm << '\n'
-      << "name=" << display_name(state.display_name) << '\n';
+      << "name=" << output_display_name(state.display_name) << '\n';
   }
 
   void print_display_state(const vdd::QueryDisplayStateResult &state) {
@@ -1008,7 +1109,7 @@ namespace {
         << ((entry.flags & vdd::kDisplayStateFlagHdrSupported) ? 1 : 0) << '\n'
         << "display." << index << ".retain_identity="
         << ((entry.flags & vdd::kDisplayStateFlagRetainIdentity) ? 1 : 0) << '\n'
-        << "display." << index << ".name=" << display_name(entry.display_name) << '\n';
+        << "display." << index << ".name=" << output_display_name(entry.display_name) << '\n';
     }
   }
 
@@ -1393,11 +1494,15 @@ int main(int argc, char **argv) {
   }
 
 #ifdef _WIN32
-  if (args[0] == "status" || (args[0] == "permanent" && args.size() >= 2 && args[1] == "query")) {
+  if (args[0] == "status" && args.size() == 1) {
     return require_broker_command("permanent-query", true);
   }
 
-  if (args[0] == "display" && args.size() >= 2 && args[1] == "query") {
+  if (args[0] == "permanent" && args.size() == 2 && args[1] == "query") {
+    return require_broker_command("permanent-query", true);
+  }
+
+  if (args[0] == "display" && args.size() == 2 && args[1] == "query") {
     return require_broker_command("display-query", true);
   }
 
@@ -1409,7 +1514,7 @@ int main(int argc, char **argv) {
     return require_broker_command(permanent_set_broker_command(*options), true);
   }
 
-  if (args[0] == "permanent" && args.size() >= 2 && args[1] == "off") {
+  if (args[0] == "permanent" && args.size() == 2 && args[1] == "off") {
     PermanentOptions options {};
     options.count = 0;
     return require_broker_command(permanent_set_broker_command(options), true);

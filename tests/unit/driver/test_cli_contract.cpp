@@ -60,6 +60,9 @@ TEST(VirtualDisplayCliContract, BrokerCommandsUseSecuredIpcPath) {
   expect_contains(source, "CreateFileW(");
   expect_contains(source, "WriteFile(");
   expect_contains(source, "ReadFile(");
+  expect_contains(source, "ERROR_MORE_DATA");
+  expect_contains(source, "kMaxBrokerResponseBytes");
+  expect_contains(source, "error response_too_large");
   expect_contains(source, "if (args[0] == \"broker\")");
   expect_contains(source, "args[1] == \"query-state\"");
   expect_contains(source, "args[1] == \"query-manifest\"");
@@ -108,6 +111,10 @@ TEST(VirtualDisplayCliContract, BrokerServiceCommandsManageWindowsService) {
   expect_contains(source, "args[1] == \"stop\"");
   expect_contains(source, "args[1] == \"status\"");
   expect_contains(source, "args[1] == \"uninstall\"");
+  expect_contains(source, "wait_for_broker_service_state(service.value, SERVICE_RUNNING)");
+  expect_contains(source, "wait_for_broker_service_state(service.value, SERVICE_STOPPED)");
+  expect_contains(source, "broker_service_started=1");
+  expect_contains(source, "broker_service_stopped=1");
 }
 
 TEST(VirtualDisplayCliContract, PermanentCommandsApplyModeAndNameSettings) {
@@ -121,6 +128,14 @@ TEST(VirtualDisplayCliContract, PermanentCommandsApplyModeAndNameSettings) {
   expect_contains(source, "set_display_name(request.display_name, options.name)");
   expect_contains(source, "manifest-profile-set ");
   expect_contains(source, "parse_refresh_millihz");
+  expect_contains(source, "std::strtod(text.c_str(), &end)");
+  expect_contains(source, "end != text.c_str() + text.size()");
+  expect_contains(source, "std::isfinite(refresh)");
+  expect_contains(source, "(std::numeric_limits<std::uint32_t>::max)()");
+  expect_contains(source, "args[0] == \"status\" && args.size() == 1");
+  expect_contains(source, "args[0] == \"permanent\" && args.size() == 2 && args[1] == \"query\"");
+  expect_contains(source, "args[0] == \"display\" && args.size() == 2 && args[1] == \"query\"");
+  expect_contains(source, "args[0] == \"permanent\" && args.size() == 2 && args[1] == \"off\"");
 }
 
 TEST(VirtualDisplayCliContract, DisplayQueryPrintsIdentityFields) {
@@ -132,6 +147,10 @@ TEST(VirtualDisplayCliContract, DisplayQueryPrintsIdentityFields) {
   expect_contains(source, "product_code=");
   expect_contains(source, "serial_number=");
   expect_contains(source, "retain_identity=");
+  expect_contains(source, "output_display_name(entry.display_name)");
+  expect_contains(source, "escape_key_value(display_name(value))");
+  expect_contains(source, "output += \"\\\\n\"");
+  expect_contains(source, "output += \"\\\\x\"");
 }
 
 TEST(VirtualDisplayCliContract, DriverInstallSelfElevatesAndInstallsRootDevice) {
