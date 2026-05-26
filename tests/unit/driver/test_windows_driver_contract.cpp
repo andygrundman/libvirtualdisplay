@@ -112,6 +112,19 @@ TEST(VirtualDisplayWindowsDriverContract, StoresTemporaryIdentityInWdfPersistent
   EXPECT_NE(inf.find("HKR,,\"ConfigVersion\",0x00010001,1"), std::string::npos);
 }
 
+TEST(VirtualDisplayWindowsDriverContract, RestoresPersistentDisplayManifestState) {
+  const auto source = read_windows_driver_source();
+
+  EXPECT_NE(source.find("kDisplayManifestValue[] = L\"DisplayManifest\""), std::string::npos);
+  EXPECT_NE(source.find("load_persistent_display_manifest(driver, device)"), std::string::npos);
+  EXPECT_NE(source.find("save_display_manifest(driver_, device_, manifest)"), std::string::npos);
+  EXPECT_NE(source.find("vdd::validate_display_manifest(manifest, kMaxPermanentDisplays)"), std::string::npos);
+  EXPECT_NE(source.find("WdfRegistryAssignValue("), std::string::npos);
+  EXPECT_NE(source.find("persisted_manifest_"), std::string::npos);
+  EXPECT_NE(source.find("if (adapter_ready_ && persisted_manifest_ && persisted_manifest_->profile_count > 0)"), std::string::npos);
+  EXPECT_NE(source.find("(void) apply_display_manifest(*persisted_manifest_);"), std::string::npos);
+}
+
 TEST(VirtualDisplayWindowsDriverContract, SetsSwapChainDeviceFromProcessingThread) {
   const auto source = read_windows_driver_source();
 

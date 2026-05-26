@@ -379,6 +379,20 @@ TEST(VirtualDisplayDriverLeaseStore, AppliesDisplayManifestAsPermanentState) {
   EXPECT_EQ(vdd::trim_display_name(legacy.display_name), "Side Display");
 }
 
+TEST(VirtualDisplayDriverLeaseStore, InitializesFromValidDisplayManifest) {
+  vdd::PermanentDisplayCountRequest request {};
+  request.display_count = 1;
+  auto manifest = vdd::display_manifest_from_permanent_settings(request, 4);
+  manifest.profiles[0].position_x = 1280;
+  manifest.profiles[0].layout_policy = vdd::kDisplayManifestLayoutPolicyApply;
+
+  vdd::DisplayStore store {4, 4, {}, manifest};
+
+  EXPECT_EQ(store.permanent_display_count(), 1u);
+  EXPECT_EQ(store.display_manifest().profiles[0].connector_index, 0u);
+  EXPECT_EQ(store.display_manifest().profiles[0].position_x, 1280);
+}
+
 TEST(VirtualDisplayDriverLeaseStore, RejectsTooManyPermanentDisplays) {
   vdd::DisplayStore store {2, 4};
   vdd::PermanentDisplayCountRequest request {};

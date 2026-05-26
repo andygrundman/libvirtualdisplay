@@ -56,7 +56,8 @@ namespace virtual_display::driver {
     explicit DisplayStore(
       std::uint32_t max_permanent_displays,
       std::uint32_t max_temporary_displays,
-      std::map<std::uint64_t, std::uint32_t> connector_reservations_by_display_id = {}
+      std::map<std::uint64_t, std::uint32_t> connector_reservations_by_display_id = {},
+      std::optional<DisplayManifest> initial_manifest = std::nullopt
     );
 
     [[nodiscard]] std::uint32_t max_permanent_displays() const;

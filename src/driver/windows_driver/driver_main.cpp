@@ -4,6 +4,7 @@
 
 #include "virtual_display/driver/ioctl_dispatcher.h"
 #include "virtual_display/driver/hdr_capabilities.h"
+#include "virtual_display/driver/lease_store.h"
 #include "virtual_display/driver/windows_control_protocol.h"
 
 #include <Windows.h>
@@ -48,6 +49,7 @@ namespace {
   constexpr std::uint32_t kPersistentStateSchemaVersion = 1;
   constexpr wchar_t kSwapchainMmcssTask[] = L"DisplayPostProcessing";
   constexpr wchar_t kTemporaryDisplayProfilesValue[] = L"TemporaryDisplayProfiles";
+  constexpr wchar_t kDisplayManifestValue[] = L"DisplayManifest";
   constexpr std::size_t kTemporaryDisplayProfileBytes = 36;
   constexpr std::size_t kTemporaryDisplayProfilesHeaderBytes = 8;
   constexpr std::size_t kTemporaryDisplayProfilesMaxBytes =
@@ -433,6 +435,34 @@ namespace {
     return reservations;
   }
 
+  std::optional<vdd::DisplayManifest> load_persistent_display_manifest(WDFDRIVER driver, WDFDEVICE device) {
+    RegistryKey state_key;
+    if (!NT_SUCCESS(open_driver_state_key(driver, device, KEY_READ, state_key))) {
+      return std::nullopt;
+    }
+
+    vdd::DisplayManifest manifest {};
+    auto value_name = unicode_string(kDisplayManifestValue);
+    ULONG value_length {};
+    ULONG value_type {};
+    const auto status = WdfRegistryQueryValue(
+      state_key.get(),
+      &value_name,
+      sizeof(manifest),
+      &manifest,
+      &value_length,
+      &value_type
+    );
+    if (!NT_SUCCESS(status) ||
+        value_type != REG_BINARY ||
+        value_length != sizeof(manifest) ||
+        vdd::validate_display_manifest(manifest, kMaxPermanentDisplays) != vdd::ValidationError::None) {
+      return std::nullopt;
+    }
+
+    return manifest;
+  }
+
   template <typename T>
   void write_registry_value_if_success(
     WDFKEY key,
@@ -527,6 +557,33 @@ namespace {
       REG_BINARY,
       static_cast<ULONG>(blob.size()),
       blob.data()
+    );
+
+    return NT_SUCCESS(status) ? vdd::BackendError::None : vdd::BackendError::Failed;
+  }
+
+  vdd::BackendError save_display_manifest(
+    WDFDRIVER driver,
+    WDFDEVICE device,
+    const vdd::DisplayManifest &manifest
+  ) {
+    if (vdd::validate_display_manifest(manifest, kMaxPermanentDisplays) != vdd::ValidationError::None) {
+      return vdd::BackendError::Failed;
+    }
+
+    RegistryKey state_key;
+    auto status = open_driver_state_key(driver, device, KEY_SET_VALUE, state_key);
+    if (!NT_SUCCESS(status)) {
+      return vdd::BackendError::Failed;
+    }
+
+    auto value_name = unicode_string(kDisplayManifestValue);
+    status = WdfRegistryAssignValue(
+      state_key.get(),
+      &value_name,
+      REG_BINARY,
+      sizeof(manifest),
+      const_cast<vdd::DisplayManifest *>(&manifest)
     );
 
     return NT_SUCCESS(status) ? vdd::BackendError::None : vdd::BackendError::Failed;
@@ -1140,9 +1197,14 @@ namespace {
 
   class IddCxBackend: public vdd::DisplayDriverBackend {
   public:
-    IddCxBackend(WDFDRIVER driver, WDFDEVICE device):
+    IddCxBackend(
+      WDFDRIVER driver,
+      WDFDEVICE device,
+      std::optional<vdd::DisplayManifest> initial_manifest = std::nullopt
+    ):
         driver_ {driver},
-        device_ {device} {
+        device_ {device},
+        persisted_manifest_ {std::move(initial_manifest)} {
     }
 
     NTSTATUS initialize_adapter(WDFDEVICE device) {
@@ -1250,6 +1312,10 @@ namespace {
       }
 
       permanent_display_count_ = display_count;
+      const auto manifest = vdd::display_manifest_from_permanent_settings(normalized, kMaxPermanentDisplays);
+      if (save_display_manifest(driver_, device_, manifest) == vdd::BackendError::None) {
+        persisted_manifest_ = manifest;
+      }
       return vdd::BackendError::None;
     }
 
@@ -1289,6 +1355,9 @@ namespace {
       }
 
       permanent_display_count_ = manifest.profile_count;
+      if (save_display_manifest(driver_, device_, manifest) == vdd::BackendError::None) {
+        persisted_manifest_ = manifest;
+      }
       return vdd::BackendError::None;
     }
 
@@ -1300,6 +1369,9 @@ namespace {
       // The async callback status is the point where IddCx says monitor arrival
       // is legal. Keep DeviceAdd successful, but block display creation until then.
       adapter_ready_ = NT_SUCCESS(args->AdapterInitStatus);
+      if (adapter_ready_ && persisted_manifest_ && persisted_manifest_->profile_count > 0) {
+        (void) apply_display_manifest(*persisted_manifest_);
+      }
       return STATUS_SUCCESS;
     }
 
@@ -1586,6 +1658,7 @@ namespace {
     WDFDEVICE device_ {};
     IDDCX_ADAPTER adapter_ {};
     bool adapter_ready_ {};
+    std::optional<vdd::DisplayManifest> persisted_manifest_ {};
     std::uint32_t permanent_display_count_ {};
     std::map<std::uint64_t, MonitorRecord> monitors_ {};
   };
@@ -1593,12 +1666,13 @@ namespace {
   class DeviceState {
   public:
     DeviceState(WDFDRIVER driver, WDFDEVICE device):
-        backend {driver, device},
+        backend {driver, device, load_persistent_display_manifest(driver, device)},
         controller {
           vdd::DisplayStore {
             kMaxPermanentDisplays,
             kMaxTemporaryDisplays,
-            load_temporary_connector_reservations(driver, device)
+            load_temporary_connector_reservations(driver, device),
+            load_persistent_display_manifest(driver, device)
           },
           backend
         },

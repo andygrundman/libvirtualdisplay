@@ -90,7 +90,8 @@ namespace virtual_display::driver {
   DisplayStore::DisplayStore(
     const std::uint32_t max_permanent_displays,
     const std::uint32_t max_temporary_displays,
-    std::map<std::uint64_t, std::uint32_t> connector_reservations_by_display_id
+    std::map<std::uint64_t, std::uint32_t> connector_reservations_by_display_id,
+    std::optional<DisplayManifest> initial_manifest
   ):
       max_permanent_displays_ {max_permanent_displays},
       max_temporary_displays_ {max_temporary_displays},
@@ -100,6 +101,10 @@ namespace virtual_display::driver {
       permanent_display_settings_,
       max_permanent_displays_
     );
+    if (initial_manifest &&
+        validate_display_manifest(*initial_manifest, max_permanent_displays_) == ValidationError::None) {
+      (void) apply_display_manifest(*initial_manifest);
+    }
   }
 
   std::uint32_t DisplayStore::max_permanent_displays() const {
