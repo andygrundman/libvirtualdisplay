@@ -762,10 +762,12 @@ namespace {
     return response;
   }
 
-  std::optional<int> try_broker_command(const std::string_view command, const bool print_payload) {
+  int require_broker_command(const std::string_view command, const bool print_payload) {
     const auto response = request_broker(command);
     if (!response.pipe_available) {
-      return std::nullopt;
+      std::cerr << "open broker pipe failed native_error=" << response.native_error << '\n';
+      std::cerr << "start the broker service before using display management commands\n";
+      return 1;
     }
     if (response.ok) {
       std::cout << (print_payload ? broker_payload(response.text) : response.text);
@@ -1101,15 +1103,11 @@ int main(int argc, char **argv) {
 
 #ifdef _WIN32
   if (args[0] == "status" || (args[0] == "permanent" && args.size() >= 2 && args[1] == "query")) {
-    if (const auto broker_result = try_broker_command("permanent-query", true)) {
-      return *broker_result;
-    }
+    return require_broker_command("permanent-query", true);
   }
 
   if (args[0] == "display" && args.size() >= 2 && args[1] == "query") {
-    if (const auto broker_result = try_broker_command("display-query", true)) {
-      return *broker_result;
-    }
+    return require_broker_command("display-query", true);
   }
 
   if (args[0] == "spawn") {
@@ -1117,17 +1115,13 @@ int main(int argc, char **argv) {
     if (!options) {
       return 2;
     }
-    if (const auto broker_result = try_broker_command(permanent_set_broker_command(*options), true)) {
-      return *broker_result;
-    }
+    return require_broker_command(permanent_set_broker_command(*options), true);
   }
 
   if (args[0] == "permanent" && args.size() >= 2 && args[1] == "off") {
     PermanentOptions options {};
     options.count = 0;
-    if (const auto broker_result = try_broker_command(permanent_set_broker_command(options), true)) {
-      return *broker_result;
-    }
+    return require_broker_command(permanent_set_broker_command(options), true);
   }
 
   if (args[0] == "permanent" && args.size() >= 2 && args[1] == "set") {
@@ -1135,62 +1129,9 @@ int main(int argc, char **argv) {
     if (!options) {
       return 2;
     }
-    if (const auto broker_result = try_broker_command(permanent_set_broker_command(*options), true)) {
-      return *broker_result;
-    }
+    return require_broker_command(permanent_set_broker_command(*options), true);
   }
 #endif
-
-  const auto opened = vdd::open_first_control_device();
-  if (!opened.ok()) {
-    return fail("open control device failed", {opened.status, opened.native_error});
-  }
-
-  vdd::ControlClient client {*opened.transport};
-  const auto protocol = client.check_protocol_compatible();
-  if (!protocol.ok()) {
-    return fail("control protocol check failed", protocol);
-  }
-
-  if (args[0] == "status" || (args[0] == "permanent" && args.size() >= 2 && args[1] == "query")) {
-    const auto result = client.query_permanent_display_count();
-    if (!result.ok()) {
-      return fail("query permanent display failed", result);
-    }
-    print_permanent_state(result.value);
-    return 0;
-  }
-
-  if (args[0] == "display" && args.size() >= 2 && args[1] == "query") {
-    const auto result = client.query_display_state();
-    if (!result.ok()) {
-      return fail("query display state failed", result);
-    }
-    print_display_state(result.value);
-    return 0;
-  }
-
-  if (args[0] == "spawn") {
-    const auto options = parse_permanent_options(args, 1, false);
-    if (!options) {
-      return 2;
-    }
-    return set_permanent(client, *options);
-  }
-
-  if (args[0] == "permanent" && args.size() >= 2 && args[1] == "off") {
-    PermanentOptions options {};
-    options.count = 0;
-    return set_permanent(client, options);
-  }
-
-  if (args[0] == "permanent" && args.size() >= 2 && args[1] == "set") {
-    const auto options = parse_permanent_options(args, 2, true);
-    if (!options) {
-      return 2;
-    }
-    return set_permanent(client, *options);
-  }
 
   print_usage();
   return 2;

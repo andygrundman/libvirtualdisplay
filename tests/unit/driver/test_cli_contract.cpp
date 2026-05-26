@@ -39,8 +39,8 @@ TEST(VirtualDisplayCliContract, ExposesFriendlyPermanentDisplayCommands) {
   expect_contains(source, "permanent query");
   expect_contains(source, "permanent set --count N [--width N] [--height N] [--physical-width-mm N] [--physical-height-mm N] [--refresh HZ] [--name TEXT]");
   expect_contains(source, "permanent off");
-  expect_contains(source, "client.set_permanent_display_count(request)");
-  expect_contains(source, "client.query_display_state()");
+  expect_contains(source, "require_broker_command(\"permanent-query\", true)");
+  expect_contains(source, "require_broker_command(\"display-query\", true)");
 }
 
 TEST(VirtualDisplayCliContract, BrokerCommandsUseSecuredIpcPath) {
@@ -49,9 +49,11 @@ TEST(VirtualDisplayCliContract, BrokerCommandsUseSecuredIpcPath) {
   expect_contains(source, "kBrokerPipeName[] = L\"\\\\\\\\.\\\\pipe\\\\SunshineVirtualDisplayBroker\"");
   expect_contains(source, "int query_broker(const std::string_view command)");
   expect_contains(source, "BrokerResponse request_broker(const std::string_view command)");
-  expect_contains(source, "try_broker_command(\"permanent-query\", true)");
-  expect_contains(source, "try_broker_command(\"display-query\", true)");
-  expect_contains(source, "try_broker_command(permanent_set_broker_command(*options), true)");
+  expect_contains(source, "int require_broker_command(const std::string_view command, const bool print_payload)");
+  expect_contains(source, "require_broker_command(\"permanent-query\", true)");
+  expect_contains(source, "require_broker_command(\"display-query\", true)");
+  expect_contains(source, "require_broker_command(permanent_set_broker_command(*options), true)");
+  expect_contains(source, "start the broker service before using display management commands");
   expect_contains(source, "permanent-set ");
   expect_contains(source, "CreateFileW(");
   expect_contains(source, "WriteFile(");
@@ -65,10 +67,9 @@ TEST(VirtualDisplayCliContract, BrokerCommandsUseSecuredIpcPath) {
   expect_contains(source, "args[1] == \"helper-query-color-profiles\"");
 
   const auto broker_command = source.find("if (args[0] == \"broker\")");
-  const auto direct_open = source.find("const auto opened = vdd::open_first_control_device()");
+  const auto direct_open = source.find("vdd::open_first_control_device()");
   ASSERT_NE(broker_command, std::string::npos);
-  ASSERT_NE(direct_open, std::string::npos);
-  EXPECT_LT(broker_command, direct_open);
+  EXPECT_EQ(direct_open, std::string::npos);
 }
 
 TEST(VirtualDisplayCliContract, BrokerServiceCommandsManageWindowsService) {

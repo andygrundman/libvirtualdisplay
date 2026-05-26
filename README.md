@@ -102,9 +102,10 @@ directory. To install a different INF:
 .\tools\virtualdisplay.exe driver install --inf <path-to-inf>
 ```
 
-All non-install commands assume the driver package has already been installed
-and Windows has started the virtual display device. Direct control commands must
-run elevated unless the broker service is installed and running.
+All display management commands assume the driver package has already been
+installed, Windows has started the virtual display device, and the broker
+service is running. Use `virtualdisplay_probe.exe` for diagnostics that need to
+exercise the installed driver control path directly.
 
 Manage the broker service from the CLI:
 
