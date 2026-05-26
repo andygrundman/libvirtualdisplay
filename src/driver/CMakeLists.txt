@@ -34,7 +34,7 @@ if(WIN32 AND BUILD_VIRTUALDISPLAY_PROBE)
     install(TARGETS virtualdisplay_probe RUNTIME DESTINATION tools)
 
     add_executable(virtualdisplay "${PROJECT_SOURCE_DIR}/tools/virtualdisplay.cpp")
-    target_link_libraries(virtualdisplay PRIVATE libvirtualdisplay::driver shell32 newdev)
+    target_link_libraries(virtualdisplay PRIVATE libvirtualdisplay::driver advapi32 shell32 newdev)
     target_compile_features(virtualdisplay PRIVATE cxx_std_20)
     install(TARGETS virtualdisplay RUNTIME DESTINATION tools)
 

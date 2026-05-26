@@ -102,9 +102,18 @@ directory. To install a different INF:
 ```
 
 All non-install commands assume the driver package has already been installed
-and Windows has started the virtual display device. The driver control
-interface is restricted to local system and administrators while the broker
-service is still pending, so direct CLI control commands must run elevated.
+and Windows has started the virtual display device. Direct control commands must
+run elevated unless the broker service is installed and running.
+
+Manage the broker service from the CLI:
+
+```powershell
+.\tools\virtualdisplay.exe broker install
+.\tools\virtualdisplay.exe broker start
+.\tools\virtualdisplay.exe broker status
+.\tools\virtualdisplay.exe broker stop
+.\tools\virtualdisplay.exe broker uninstall
+```
 
 Query the current permanent-display state:
 

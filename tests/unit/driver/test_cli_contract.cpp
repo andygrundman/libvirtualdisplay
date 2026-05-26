@@ -28,6 +28,7 @@ TEST(VirtualDisplayCliContract, ExposesFriendlyPermanentDisplayCommands) {
   const auto source = read_cli_source();
 
   expect_contains(source, "status");
+  expect_contains(source, "broker install|start|stop|status|uninstall");
   expect_contains(source, "broker protocol|query-state|query-manifest");
   expect_contains(source, "helper-apply-extended-topology");
   expect_contains(source, "helper-query-color-profiles");
@@ -61,6 +62,27 @@ TEST(VirtualDisplayCliContract, BrokerCommandsUseSecuredIpcPath) {
   ASSERT_NE(broker_command, std::string::npos);
   ASSERT_NE(direct_open, std::string::npos);
   EXPECT_LT(broker_command, direct_open);
+}
+
+TEST(VirtualDisplayCliContract, BrokerServiceCommandsManageWindowsService) {
+  const auto source = read_cli_source();
+
+  expect_contains(source, "kBrokerServiceName[] = L\"SunshineVirtualDisplayBroker\"");
+  expect_contains(source, "broker_executable_path()");
+  expect_contains(source, "virtualdisplay_broker.exe");
+  expect_contains(source, "OpenSCManagerW");
+  expect_contains(source, "CreateServiceW");
+  expect_contains(source, "ChangeServiceConfigW");
+  expect_contains(source, "StartServiceW");
+  expect_contains(source, "ControlService");
+  expect_contains(source, "QueryServiceStatusEx");
+  expect_contains(source, "DeleteService");
+  expect_contains(source, "broker_service_state=");
+  expect_contains(source, "args[1] == \"install\"");
+  expect_contains(source, "args[1] == \"start\"");
+  expect_contains(source, "args[1] == \"stop\"");
+  expect_contains(source, "args[1] == \"status\"");
+  expect_contains(source, "args[1] == \"uninstall\"");
 }
 
 TEST(VirtualDisplayCliContract, PermanentCommandsApplyModeAndNameSettings) {

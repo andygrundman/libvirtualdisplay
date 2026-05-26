@@ -31,6 +31,7 @@ namespace {
     std::cout
       << "virtualdisplay commands:\n"
       << "  driver install [--inf PATH]\n"
+      << "  broker install|start|stop|status|uninstall\n"
       << "  broker protocol|query-state|query-manifest|helper-diagnose|helper-apply-extended-topology|helper-query-color-profiles\n"
       << "  status\n"
       << "  display query\n"
@@ -51,6 +52,8 @@ namespace {
 
 #ifdef _WIN32
   constexpr wchar_t kBrokerPipeName[] = L"\\\\.\\pipe\\SunshineVirtualDisplayBroker";
+  constexpr wchar_t kBrokerServiceName[] = L"SunshineVirtualDisplayBroker";
+  constexpr wchar_t kBrokerServiceDisplayName[] = L"Sunshine Virtual Display Broker";
 
   struct DevInfoSet {
     HDEVINFO value {INVALID_HANDLE_VALUE};
@@ -67,6 +70,23 @@ namespace {
 
     DevInfoSet(const DevInfoSet &) = delete;
     DevInfoSet &operator=(const DevInfoSet &) = delete;
+  };
+
+  struct ServiceHandle {
+    SC_HANDLE value {};
+
+    explicit ServiceHandle(const SC_HANDLE handle):
+        value {handle} {
+    }
+
+    ~ServiceHandle() {
+      if (value) {
+        CloseServiceHandle(value);
+      }
+    }
+
+    ServiceHandle(const ServiceHandle &) = delete;
+    ServiceHandle &operator=(const ServiceHandle &) = delete;
   };
 
   std::wstring widen(const std::string_view value) {
@@ -148,6 +168,266 @@ namespace {
     }
     CloseHandle(execute.hProcess);
     return static_cast<int>(exit_code);
+  }
+
+  const char *service_state_name(const DWORD state) {
+    switch (state) {
+      case SERVICE_STOPPED:
+        return "stopped";
+      case SERVICE_START_PENDING:
+        return "start_pending";
+      case SERVICE_STOP_PENDING:
+        return "stop_pending";
+      case SERVICE_RUNNING:
+        return "running";
+      case SERVICE_CONTINUE_PENDING:
+        return "continue_pending";
+      case SERVICE_PAUSE_PENDING:
+        return "pause_pending";
+      case SERVICE_PAUSED:
+        return "paused";
+      default:
+        return "unknown";
+    }
+  }
+
+  std::filesystem::path broker_executable_path() {
+    wchar_t executable[MAX_PATH] {};
+    const DWORD length = GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable)));
+    if (length == 0 || length >= std::size(executable)) {
+      return {};
+    }
+    return std::filesystem::path {executable}.parent_path() / "virtualdisplay_broker.exe";
+  }
+
+  std::optional<SERVICE_STATUS_PROCESS> query_broker_service_status(
+    SC_HANDLE service,
+    std::uint32_t &native_error
+  ) {
+    SERVICE_STATUS_PROCESS status {};
+    DWORD bytes_needed {};
+    if (!QueryServiceStatusEx(
+          service,
+          SC_STATUS_PROCESS_INFO,
+          reinterpret_cast<LPBYTE>(&status),
+          sizeof(status),
+          &bytes_needed
+        )) {
+      native_error = GetLastError();
+      return std::nullopt;
+    }
+    native_error = ERROR_SUCCESS;
+    return status;
+  }
+
+  int print_broker_service_status(SC_HANDLE service) {
+    std::uint32_t native_error {};
+    const auto status = query_broker_service_status(service, native_error);
+    if (!status) {
+      std::cerr << "query broker service failed native_error=" << native_error << '\n';
+      return 1;
+    }
+
+    std::cout << "broker_service_state=" << service_state_name(status->dwCurrentState) << '\n';
+    std::cout << "broker_service_state_code=" << status->dwCurrentState << '\n';
+    return 0;
+  }
+
+  int install_broker_service(const std::vector<std::string> &args) {
+    if (!is_process_elevated()) {
+      return relaunch_elevated(args);
+    }
+
+    const auto broker_path = broker_executable_path();
+    if (broker_path.empty() || !std::filesystem::exists(broker_path)) {
+      std::cerr << "broker executable not found: " << broker_path.string() << '\n';
+      return 1;
+    }
+
+    ServiceHandle manager {OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT | SC_MANAGER_CREATE_SERVICE)};
+    if (!manager.value) {
+      std::cerr << "open service manager failed native_error=" << GetLastError() << '\n';
+      return 1;
+    }
+
+    const std::wstring command_line = quote_argument(broker_path.wstring()) + L" --service";
+    SC_HANDLE service_handle = CreateServiceW(
+      manager.value,
+      kBrokerServiceName,
+      kBrokerServiceDisplayName,
+      SERVICE_CHANGE_CONFIG | SERVICE_QUERY_STATUS | SERVICE_START,
+      SERVICE_WIN32_OWN_PROCESS,
+      SERVICE_DEMAND_START,
+      SERVICE_ERROR_NORMAL,
+      command_line.c_str(),
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr
+    );
+
+    bool updated = false;
+    if (!service_handle && GetLastError() == ERROR_SERVICE_EXISTS) {
+      service_handle = OpenServiceW(manager.value, kBrokerServiceName, SERVICE_CHANGE_CONFIG | SERVICE_QUERY_STATUS);
+      if (!service_handle) {
+        std::cerr << "open broker service failed native_error=" << GetLastError() << '\n';
+        return 1;
+      }
+      ServiceHandle service {service_handle};
+      if (!ChangeServiceConfigW(
+            service.value,
+            SERVICE_NO_CHANGE,
+            SERVICE_DEMAND_START,
+            SERVICE_ERROR_NORMAL,
+            command_line.c_str(),
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            kBrokerServiceDisplayName
+          )) {
+        std::cerr << "update broker service failed native_error=" << GetLastError() << '\n';
+        return 1;
+      }
+      updated = true;
+      std::cout << "broker_service_installed=1\n";
+      std::cout << "broker_service_updated=1\n";
+      return print_broker_service_status(service.value);
+    }
+
+    if (!service_handle) {
+      std::cerr << "create broker service failed native_error=" << GetLastError() << '\n';
+      return 1;
+    }
+
+    ServiceHandle service {service_handle};
+    std::cout << "broker_service_installed=1\n";
+    std::cout << "broker_service_updated=" << (updated ? 1 : 0) << '\n';
+    return print_broker_service_status(service.value);
+  }
+
+  int start_broker_service(const std::vector<std::string> &args) {
+    if (!is_process_elevated()) {
+      return relaunch_elevated(args);
+    }
+
+    ServiceHandle manager {OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT)};
+    if (!manager.value) {
+      std::cerr << "open service manager failed native_error=" << GetLastError() << '\n';
+      return 1;
+    }
+
+    ServiceHandle service {OpenServiceW(manager.value, kBrokerServiceName, SERVICE_QUERY_STATUS | SERVICE_START)};
+    if (!service.value) {
+      std::cerr << "open broker service failed native_error=" << GetLastError() << '\n';
+      return 1;
+    }
+
+    std::uint32_t native_error {};
+    const auto before = query_broker_service_status(service.value, native_error);
+    if (!before) {
+      std::cerr << "query broker service failed native_error=" << native_error << '\n';
+      return 1;
+    }
+    if (before->dwCurrentState != SERVICE_RUNNING && !StartServiceW(service.value, 0, nullptr)) {
+      const auto error = GetLastError();
+      if (error != ERROR_SERVICE_ALREADY_RUNNING) {
+        std::cerr << "start broker service failed native_error=" << error << '\n';
+        return 1;
+      }
+    }
+
+    std::cout << "broker_service_started=1\n";
+    return print_broker_service_status(service.value);
+  }
+
+  int stop_broker_service(const std::vector<std::string> &args) {
+    if (!is_process_elevated()) {
+      return relaunch_elevated(args);
+    }
+
+    ServiceHandle manager {OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT)};
+    if (!manager.value) {
+      std::cerr << "open service manager failed native_error=" << GetLastError() << '\n';
+      return 1;
+    }
+
+    ServiceHandle service {OpenServiceW(manager.value, kBrokerServiceName, SERVICE_QUERY_STATUS | SERVICE_STOP)};
+    if (!service.value) {
+      std::cerr << "open broker service failed native_error=" << GetLastError() << '\n';
+      return 1;
+    }
+
+    std::uint32_t native_error {};
+    const auto before = query_broker_service_status(service.value, native_error);
+    if (!before) {
+      std::cerr << "query broker service failed native_error=" << native_error << '\n';
+      return 1;
+    }
+    if (before->dwCurrentState != SERVICE_STOPPED) {
+      SERVICE_STATUS status {};
+      if (!ControlService(service.value, SERVICE_CONTROL_STOP, &status)) {
+        const auto error = GetLastError();
+        if (error != ERROR_SERVICE_NOT_ACTIVE) {
+          std::cerr << "stop broker service failed native_error=" << error << '\n';
+          return 1;
+        }
+      }
+    }
+
+    std::cout << "broker_service_stopped=1\n";
+    return print_broker_service_status(service.value);
+  }
+
+  int uninstall_broker_service(const std::vector<std::string> &args) {
+    if (!is_process_elevated()) {
+      return relaunch_elevated(args);
+    }
+
+    ServiceHandle manager {OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT)};
+    if (!manager.value) {
+      std::cerr << "open service manager failed native_error=" << GetLastError() << '\n';
+      return 1;
+    }
+
+    ServiceHandle service {OpenServiceW(manager.value, kBrokerServiceName, DELETE | SERVICE_QUERY_STATUS | SERVICE_STOP)};
+    if (!service.value) {
+      std::cerr << "open broker service failed native_error=" << GetLastError() << '\n';
+      return 1;
+    }
+
+    std::uint32_t native_error {};
+    const auto before = query_broker_service_status(service.value, native_error);
+    if (before && before->dwCurrentState != SERVICE_STOPPED) {
+      SERVICE_STATUS status {};
+      (void) ControlService(service.value, SERVICE_CONTROL_STOP, &status);
+    }
+
+    if (!DeleteService(service.value)) {
+      std::cerr << "delete broker service failed native_error=" << GetLastError() << '\n';
+      return 1;
+    }
+
+    std::cout << "broker_service_uninstalled=1\n";
+    return 0;
+  }
+
+  int query_broker_service() {
+    ServiceHandle manager {OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT)};
+    if (!manager.value) {
+      std::cerr << "open service manager failed native_error=" << GetLastError() << '\n';
+      return 1;
+    }
+
+    ServiceHandle service {OpenServiceW(manager.value, kBrokerServiceName, SERVICE_QUERY_STATUS)};
+    if (!service.value) {
+      std::cerr << "open broker service failed native_error=" << GetLastError() << '\n';
+      return 1;
+    }
+
+    return print_broker_service_status(service.value);
   }
 
   std::filesystem::path default_driver_inf_path() {
@@ -646,6 +926,46 @@ int main(int argc, char **argv) {
   }
 
   if (args[0] == "broker") {
+    if (args.size() == 2 && args[1] == "install") {
+#ifdef _WIN32
+      return install_broker_service(args);
+#else
+      std::cerr << "broker service management is only supported on Windows.\n";
+      return 1;
+#endif
+    }
+    if (args.size() == 2 && args[1] == "start") {
+#ifdef _WIN32
+      return start_broker_service(args);
+#else
+      std::cerr << "broker service management is only supported on Windows.\n";
+      return 1;
+#endif
+    }
+    if (args.size() == 2 && args[1] == "stop") {
+#ifdef _WIN32
+      return stop_broker_service(args);
+#else
+      std::cerr << "broker service management is only supported on Windows.\n";
+      return 1;
+#endif
+    }
+    if (args.size() == 2 && args[1] == "status") {
+#ifdef _WIN32
+      return query_broker_service();
+#else
+      std::cerr << "broker service management is only supported on Windows.\n";
+      return 1;
+#endif
+    }
+    if (args.size() == 2 && args[1] == "uninstall") {
+#ifdef _WIN32
+      return uninstall_broker_service(args);
+#else
+      std::cerr << "broker service management is only supported on Windows.\n";
+      return 1;
+#endif
+    }
     if (args.size() == 2 &&
         (args[1] == "protocol" ||
          args[1] == "query-state" ||
