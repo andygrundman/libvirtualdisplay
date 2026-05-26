@@ -26,6 +26,11 @@ namespace vdd = virtual_display::driver;
 
 namespace {
 #ifdef _WIN32
+  constexpr wchar_t kHelperEventSource[] = L"SunshineVirtualDisplayBroker";
+  constexpr DWORD kEventHelperTopologyApplied = 0x3000;
+  constexpr DWORD kEventHelperTopologyFailed = 0x3001;
+  constexpr DWORD kEventHelperColorQueryCompleted = 0x3100;
+  constexpr DWORD kEventHelperColorQueryFailed = 0x3101;
   constexpr COLORPROFILESUBTYPE kStandardDisplayColorMode =
   #ifdef CPST_STANDARD_DISPLAY_COLOR_MODE
     CPST_STANDARD_DISPLAY_COLOR_MODE;
@@ -38,6 +43,31 @@ namespace {
   #else
     static_cast<COLORPROFILESUBTYPE>(8);
   #endif
+
+  std::wstring widen_ascii(const std::string_view text) {
+    std::wstring wide;
+    wide.reserve(text.size());
+    for (const unsigned char ch: text) {
+      wide.push_back(static_cast<wchar_t>(ch));
+    }
+    return wide;
+  }
+
+  void report_helper_event(const WORD type, const DWORD event_id, const std::wstring_view text) {
+    HANDLE source = RegisterEventSourceW(nullptr, kHelperEventSource);
+    if (!source) {
+      return;
+    }
+
+    const std::wstring message {text};
+    LPCWSTR strings[] {message.c_str()};
+    (void) ReportEventW(source, type, 0, event_id, nullptr, 1, 0, strings, nullptr);
+    DeregisterEventSource(source);
+  }
+
+  void report_helper_event(const WORD type, const DWORD event_id, const std::string_view text) {
+    report_helper_event(type, event_id, widen_ascii(text));
+  }
 #endif
 
   void print_usage() {
@@ -341,13 +371,19 @@ namespace {
   }
 
   LONG apply_extended_topology_result() {
-    return SetDisplayConfig(
+    const LONG result = SetDisplayConfig(
       0,
       nullptr,
       0,
       nullptr,
       SDC_APPLY | SDC_TOPOLOGY_EXTEND
     );
+    report_helper_event(
+      result == ERROR_SUCCESS ? EVENTLOG_INFORMATION_TYPE : EVENTLOG_ERROR_TYPE,
+      result == ERROR_SUCCESS ? kEventHelperTopologyApplied : kEventHelperTopologyFailed,
+      "Extended topology apply result=" + std::to_string(result)
+    );
+    return result;
   }
 
   bool apply_extended_topology() {
@@ -397,6 +433,11 @@ namespace {
     }
     if (!query.data) {
       std::cerr << "manifest topology query failed native_error=" << query.native_error << '\n';
+      report_helper_event(
+        EVENTLOG_ERROR_TYPE,
+        kEventHelperTopologyFailed,
+        "Manifest topology query failed native_error=" + std::to_string(query.native_error)
+      );
       return 1;
     }
 
@@ -430,6 +471,7 @@ namespace {
 
     if (applied_profiles == 0) {
       std::cerr << "manifest topology had no active layout profiles\n";
+      report_helper_event(EVENTLOG_ERROR_TYPE, kEventHelperTopologyFailed, L"Manifest topology had no active layout profiles");
       return 1;
     }
 
@@ -444,9 +486,19 @@ namespace {
     );
     if (result != ERROR_SUCCESS) {
       std::cerr << "apply manifest topology failed native_error=" << result << '\n';
+      report_helper_event(
+        EVENTLOG_ERROR_TYPE,
+        kEventHelperTopologyFailed,
+        "Manifest topology apply failed native_error=" + std::to_string(result)
+      );
       return 1;
     }
 
+    report_helper_event(
+      EVENTLOG_INFORMATION_TYPE,
+      kEventHelperTopologyApplied,
+      "Manifest topology applied profiles=" + std::to_string(applied_profiles)
+    );
     std::cout << "manifest_topology_applied=1\n";
     std::cout << "manifest_topology_profiles=" << applied_profiles << '\n';
     std::cout << "manifest_topology_saved=" << (save_to_database ? 1 : 0) << '\n';
@@ -1160,12 +1212,14 @@ namespace {
     const ColorProfileApi *color_api = load_color_profile_api();
     if (!color_api) {
       std::cerr << "color profile display APIs are unavailable\n";
+      report_helper_event(EVENTLOG_ERROR_TYPE, kEventHelperColorQueryFailed, L"Color profile display APIs are unavailable");
       return 1;
     }
 
     auto display_config = query_display_config(QDC_ONLY_ACTIVE_PATHS);
     if (!display_config) {
       std::cerr << "color profile query requires active DisplayConfig paths\n";
+      report_helper_event(EVENTLOG_ERROR_TYPE, kEventHelperColorQueryFailed, L"Color profile query requires active DisplayConfig paths");
       return 1;
     }
 
@@ -1202,6 +1256,11 @@ namespace {
     }
 
     std::cout << "color_profile_paths=" << queried << '\n';
+    report_helper_event(
+      queried == 0 ? EVENTLOG_ERROR_TYPE : EVENTLOG_INFORMATION_TYPE,
+      queried == 0 ? kEventHelperColorQueryFailed : kEventHelperColorQueryCompleted,
+      "Color profile query paths=" + std::to_string(queried)
+    );
     return queried == 0 ? 1 : 0;
   }
 

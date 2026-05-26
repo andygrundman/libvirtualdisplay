@@ -114,6 +114,8 @@ TEST(VirtualDisplayProbeContract, ManifestTopologyAppliesStoredLayoutPolicy) {
   expect_contains(source, "modes[*mode_index].sourceMode.position = POINTL {profile->position_x, profile->position_y}");
   expect_contains(source, "profile->layout_policy == vdd::kDisplayManifestLayoutPolicyApplyAndPersist");
   expect_contains(source, "SDC_SAVE_TO_DATABASE");
+  expect_contains(source, "report_helper_event(");
+  expect_contains(source, "kEventHelperTopologyApplied");
   expect_contains(source, "manifest_topology_applied=1");
 }
 
@@ -135,7 +137,8 @@ TEST(VirtualDisplayProbeContract, HdrSelfTestVerifiesWindowsAdvancedColorState) 
   expect_contains(source, "ColorProfileGetDisplayUserScope");
   expect_contains(source, "ColorProfileGetDisplayList");
   expect_contains(source, "ColorProfileGetDisplayDefault");
-  expect_contains(cmake, "target_link_libraries(virtualdisplay_probe PRIVATE libvirtualdisplay::driver mscms)");
+  expect_contains(cmake, "target_link_libraries(virtualdisplay_probe PRIVATE libvirtualdisplay::driver advapi32 mscms)");
+  expect_contains(source, "kEventHelperColorQueryCompleted");
   expect_contains(source, "const auto after = wait_for_advanced_color(");
   expect_contains(source, "created.value.os_adapter_luid");
   expect_contains(source, "created.value.target_id");
