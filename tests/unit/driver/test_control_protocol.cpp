@@ -35,6 +35,12 @@ namespace {
       vdd::kDisplayManifestProfileFlagPermanentIdentity;
     profile.connector_index = 0;
     profile.display_id = 0x7000000000000000ull;
+    profile.container_id = {
+      0x9161d0d5,
+      0x7000,
+      0x0000,
+      {0x93, 0x7d, 0x00, 0x00, 0x00, 0x00, 0x53, 0x44}
+    };
     std::memcpy(profile.manufacturer_id, "SDD", 4);
     profile.product_code = 0x4000;
     profile.serial_number = 1;
@@ -322,4 +328,57 @@ TEST(VirtualDisplayDriverControlProtocol, ValidatesDisplayManifest) {
   manifest = valid_display_manifest();
   manifest.profiles[0].layout_policy = vdd::kDisplayManifestLayoutPolicyApplyAndPersist + 1;
   EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidLayoutPolicy);
+
+  manifest = valid_display_manifest();
+  manifest.profiles[0].orientation = vdd::kDisplayManifestOrientationDefault + 1;
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidOrientation);
+}
+
+TEST(VirtualDisplayDriverControlProtocol, RejectsDuplicateManifestIdentities) {
+  auto manifest = valid_display_manifest();
+  manifest.profile_count = 2;
+  manifest.max_profile_count = 2;
+  manifest.profiles[1] = manifest.profiles[0];
+  manifest.profiles[1].connector_index = 1;
+  manifest.profiles[1].display_id = 0x7000000000000001ull;
+  manifest.profiles[1].container_id = {
+    0x9161d0d5,
+    0x7000,
+    0x0000,
+    {0x93, 0x7d, 0x00, 0x00, 0x00, 0x01, 0x53, 0x44}
+  };
+  manifest.profiles[1].product_code = 0x4001;
+  manifest.profiles[1].serial_number = 2;
+
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::None);
+
+  auto duplicate = manifest;
+  duplicate.profiles[1].display_id = duplicate.profiles[0].display_id;
+  EXPECT_EQ(vdd::validate_display_manifest(duplicate, 2), vdd::ValidationError::DuplicateManifestIdentity);
+
+  duplicate = manifest;
+  duplicate.profiles[1].container_id = duplicate.profiles[0].container_id;
+  EXPECT_EQ(vdd::validate_display_manifest(duplicate, 2), vdd::ValidationError::DuplicateManifestIdentity);
+
+  duplicate = manifest;
+  duplicate.profiles[1].product_code = duplicate.profiles[0].product_code;
+  EXPECT_EQ(vdd::validate_display_manifest(duplicate, 2), vdd::ValidationError::DuplicateManifestIdentity);
+
+  duplicate = manifest;
+  duplicate.profiles[1].serial_number = duplicate.profiles[0].serial_number;
+  EXPECT_EQ(vdd::validate_display_manifest(duplicate, 2), vdd::ValidationError::DuplicateManifestIdentity);
+}
+
+TEST(VirtualDisplayDriverControlProtocol, RejectsMissingManifestIdentityFields) {
+  auto manifest = valid_display_manifest();
+  manifest.profiles[0].container_id = {};
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::DuplicateManifestIdentity);
+
+  manifest = valid_display_manifest();
+  manifest.profiles[0].product_code = 0;
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::DuplicateManifestIdentity);
+
+  manifest = valid_display_manifest();
+  manifest.profiles[0].serial_number = 0;
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::DuplicateManifestIdentity);
 }

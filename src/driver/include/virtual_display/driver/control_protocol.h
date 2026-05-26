@@ -290,7 +290,9 @@ namespace virtual_display::driver {
     InvalidConnectorIndex,
     InvalidModeCount,
     InvalidLayoutPolicy,
+    InvalidOrientation,
     InvalidManufacturerId,
+    DuplicateManifestIdentity,
   };
 
   struct ValidatedCreateTemporaryDisplay {

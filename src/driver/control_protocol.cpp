@@ -10,6 +10,10 @@ namespace virtual_display::driver {
              manufacturer_id[2] >= 'A' && manufacturer_id[2] <= 'Z' &&
              manufacturer_id[3] == '\0';
     }
+
+    bool is_zero_guid(const Guid &guid) {
+      return guid == Guid {};
+    }
   }  // namespace
 
   bool is_valid_api_namespace(const Guid &guid) {
@@ -196,6 +200,10 @@ namespace virtual_display::driver {
     }
 
     std::array<bool, kMaxPermanentDisplayProfiles> used_connectors {};
+    std::array<std::uint64_t, kMaxPermanentDisplayProfiles> used_display_ids {};
+    std::array<Guid, kMaxPermanentDisplayProfiles> used_container_ids {};
+    std::array<std::uint32_t, kMaxPermanentDisplayProfiles> used_product_codes {};
+    std::array<std::uint32_t, kMaxPermanentDisplayProfiles> used_serial_numbers {};
     for (std::uint32_t index = 0; index < manifest.profile_count; ++index) {
       const auto &profile = manifest.profiles[index];
       if ((profile.flags & ~kDisplayManifestProfileKnownFlags) != 0) {
@@ -214,6 +222,23 @@ namespace virtual_display::driver {
       if (profile.display_id == 0) {
         return ValidationError::MissingDisplayId;
       }
+      if (is_zero_guid(profile.container_id) ||
+          profile.product_code == 0 ||
+          profile.serial_number == 0) {
+        return ValidationError::DuplicateManifestIdentity;
+      }
+      for (std::uint32_t previous = 0; previous < index; ++previous) {
+        if (used_display_ids[previous] == profile.display_id ||
+            used_container_ids[previous] == profile.container_id ||
+            used_product_codes[previous] == profile.product_code ||
+            used_serial_numbers[previous] == profile.serial_number) {
+          return ValidationError::DuplicateManifestIdentity;
+        }
+      }
+      used_display_ids[index] = profile.display_id;
+      used_container_ids[index] = profile.container_id;
+      used_product_codes[index] = profile.product_code;
+      used_serial_numbers[index] = profile.serial_number;
       if (!valid_manufacturer_id(profile.manufacturer_id)) {
         return ValidationError::InvalidManufacturerId;
       }
@@ -230,6 +255,9 @@ namespace virtual_display::driver {
       }
       if (profile.layout_policy > kDisplayManifestLayoutPolicyApplyAndPersist) {
         return ValidationError::InvalidLayoutPolicy;
+      }
+      if (profile.orientation != kDisplayManifestOrientationDefault) {
+        return ValidationError::InvalidOrientation;
       }
 
       for (std::uint32_t mode_index = 0; mode_index < profile.allowed_mode_count; ++mode_index) {
@@ -286,8 +314,12 @@ namespace virtual_display::driver {
         return "invalid_mode_count";
       case ValidationError::InvalidLayoutPolicy:
         return "invalid_layout_policy";
+      case ValidationError::InvalidOrientation:
+        return "invalid_orientation";
       case ValidationError::InvalidManufacturerId:
         return "invalid_manufacturer_id";
+      case ValidationError::DuplicateManifestIdentity:
+        return "duplicate_manifest_identity";
     }
 
     return "unknown";
