@@ -214,6 +214,10 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "open_first_control_device()");
   expect_contains(source, "query_display_state()");
   expect_contains(source, "query_display_manifest()");
+  expect_contains(source, "query_permanent_display_count()");
+  expect_contains(source, "set_permanent_display_count(*request)");
+  expect_contains(source, "command == \"permanent-query\"");
+  expect_contains(source, "command.starts_with(\"permanent-set \")");
   expect_contains(source, "helper_arguments_for_broker_command");
   expect_contains(source, "return L\"--diagnose\"");
   expect_contains(source, "return L\"--apply-extended-topology\"");

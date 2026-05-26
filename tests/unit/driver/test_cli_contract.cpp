@@ -47,6 +47,10 @@ TEST(VirtualDisplayCliContract, BrokerCommandsUseSecuredIpcPath) {
 
   expect_contains(source, "kBrokerPipeName[] = L\"\\\\\\\\.\\\\pipe\\\\SunshineVirtualDisplayBroker\"");
   expect_contains(source, "int query_broker(const std::string_view command)");
+  expect_contains(source, "BrokerResponse request_broker(const std::string_view command)");
+  expect_contains(source, "try_broker_command(\"permanent-query\", true)");
+  expect_contains(source, "try_broker_command(permanent_set_broker_command(*options), true)");
+  expect_contains(source, "permanent-set ");
   expect_contains(source, "CreateFileW(");
   expect_contains(source, "WriteFile(");
   expect_contains(source, "ReadFile(");

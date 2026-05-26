@@ -89,6 +89,13 @@ namespace {
     ServiceHandle &operator=(const ServiceHandle &) = delete;
   };
 
+  struct BrokerResponse {
+    bool pipe_available {};
+    bool ok {};
+    std::string text;
+    std::uint32_t native_error {};
+  };
+
   std::wstring widen(const std::string_view value) {
     if (value.empty()) {
       return {};
@@ -630,7 +637,7 @@ namespace {
     return reboot_required ? 3 : 0;
   }
 
-  int query_broker(const std::string_view command) {
+  BrokerResponse request_broker(const std::string_view command) {
     HANDLE pipe = CreateFileW(
       kBrokerPipeName,
       GENERIC_READ | GENERIC_WRITE,
@@ -641,8 +648,7 @@ namespace {
       nullptr
     );
     if (pipe == INVALID_HANDLE_VALUE) {
-      std::cerr << "open broker pipe failed native_error=" << GetLastError() << '\n';
-      return 1;
+      return {false, false, {}, GetLastError()};
     }
 
     DWORD bytes_written = 0;
@@ -653,9 +659,9 @@ namespace {
           &bytes_written,
           nullptr
         )) {
-      std::cerr << "write broker command failed native_error=" << GetLastError() << '\n';
+      const auto error = GetLastError();
       CloseHandle(pipe);
-      return 1;
+      return {true, false, "error write_failed\n", error};
     }
 
     std::array<char, 4096> response {};
@@ -667,15 +673,49 @@ namespace {
           &bytes_read,
           nullptr
         )) {
-      std::cerr << "read broker response failed native_error=" << GetLastError() << '\n';
+      const auto error = GetLastError();
       CloseHandle(pipe);
-      return 1;
+      return {true, false, "error read_failed\n", error};
     }
 
     response[(std::min<DWORD>)(bytes_read, static_cast<DWORD>(response.size() - 1))] = '\0';
-    std::cout << response.data();
     CloseHandle(pipe);
-    return std::string_view {response.data()}.starts_with("ok ") ? 0 : 1;
+    const std::string text {response.data()};
+    return {true, text.starts_with("ok ") || text.starts_with("ok\n"), text, ERROR_SUCCESS};
+  }
+
+  int query_broker(const std::string_view command) {
+    const auto response = request_broker(command);
+    if (!response.pipe_available) {
+      std::cerr << "open broker pipe failed native_error=" << response.native_error << '\n';
+      return 1;
+    }
+    std::cout << response.text;
+    return response.ok ? 0 : 1;
+  }
+
+  std::string broker_payload(const std::string &response) {
+    if (response.starts_with("ok\n")) {
+      return response.substr(3);
+    }
+    if (response.starts_with("ok ")) {
+      return response.substr(3);
+    }
+    return response;
+  }
+
+  std::optional<int> try_broker_command(const std::string_view command, const bool print_payload) {
+    const auto response = request_broker(command);
+    if (!response.pipe_available) {
+      return std::nullopt;
+    }
+    if (response.ok) {
+      std::cout << (print_payload ? broker_payload(response.text) : response.text);
+      return 0;
+    }
+
+    std::cerr << response.text;
+    return 1;
   }
 #else
   int install_driver(const std::vector<std::string> &) {
@@ -803,6 +843,21 @@ namespace {
     std::uint32_t refresh_rate_millihz {60'000};
     std::string name {"Sunshine Display"};
   };
+
+#ifdef _WIN32
+  std::string permanent_set_broker_command(const PermanentOptions &options) {
+    std::ostringstream command;
+    command
+      << "permanent-set " << options.count
+      << ' ' << options.width
+      << ' ' << options.height
+      << ' ' << options.physical_width_mm
+      << ' ' << options.physical_height_mm
+      << ' ' << options.refresh_rate_millihz
+      << ' ' << options.name;
+    return command.str();
+  }
+#endif
 
   std::optional<PermanentOptions> parse_permanent_options(
     const std::vector<std::string> &args,
@@ -984,6 +1039,42 @@ int main(int argc, char **argv) {
     print_usage();
     return 2;
   }
+
+#ifdef _WIN32
+  if (args[0] == "status" || (args[0] == "permanent" && args.size() >= 2 && args[1] == "query")) {
+    if (const auto broker_result = try_broker_command("permanent-query", true)) {
+      return *broker_result;
+    }
+  }
+
+  if (args[0] == "spawn") {
+    const auto options = parse_permanent_options(args, 1, false);
+    if (!options) {
+      return 2;
+    }
+    if (const auto broker_result = try_broker_command(permanent_set_broker_command(*options), true)) {
+      return *broker_result;
+    }
+  }
+
+  if (args[0] == "permanent" && args.size() >= 2 && args[1] == "off") {
+    PermanentOptions options {};
+    options.count = 0;
+    if (const auto broker_result = try_broker_command(permanent_set_broker_command(options), true)) {
+      return *broker_result;
+    }
+  }
+
+  if (args[0] == "permanent" && args.size() >= 2 && args[1] == "set") {
+    const auto options = parse_permanent_options(args, 2, true);
+    if (!options) {
+      return 2;
+    }
+    if (const auto broker_result = try_broker_command(permanent_set_broker_command(*options), true)) {
+      return *broker_result;
+    }
+  }
+#endif
 
   const auto opened = vdd::open_first_control_device();
   if (!opened.ok()) {

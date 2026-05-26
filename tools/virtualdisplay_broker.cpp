@@ -3,15 +3,18 @@
 
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
   #ifndef WIN32_LEAN_AND_MEAN
@@ -60,6 +63,96 @@ namespace {
   template<class T>
   std::string format_status(const vdd::ControlResult<T> &result) {
     return format_status(vdd::ControlOperationResult {result.status, result.native_error});
+  }
+
+  bool parse_u32(const std::string_view value, std::uint32_t &parsed) {
+    std::uint32_t output {};
+    const auto *begin = value.data();
+    const auto *end = value.data() + value.size();
+    const auto result = std::from_chars(begin, end, output);
+    if (result.ec != std::errc {} || result.ptr != end) {
+      return false;
+    }
+    parsed = output;
+    return true;
+  }
+
+  std::vector<std::string_view> split_words(const std::string_view text, const std::size_t max_words) {
+    std::vector<std::string_view> words;
+    std::size_t cursor = 0;
+    while (cursor < text.size() && words.size() < max_words) {
+      while (cursor < text.size() && text[cursor] == ' ') {
+        ++cursor;
+      }
+      if (cursor >= text.size()) {
+        break;
+      }
+
+      const auto begin = cursor;
+      while (cursor < text.size() && text[cursor] != ' ') {
+        ++cursor;
+      }
+      words.emplace_back(text.substr(begin, cursor - begin));
+    }
+    return words;
+  }
+
+  std::string display_name(const char (&value)[vdd::kDisplayNameChars]) {
+    return std::string {vdd::trim_display_name(value)};
+  }
+
+  void set_display_name(char (&target)[vdd::kDisplayNameChars], const std::string_view name) {
+    std::fill(std::begin(target), std::end(target), '\0');
+    std::memcpy(target, name.data(), (std::min)(name.size(), static_cast<std::size_t>(vdd::kDisplayNameChars - 1)));
+  }
+
+  std::string format_permanent_state(const vdd::PermanentDisplayCountResult &state) {
+    std::ostringstream output;
+    output
+      << "permanent_displays=" << state.current_display_count << '\n'
+      << "max_permanent_displays=" << state.max_display_count << '\n'
+      << "temporary_displays=" << state.temporary_display_count << '\n'
+      << "mode=" << state.width << 'x' << state.height << '@'
+      << (state.refresh_rate_millihz / 1000.0) << "Hz\n"
+      << "physical_size_mm=" << state.physical_width_mm << 'x' << state.physical_height_mm << '\n'
+      << "name=" << display_name(state.display_name) << '\n';
+    return output.str();
+  }
+
+  std::optional<vdd::PermanentDisplayCountRequest> parse_permanent_set_command(const std::string_view command) {
+    constexpr std::string_view prefix {"permanent-set "};
+    if (!command.starts_with(prefix)) {
+      return std::nullopt;
+    }
+
+    const auto payload = command.substr(prefix.size());
+    const auto fields = split_words(payload, 6);
+    if (fields.size() != 6) {
+      return std::nullopt;
+    }
+
+    std::size_t name_offset = 0;
+    for (const auto field: fields) {
+      name_offset = static_cast<std::size_t>((field.data() + field.size()) - payload.data());
+    }
+    while (name_offset < payload.size() && payload[name_offset] == ' ') {
+      ++name_offset;
+    }
+    if (name_offset >= payload.size()) {
+      return std::nullopt;
+    }
+
+    vdd::PermanentDisplayCountRequest request {};
+    if (!parse_u32(fields[0], request.display_count) ||
+        !parse_u32(fields[1], request.width) ||
+        !parse_u32(fields[2], request.height) ||
+        !parse_u32(fields[3], request.physical_width_mm) ||
+        !parse_u32(fields[4], request.physical_height_mm) ||
+        !parse_u32(fields[5], request.refresh_rate_millihz)) {
+      return std::nullopt;
+    }
+    set_display_name(request.display_name, payload.substr(name_offset));
+    return request;
   }
 
 #ifdef _WIN32
@@ -341,6 +434,27 @@ namespace {
       return "ok version=" + std::to_string(result.value.version) +
              " profiles=" + std::to_string(result.value.profile_count) +
              " max_profiles=" + std::to_string(result.value.max_profile_count) + "\n";
+    }
+
+    if (command == "permanent-query") {
+      const auto result = client.query_permanent_display_count();
+      if (!result.ok()) {
+        return "error " + format_status(result) + "\n";
+      }
+      return "ok\n" + format_permanent_state(result.value);
+    }
+
+    if (command.starts_with("permanent-set ")) {
+      const auto request = parse_permanent_set_command(command);
+      if (!request) {
+        return "error invalid_permanent_set\n";
+      }
+
+      const auto result = client.set_permanent_display_count(*request);
+      if (!result.ok()) {
+        return "error " + format_status(result) + "\n";
+      }
+      return "ok\n" + format_permanent_state(result.value);
     }
 
     if (const auto helper_arguments = helper_arguments_for_broker_command(command)) {
