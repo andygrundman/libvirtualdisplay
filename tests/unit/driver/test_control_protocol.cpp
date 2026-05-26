@@ -10,10 +10,13 @@
 namespace vdd = virtual_display::driver;
 
 namespace {
+  constexpr std::uint64_t lease_id(const std::uint64_t suffix) {
+    return vdd::kMinOpaqueLeaseId | suffix;
+  }
 
   vdd::CreateTemporaryDisplayRequest valid_create_request() {
     vdd::CreateTemporaryDisplayRequest request {};
-    request.lease_id = 10;
+    request.lease_id = lease_id(10);
     request.display_id = 20;
     request.width = 2560;
     request.height = 1440;
@@ -244,13 +247,13 @@ TEST(VirtualDisplayDriverControlProtocol, RejectsBlankDisplayName) {
 TEST(VirtualDisplayDriverControlProtocol, ValidatesLeaseRequests) {
   const vdd::LeaseRequest request {
     vdd::kApiNamespaceGuid,
-    1,
+    lease_id(1),
     0,
     0
   };
   const vdd::LeaseDisplayRequest display_request {
     vdd::kApiNamespaceGuid,
-    1,
+    lease_id(1),
     2
   };
 
@@ -261,7 +264,7 @@ TEST(VirtualDisplayDriverControlProtocol, ValidatesLeaseRequests) {
 TEST(VirtualDisplayDriverControlProtocol, RejectsInvalidLeaseRequests) {
   auto request = vdd::LeaseRequest {
     vdd::kApiNamespaceGuid,
-    1,
+    lease_id(1),
     0,
     0
   };
@@ -278,7 +281,7 @@ TEST(VirtualDisplayDriverControlProtocol, RejectsInvalidLeaseRequests) {
 
   auto display_request = vdd::LeaseDisplayRequest {
     vdd::kApiNamespaceGuid,
-    1,
+    lease_id(1),
     2
   };
   display_request.api_namespace.data1 ^= 1;
@@ -293,7 +296,7 @@ TEST(VirtualDisplayDriverControlProtocol, RejectsInvalidLeaseRequests) {
 
   display_request = vdd::LeaseDisplayRequest {
     vdd::kApiNamespaceGuid,
-    1,
+    lease_id(1),
     0
   };
   EXPECT_EQ(vdd::validate_lease_display_request(display_request), vdd::ValidationError::MissingDisplayId);

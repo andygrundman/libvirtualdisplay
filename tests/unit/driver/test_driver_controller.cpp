@@ -8,6 +8,9 @@
 namespace vdd = virtual_display::driver;
 
 namespace {
+  constexpr std::uint64_t lease_id(const std::uint64_t suffix) {
+    return vdd::kMinOpaqueLeaseId | suffix;
+  }
 
   class FakeBackend: public vdd::DisplayDriverBackend {
   public:
@@ -15,6 +18,12 @@ namespace {
       reserved.push_back(descriptor);
       events.push_back("reserve");
       return fail_reserve ? vdd::BackendError::Failed : vdd::BackendError::None;
+    }
+
+    vdd::BackendError unreserve_temporary_display_identity(const std::uint64_t display_id) override {
+      unreserved.push_back(display_id);
+      events.push_back("unreserve");
+      return vdd::BackendError::None;
     }
 
     vdd::BackendDisplayResult arrive_temporary_display(const vdd::DisplayDescriptor &descriptor) override {
@@ -45,6 +54,7 @@ namespace {
     vdd::AdapterLuid adapter_luid {44, 2};
     std::uint32_t next_target_id {7};
     std::vector<vdd::DisplayDescriptor> reserved {};
+    std::vector<std::uint64_t> unreserved {};
     std::vector<vdd::DisplayDescriptor> arrived {};
     std::vector<std::uint64_t> departed {};
     std::vector<std::uint32_t> permanent_counts {};
@@ -53,11 +63,11 @@ namespace {
   };
 
   vdd::CreateTemporaryDisplayRequest make_create_request(
-    const std::uint64_t lease_id = 100,
+    const std::uint64_t lease_id_value = lease_id(100),
     const std::uint64_t display_id = 0x12345678
   ) {
     vdd::CreateTemporaryDisplayRequest request {};
-    request.lease_id = lease_id;
+    request.lease_id = lease_id_value;
     request.display_id = display_id;
     request.width = 2560;
     request.height = 1440;
@@ -153,6 +163,8 @@ TEST(VirtualDisplayDriverController, CreateTemporaryDisplayRollsBackStoreWhenBac
   EXPECT_EQ(created.status.backend_error, vdd::BackendError::Failed);
   EXPECT_EQ(controller.store().temporary_display_count(), 0u);
   EXPECT_FALSE(controller.store().find_temporary_display(0x12345678));
+  EXPECT_EQ(backend.unreserved, (std::vector<std::uint64_t> {0x12345678}));
+  EXPECT_EQ(backend.events, (std::vector<std::string> {"reserve", "arrive", "unreserve"}));
 }
 
 TEST(VirtualDisplayDriverController, RemoveTemporaryDisplayDepartsBackend) {
@@ -161,7 +173,7 @@ TEST(VirtualDisplayDriverController, RemoveTemporaryDisplayDepartsBackend) {
   ASSERT_TRUE(controller.create_temporary_display(make_create_request(), std::chrono::steady_clock::now()).status.ok());
 
   vdd::LeaseDisplayRequest remove {};
-  remove.lease_id = 100;
+  remove.lease_id = lease_id(100);
   remove.display_id = 0x12345678;
 
   const auto status = controller.remove_temporary_display(remove);
@@ -179,7 +191,7 @@ TEST(VirtualDisplayDriverController, RemoveTemporaryDisplayKeepsStoreWhenBackend
   backend.fail_depart = true;
 
   vdd::LeaseDisplayRequest remove {};
-  remove.lease_id = 100;
+  remove.lease_id = lease_id(100);
   remove.display_id = 0x12345678;
 
   const auto status = controller.remove_temporary_display(remove);
@@ -194,11 +206,11 @@ TEST(VirtualDisplayDriverController, RemoveTemporaryDisplayKeepsStoreWhenBackend
 TEST(VirtualDisplayDriverController, ReleaseLeaseDepartsEveryDisplayInLease) {
   FakeBackend backend;
   auto controller = make_controller(backend);
-  ASSERT_TRUE(controller.create_temporary_display(make_create_request(100, 200), std::chrono::steady_clock::now()).status.ok());
-  ASSERT_TRUE(controller.create_temporary_display(make_create_request(100, 201), std::chrono::steady_clock::now()).status.ok());
+  ASSERT_TRUE(controller.create_temporary_display(make_create_request(lease_id(100), 200), std::chrono::steady_clock::now()).status.ok());
+  ASSERT_TRUE(controller.create_temporary_display(make_create_request(lease_id(100), 201), std::chrono::steady_clock::now()).status.ok());
 
   vdd::LeaseRequest release {};
-  release.lease_id = 100;
+  release.lease_id = lease_id(100);
 
   const auto status = controller.release_lease(release);
 
@@ -211,19 +223,19 @@ TEST(VirtualDisplayDriverController, ReleaseLeaseKeepsStoreWhenBackendDepartFail
   FakeBackend backend;
   auto controller = make_controller(backend);
   const auto now = std::chrono::steady_clock::now();
-  ASSERT_TRUE(controller.create_temporary_display(make_create_request(100, 200), now).status.ok());
-  ASSERT_TRUE(controller.create_temporary_display(make_create_request(100, 201), now).status.ok());
+  ASSERT_TRUE(controller.create_temporary_display(make_create_request(lease_id(100), 200), now).status.ok());
+  ASSERT_TRUE(controller.create_temporary_display(make_create_request(lease_id(100), 201), now).status.ok());
   backend.fail_depart = true;
 
   vdd::LeaseRequest release {};
-  release.lease_id = 100;
+  release.lease_id = lease_id(100);
 
   const auto status = controller.release_lease(release);
 
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.backend_error, vdd::BackendError::Failed);
   EXPECT_EQ(controller.store().temporary_display_count(), 2u);
-  EXPECT_EQ(controller.query_lease(100, now).lease_exists, 1u);
+  EXPECT_EQ(controller.query_lease(lease_id(100), now).lease_exists, 1u);
   EXPECT_EQ(backend.departed, (std::vector<std::uint64_t> {200, 201}));
 }
 
@@ -234,14 +246,14 @@ TEST(VirtualDisplayDriverController, FeedLeaseExtendsStoreWithoutBackendArrival)
   ASSERT_TRUE(controller.create_temporary_display(make_create_request(), now).status.ok());
 
   vdd::LeaseRequest feed {};
-  feed.lease_id = 100;
+  feed.lease_id = lease_id(100);
   feed.requested_timeout_ms = 60'000;
 
   const auto status = controller.feed_lease(feed, now + std::chrono::seconds(10));
 
   EXPECT_TRUE(status.ok());
   EXPECT_EQ(backend.arrived.size(), 1u);
-  const auto query = controller.query_lease(100, now + std::chrono::seconds(10));
+  const auto query = controller.query_lease(lease_id(100), now + std::chrono::seconds(10));
   EXPECT_EQ(query.effective_timeout_ms, 60'000u);
   EXPECT_EQ(query.remaining_ms, 60'000u);
 }
@@ -323,7 +335,7 @@ TEST(VirtualDisplayDriverController, QueryDisplayStateReportsPermanentAndTempora
   std::memcpy(permanent.display_name, "Desk Display", 13);
   ASSERT_TRUE(controller.set_permanent_display_count(permanent).ok());
 
-  auto temporary = make_create_request(100, 0x12345678);
+  auto temporary = make_create_request(lease_id(100), 0x12345678);
   temporary.flags = vdd::kCreateTemporaryDisplayFlagEphemeralIdentity;
   ASSERT_TRUE(controller.create_temporary_display(temporary, std::chrono::steady_clock::now()).status.ok());
 
@@ -342,7 +354,7 @@ TEST(VirtualDisplayDriverController, QueryDisplayStateReportsPermanentAndTempora
 
   EXPECT_EQ(state.entries[1].kind, vdd::kDisplayStateKindTemporary);
   EXPECT_EQ(state.entries[1].display_id, 0x12345678u);
-  EXPECT_EQ(state.entries[1].lease_id, 100u);
+  EXPECT_EQ(state.entries[1].lease_id, lease_id(100));
   EXPECT_NE(state.entries[1].container_id, vdd::container_guid_from_display_id(0x12345678u));
   EXPECT_NE(state.entries[1].product_code, vdd::product_code_from_display_id(0x12345678u));
   EXPECT_EQ(state.entries[1].flags & vdd::kDisplayStateFlagRetainIdentity, 0u);

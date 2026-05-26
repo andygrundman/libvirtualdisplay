@@ -34,6 +34,7 @@ namespace virtual_display::driver {
     }
 
     const auto descriptor = descriptor_from_record(*record);
+    bool identity_reserved = false;
     if (descriptor.retain_identity) {
       if (const auto backend_error = backend_.reserve_temporary_display_identity(descriptor);
           backend_error != BackendError::None) {
@@ -46,10 +47,14 @@ namespace virtual_display::driver {
           {}
         };
       }
+      identity_reserved = true;
     }
 
     const auto backend_result = backend_.arrive_temporary_display(descriptor);
     if (backend_result.error != BackendError::None) {
+      if (identity_reserved) {
+        (void) backend_.unreserve_temporary_display_identity(request.display_id);
+      }
       LeaseDisplayRequest rollback {};
       rollback.lease_id = request.lease_id;
       rollback.display_id = request.display_id;
@@ -228,6 +233,10 @@ namespace virtual_display::driver {
   }
 
   BackendError DisplayDriverBackend::reserve_temporary_display_identity(const DisplayDescriptor &) {
+    return BackendError::None;
+  }
+
+  BackendError DisplayDriverBackend::unreserve_temporary_display_identity(const std::uint64_t) {
     return BackendError::None;
   }
 

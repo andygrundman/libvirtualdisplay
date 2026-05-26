@@ -30,10 +30,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       - name: Configure MSVC
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
         with:
           arch: x64
 
@@ -103,7 +103,7 @@ jobs:
         run: cmake --build build-driver --target package --parallel
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: libvirtualdisplay ${{ steps.version.outputs.version }}

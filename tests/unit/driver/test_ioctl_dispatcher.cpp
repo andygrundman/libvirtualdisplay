@@ -7,6 +7,9 @@
 namespace vdd = virtual_display::driver;
 
 namespace {
+  constexpr std::uint64_t lease_id(const std::uint64_t suffix) {
+    return vdd::kMinOpaqueLeaseId | suffix;
+  }
 
   class FakeBackend: public vdd::DisplayDriverBackend {
   public:
@@ -47,7 +50,7 @@ namespace {
 
   vdd::CreateTemporaryDisplayRequest make_create_request() {
     vdd::CreateTemporaryDisplayRequest request {};
-    request.lease_id = 100;
+    request.lease_id = lease_id(100);
     request.display_id = 200;
     request.width = 1920;
     request.height = 1080;
@@ -247,7 +250,7 @@ TEST(VirtualDisplayDriverIoctlDispatcher, QueryAndFeedLeaseUseLeaseApi) {
 TEST(VirtualDisplayDriverIoctlDispatcher, QueryLeaseRejectsWrongNamespace) {
   Harness harness;
   vdd::LeaseRequest query_request {};
-  query_request.lease_id = 100;
+  query_request.lease_id = lease_id(100);
   query_request.api_namespace.data1 ^= 1;
   vdd::QueryLeaseResult query {};
 

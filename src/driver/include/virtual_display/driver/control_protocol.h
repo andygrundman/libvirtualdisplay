@@ -38,6 +38,7 @@ namespace virtual_display::driver {
   inline constexpr std::uint32_t kDefaultLeaseTimeoutMs = 10'000;
   inline constexpr std::uint32_t kMinLeaseTimeoutMs = 3'000;
   inline constexpr std::uint32_t kMaxLeaseTimeoutMs = 300'000;
+  inline constexpr std::uint64_t kMinOpaqueLeaseId = 0x6000000000000000ull;
 
   inline constexpr std::uint32_t kMinWidth = 320;
   inline constexpr std::uint32_t kMinHeight = 200;

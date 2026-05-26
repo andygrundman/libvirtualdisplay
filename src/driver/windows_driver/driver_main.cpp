@@ -554,6 +554,57 @@ namespace {
     return NT_SUCCESS(status) ? vdd::BackendError::None : vdd::BackendError::Failed;
   }
 
+  vdd::BackendError remove_temporary_display_profile(
+    WDFDRIVER driver,
+    WDFDEVICE device,
+    const std::uint64_t display_id
+  ) {
+    RegistryKey state_key;
+    auto status = open_driver_state_key(driver, device, KEY_READ | KEY_SET_VALUE, state_key);
+    if (!NT_SUCCESS(status)) {
+      return vdd::BackendError::Failed;
+    }
+
+    auto profiles = load_temporary_display_profiles(driver, device);
+    const auto original_size = profiles.size();
+    profiles.erase(
+      std::remove_if(
+        profiles.begin(),
+        profiles.end(),
+        [display_id](const TemporaryDisplayProfile &entry) {
+          return entry.display_id == display_id;
+        }
+      ),
+      profiles.end()
+    );
+    if (profiles.size() == original_size) {
+      return vdd::BackendError::None;
+    }
+
+    std::vector<std::uint8_t> blob;
+    blob.reserve(kTemporaryDisplayProfilesHeaderBytes + profiles.size() * kTemporaryDisplayProfileBytes);
+    append_u32(blob, kPersistentStateSchemaVersion);
+    append_u32(blob, static_cast<std::uint32_t>(profiles.size()));
+    for (const auto &entry: profiles) {
+      append_u64(blob, entry.display_id);
+      append_u32(blob, entry.connector_index);
+      append_guid(blob, entry.container_id);
+      append_u32(blob, entry.edid_product_code);
+      append_u32(blob, entry.edid_serial_number);
+    }
+
+    auto value_name = unicode_string(kTemporaryDisplayProfilesValue);
+    status = WdfRegistryAssignValue(
+      state_key.get(),
+      &value_name,
+      REG_BINARY,
+      static_cast<ULONG>(blob.size()),
+      blob.data()
+    );
+
+    return NT_SUCCESS(status) ? vdd::BackendError::None : vdd::BackendError::Failed;
+  }
+
   bool has_hdr_iddcx_ddi() {
     return IDD_IS_FIELD_AVAILABLE(IDD_CX_CLIENT_CONFIG, EvtIddCxAdapterQueryTargetInfo);
   }
@@ -1266,6 +1317,10 @@ namespace {
 
     vdd::BackendError reserve_temporary_display_identity(const vdd::DisplayDescriptor &descriptor) override {
       return save_temporary_display_profile(driver_, device_, descriptor);
+    }
+
+    vdd::BackendError unreserve_temporary_display_identity(const std::uint64_t display_id) override {
+      return remove_temporary_display_profile(driver_, device_, display_id);
     }
 
     vdd::BackendError depart_temporary_display(const std::uint64_t display_id) override {

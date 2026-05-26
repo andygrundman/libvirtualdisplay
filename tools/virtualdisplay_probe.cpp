@@ -8,6 +8,7 @@
 #include <functional>
 #include <iostream>
 #include <optional>
+#include <random>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -95,10 +96,17 @@ namespace {
   }
 
   std::uint64_t transient_id(const std::uint64_t salt) {
-    const auto ticks = static_cast<std::uint64_t>(
-      std::chrono::steady_clock::now().time_since_epoch().count()
-    );
-    return 0x6000000000000000ull | ((ticks ^ salt) & 0x0fffffffffffffffull);
+    static std::random_device random;
+    static std::mt19937_64 generator {
+      (static_cast<std::uint64_t>(random()) << 32u) ^
+      static_cast<std::uint64_t>(random()) ^
+      static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count())
+    };
+    std::uint64_t value {};
+    do {
+      value = 0x6000000000000000ull | ((generator() ^ salt) & 0x0fffffffffffffffull);
+    } while (value == 0);
+    return value;
   }
 
   vdd::CreateTemporaryDisplayRequest make_temporary_request(

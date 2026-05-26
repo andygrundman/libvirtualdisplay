@@ -13,6 +13,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 #ifdef _WIN32
@@ -117,6 +118,27 @@ namespace {
 
     LocalMemory(const LocalMemory &) = delete;
     LocalMemory &operator=(const LocalMemory &) = delete;
+  };
+
+  struct LocalHandle {
+    HANDLE value {};
+
+    explicit LocalHandle(const HANDLE handle):
+        value {handle} {
+    }
+
+    ~LocalHandle() {
+      if (value && value != INVALID_HANDLE_VALUE) {
+        CloseHandle(value);
+      }
+    }
+
+    HANDLE get() const {
+      return value;
+    }
+
+    LocalHandle(const LocalHandle &) = delete;
+    LocalHandle &operator=(const LocalHandle &) = delete;
   };
 
   struct BrokerResponse {
@@ -235,6 +257,36 @@ namespace {
       return {};
     }
     return std::filesystem::path {executable}.parent_path() / "virtualdisplay_broker.exe";
+  }
+
+  bool same_existing_path(const std::filesystem::path &lhs, const std::filesystem::path &rhs) {
+    std::error_code error;
+    const bool same = std::filesystem::equivalent(lhs, rhs, error);
+    return !error && same;
+  }
+
+  bool verify_broker_pipe_server(HANDLE pipe) {
+    ULONG server_pid {};
+    if (!GetNamedPipeServerProcessId(pipe, &server_pid) || server_pid == 0) {
+      return false;
+    }
+
+    LocalHandle process {
+      OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, server_pid)
+    };
+    if (!process.get()) {
+      return false;
+    }
+
+    std::wstring server_path(MAX_PATH, L'\0');
+    DWORD path_chars = static_cast<DWORD>(server_path.size());
+    if (!QueryFullProcessImageNameW(process.get(), 0, server_path.data(), &path_chars) || path_chars == 0) {
+      return false;
+    }
+    server_path.resize(path_chars);
+
+    const auto expected_path = broker_executable_path();
+    return !expected_path.empty() && same_existing_path(std::filesystem::path {server_path}, expected_path);
   }
 
   std::optional<SERVICE_STATUS_PROCESS> query_broker_service_status(
@@ -715,11 +767,17 @@ namespace {
       0,
       nullptr,
       OPEN_EXISTING,
-      FILE_ATTRIBUTE_NORMAL,
+      FILE_ATTRIBUTE_NORMAL | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
       nullptr
     );
     if (pipe == INVALID_HANDLE_VALUE) {
       return {false, false, {}, GetLastError()};
+    }
+
+    if (!verify_broker_pipe_server(pipe)) {
+      const auto error = GetLastError();
+      CloseHandle(pipe);
+      return {true, false, "error untrusted_broker_server\n", error == ERROR_SUCCESS ? ERROR_ACCESS_DENIED : error};
     }
 
     DWORD bytes_written = 0;

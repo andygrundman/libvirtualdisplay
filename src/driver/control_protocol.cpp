@@ -70,7 +70,7 @@ namespace virtual_display::driver {
     if (!is_valid_api_namespace(request.api_namespace)) {
       return ValidationError::WrongApiNamespace;
     }
-    if (request.lease_id == 0) {
+    if (request.lease_id < kMinOpaqueLeaseId) {
       return ValidationError::MissingLeaseId;
     }
     if (request.display_id == 0) {
@@ -125,7 +125,7 @@ namespace virtual_display::driver {
     if (!is_valid_api_namespace(request.api_namespace)) {
       return ValidationError::WrongApiNamespace;
     }
-    if (request.lease_id == 0) {
+    if (request.lease_id < kMinOpaqueLeaseId) {
       return ValidationError::MissingLeaseId;
     }
     if (request.display_id == 0) {
@@ -139,7 +139,7 @@ namespace virtual_display::driver {
     if (!is_valid_api_namespace(request.api_namespace)) {
       return ValidationError::WrongApiNamespace;
     }
-    if (request.lease_id == 0) {
+    if (request.lease_id < kMinOpaqueLeaseId) {
       return ValidationError::MissingLeaseId;
     }
 
