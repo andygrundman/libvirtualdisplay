@@ -29,7 +29,9 @@ namespace virtual_display::driver {
          index < manifest.profile_count && index < kMaxPermanentDisplayProfiles;
          ++index) {
       auto &profile = manifest.profiles[index];
-      profile.flags = kDisplayManifestProfileFlagHdrSupported | kDisplayManifestProfileFlagRetainIdentity;
+      profile.flags = kDisplayManifestProfileFlagHdrSupported |
+        kDisplayManifestProfileFlagRetainIdentity |
+        kDisplayManifestProfileFlagPermanentIdentity;
       profile.connector_index = index;
       profile.display_id = permanent_display_id(index);
       profile.container_id = container_guid_from_display_id(profile.display_id);

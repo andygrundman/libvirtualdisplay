@@ -57,14 +57,16 @@ namespace virtual_display::driver {
   inline constexpr std::uint32_t kDisplayStateKindTemporary = 2;
   inline constexpr std::uint32_t kDisplayStateFlagHdrSupported = 0x00000001u;
   inline constexpr std::uint32_t kDisplayStateFlagRetainIdentity = 0x00000002u;
-  inline constexpr std::uint32_t kDisplayManifestVersion = 1;
+  inline constexpr std::uint32_t kDisplayManifestVersion = 2;
   inline constexpr std::uint32_t kMaxPermanentDisplayProfiles = 8;
   inline constexpr std::uint32_t kMaxAllowedModesPerProfile = 4;
   inline constexpr std::uint32_t kDisplayManifestProfileFlagHdrSupported = 0x00000001u;
   inline constexpr std::uint32_t kDisplayManifestProfileFlagRetainIdentity = 0x00000002u;
+  inline constexpr std::uint32_t kDisplayManifestProfileFlagPermanentIdentity = 0x00000004u;
   inline constexpr std::uint32_t kDisplayManifestProfileKnownFlags =
     kDisplayManifestProfileFlagHdrSupported |
-    kDisplayManifestProfileFlagRetainIdentity;
+    kDisplayManifestProfileFlagRetainIdentity |
+    kDisplayManifestProfileFlagPermanentIdentity;
   inline constexpr std::uint32_t kDisplayManifestLayoutPolicyNone = 0;
   inline constexpr std::uint32_t kDisplayManifestLayoutPolicyApply = 1;
   inline constexpr std::uint32_t kDisplayManifestLayoutPolicyApplyAndPersist = 2;

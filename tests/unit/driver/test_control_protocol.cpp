@@ -31,7 +31,8 @@ namespace {
     manifest.max_profile_count = 2;
     auto &profile = manifest.profiles[0];
     profile.flags = vdd::kDisplayManifestProfileFlagHdrSupported |
-      vdd::kDisplayManifestProfileFlagRetainIdentity;
+      vdd::kDisplayManifestProfileFlagRetainIdentity |
+      vdd::kDisplayManifestProfileFlagPermanentIdentity;
     profile.connector_index = 0;
     profile.display_id = 0x7000000000000000ull;
     profile.product_code = 0x4000;
@@ -294,8 +295,12 @@ TEST(VirtualDisplayDriverControlProtocol, ValidatesDisplayManifest) {
 
   EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::None);
 
-  manifest.version = 2;
+  manifest.version = vdd::kDisplayManifestVersion + 1;
   EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidManifestVersion);
+
+  manifest = valid_display_manifest();
+  manifest.profiles[0].flags &= ~vdd::kDisplayManifestProfileFlagPermanentIdentity;
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidFlags);
 
   manifest = valid_display_manifest();
   manifest.profiles[0].connector_index = 2;

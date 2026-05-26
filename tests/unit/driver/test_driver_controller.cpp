@@ -355,7 +355,8 @@ TEST(VirtualDisplayDriverController, ApplyDisplayManifestReportsPerSlotIdentity)
   manifest.profile_count = 1;
   manifest.max_profile_count = 4;
   auto &profile = manifest.profiles[0];
-  profile.flags = vdd::kDisplayManifestProfileFlagRetainIdentity;
+  profile.flags = vdd::kDisplayManifestProfileFlagRetainIdentity |
+    vdd::kDisplayManifestProfileFlagPermanentIdentity;
   profile.connector_index = 2;
   profile.display_id = 0x7000000000000100ull;
   profile.container_id = vdd::container_guid_from_display_id(profile.display_id);

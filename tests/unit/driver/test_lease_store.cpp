@@ -330,6 +330,7 @@ TEST(VirtualDisplayDriverLeaseStore, ConvertsPermanentSettingsToDisplayManifest)
   EXPECT_EQ(manifest.profiles[1].connector_index, 1u);
   EXPECT_EQ(manifest.profiles[0].display_id, vdd::permanent_display_id(0));
   EXPECT_EQ(manifest.profiles[1].display_id, vdd::permanent_display_id(1));
+  EXPECT_NE(manifest.profiles[0].flags & vdd::kDisplayManifestProfileFlagPermanentIdentity, 0u);
   EXPECT_EQ(manifest.profiles[0].product_code, vdd::permanent_product_code(0));
   EXPECT_EQ(manifest.profiles[0].allowed_mode_count, 1u);
   EXPECT_EQ(manifest.profiles[0].layout_policy, vdd::kDisplayManifestLayoutPolicyNone);
@@ -344,6 +345,8 @@ TEST(VirtualDisplayDriverLeaseStore, AppliesDisplayManifestAsPermanentState) {
   auto manifest = vdd::display_manifest_from_permanent_settings(vdd::PermanentDisplayCountRequest {}, 4);
   manifest.profile_count = 1;
   auto &profile = manifest.profiles[0];
+  profile.flags = vdd::kDisplayManifestProfileFlagRetainIdentity |
+    vdd::kDisplayManifestProfileFlagPermanentIdentity;
   profile.connector_index = 2;
   profile.display_id = 0x7000000000000100ull;
   profile.container_id = vdd::container_guid_from_display_id(profile.display_id);

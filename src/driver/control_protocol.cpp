@@ -192,6 +192,9 @@ namespace virtual_display::driver {
       if ((profile.flags & ~kDisplayManifestProfileKnownFlags) != 0) {
         return ValidationError::InvalidFlags;
       }
+      if ((profile.flags & kDisplayManifestProfileFlagPermanentIdentity) == 0) {
+        return ValidationError::InvalidFlags;
+      }
       if (profile.connector_index >= max_display_count ||
           profile.connector_index >= kMaxPermanentDisplayProfiles ||
           used_connectors[profile.connector_index]) {
