@@ -184,6 +184,23 @@ TEST(VirtualDisplayDriverControlProtocol, ValidatesCreateRequest) {
   EXPECT_EQ(validated.display_name, "Sunshine Display");
 }
 
+TEST(VirtualDisplayDriverControlProtocol, ValidatedCreateCopiesRebindDisplayNameView) {
+  const auto request = valid_create_request();
+  vdd::ValidatedCreateTemporaryDisplay validated {};
+  ASSERT_EQ(vdd::validate_create_temporary_display(request, &validated), vdd::ValidationError::None);
+
+  const auto copied = validated;
+  ASSERT_EQ(copied.display_name, "Sunshine Display");
+  EXPECT_EQ(copied.display_name.data(), copied.request.display_name);
+  EXPECT_NE(copied.display_name.data(), validated.display_name.data());
+
+  auto assigned = vdd::ValidatedCreateTemporaryDisplay {};
+  assigned = validated;
+  ASSERT_EQ(assigned.display_name, "Sunshine Display");
+  EXPECT_EQ(assigned.display_name.data(), assigned.request.display_name);
+  EXPECT_NE(assigned.display_name.data(), validated.display_name.data());
+}
+
 TEST(VirtualDisplayDriverControlProtocol, DefaultsCreatePhysicalSize) {
   auto request = valid_create_request();
   request.physical_width_mm = 0;

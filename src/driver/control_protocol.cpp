@@ -112,10 +112,7 @@ namespace virtual_display::driver {
       validated->request.physical_width_mm = physical_width_mm;
       validated->request.physical_height_mm = physical_height_mm;
       validated->effective_timeout_ms = normalize_timeout_ms(request.requested_timeout_ms);
-      validated->display_name = std::string_view {
-        validated->request.display_name,
-        std::min(display_name.size(), static_cast<std::size_t>(kDisplayNameChars))
-      };
+      validated->rebind_display_name(display_name.size());
     }
 
     return ValidationError::None;

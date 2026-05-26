@@ -404,11 +404,15 @@ namespace {
 
   const vdd::DisplayManifestProfile *profile_for_target(
     const vdd::DisplayManifest &manifest,
-    const std::uint32_t target_id
+    const DISPLAYCONFIG_PATH_INFO &path
   ) {
+    if (path.targetInfo.outputTechnology != DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INDIRECT_VIRTUAL) {
+      return nullptr;
+    }
+
     for (std::uint32_t index = 0; index < manifest.profile_count; ++index) {
       const auto &profile = manifest.profiles[index];
-      if (profile.connector_index == target_id && profile.layout_policy != vdd::kDisplayManifestLayoutPolicyNone) {
+      if (profile.connector_index == path.targetInfo.id && profile.layout_policy != vdd::kDisplayManifestLayoutPolicyNone) {
         return &profile;
       }
     }
@@ -462,7 +466,7 @@ namespace {
         continue;
       }
 
-      const auto *profile = profile_for_target(manifest.value, path.targetInfo.id);
+      const auto *profile = profile_for_target(manifest.value, path);
       if (!profile) {
         continue;
       }
@@ -815,8 +819,10 @@ namespace {
         const bool hdr_ready =
           latest->v2 &&
           latest->supported &&
+          latest->active &&
           latest->hdr_supported &&
           latest->hdr_enabled &&
+          latest->active_color_mode == DISPLAYCONFIG_ADVANCED_COLOR_MODE_HDR &&
           !latest->limited_by_policy &&
           latest->bits_per_color_channel >= 10;
         if (!require_hdr_enabled || hdr_ready) {
@@ -1150,7 +1156,7 @@ namespace {
   const ColorProfileApi *load_color_profile_api() {
     static const ColorProfileApi api = []() {
       ColorProfileApi loaded {};
-      const HMODULE module = LoadLibraryW(L"mscms.dll");
+      const HMODULE module = LoadLibraryExW(L"mscms.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
       if (!module) {
         return loaded;
       }
@@ -1725,15 +1731,30 @@ int main(const int argc, char **argv) {
     if (!changed.ok()) {
       return fail("set permanent count failed", changed);
     }
+
+    bool restore_needed = true;
+    const auto restore_previous_count = [&]() {
+      vdd::PermanentDisplayCountRequest restore {};
+      restore.display_count = before.value.current_display_count;
+      return client.set_permanent_display_count(restore);
+    };
+    struct RestorePermanentCountOnExit {
+      bool &restore_needed;
+      const std::function<vdd::ControlResult<vdd::PermanentDisplayCountResult>()> restore;
+      ~RestorePermanentCountOnExit() {
+        if (restore_needed) {
+          (void) restore();
+        }
+      }
+    } restore_on_exit {restore_needed, restore_previous_count};
+
     if (changed.value.current_display_count != requested) {
       std::cerr << "set permanent count returned " << changed.value.current_display_count
                 << " after requesting " << requested << '\n';
       return 1;
     }
 
-    vdd::PermanentDisplayCountRequest restore {};
-    restore.display_count = before.value.current_display_count;
-    const auto restored = client.set_permanent_display_count(restore);
+    const auto restored = restore_previous_count();
     if (!restored.ok()) {
       return fail("restore permanent count failed", restored);
     }
@@ -1742,6 +1763,7 @@ int main(const int argc, char **argv) {
                 << " after requesting " << before.value.current_display_count << '\n';
       return 1;
     }
+    restore_needed = false;
 
     std::cout << "permanent_self_test=" << requested
               << " restored=" << restored.value.current_display_count

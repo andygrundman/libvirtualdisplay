@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -300,6 +301,41 @@ namespace virtual_display::driver {
     CreateTemporaryDisplayRequest request {};
     std::uint32_t effective_timeout_ms {};
     std::string_view display_name {};
+
+    ValidatedCreateTemporaryDisplay() = default;
+    ValidatedCreateTemporaryDisplay(const ValidatedCreateTemporaryDisplay &other):
+        request {other.request},
+        effective_timeout_ms {other.effective_timeout_ms} {
+      rebind_display_name(other.display_name.size());
+    }
+    ValidatedCreateTemporaryDisplay &operator=(const ValidatedCreateTemporaryDisplay &other) {
+      if (this != &other) {
+        request = other.request;
+        effective_timeout_ms = other.effective_timeout_ms;
+        rebind_display_name(other.display_name.size());
+      }
+      return *this;
+    }
+    ValidatedCreateTemporaryDisplay(ValidatedCreateTemporaryDisplay &&other) noexcept:
+        request {other.request},
+        effective_timeout_ms {other.effective_timeout_ms} {
+      rebind_display_name(other.display_name.size());
+    }
+    ValidatedCreateTemporaryDisplay &operator=(ValidatedCreateTemporaryDisplay &&other) noexcept {
+      if (this != &other) {
+        request = other.request;
+        effective_timeout_ms = other.effective_timeout_ms;
+        rebind_display_name(other.display_name.size());
+      }
+      return *this;
+    }
+
+    void rebind_display_name(std::size_t size) {
+      display_name = std::string_view {
+        request.display_name,
+        std::min(size, static_cast<std::size_t>(kDisplayNameChars))
+      };
+    }
   };
 
   bool is_valid_api_namespace(const Guid &guid);

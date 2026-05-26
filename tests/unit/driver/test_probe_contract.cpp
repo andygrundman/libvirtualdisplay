@@ -87,6 +87,7 @@ TEST(VirtualDisplayProbeContract, DiagnoseRunsBeforeControlDeviceOpen) {
   expect_contains(source, "ColorProfileGetDisplayList");
   expect_contains(source, "ColorProfileGetDisplayDefault");
   expect_contains(source, "ColorProfileAddDisplayAssociation");
+  expect_contains(source, "LoadLibraryExW(L\"mscms.dll\", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32)");
   expect_contains(source, "color_api->add_association(");
   expect_contains(source, "associate_color_profile(*source_luid, source_id");
   expect_not_contains(source, "AssociateColorProfileWithDevice");
@@ -117,7 +118,8 @@ TEST(VirtualDisplayProbeContract, ManifestTopologyAppliesStoredLayoutPolicy) {
   expect_contains(source, "if (command == \"--apply-manifest-topology\")");
   expect_contains(source, "apply_manifest_topology(client)");
   expect_contains(source, "client.query_display_manifest()");
-  expect_contains(source, "profile_for_target(manifest.value, path.targetInfo.id)");
+  expect_contains(source, "profile_for_target(manifest.value, path)");
+  expect_contains(source, "DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INDIRECT_VIRTUAL");
   expect_contains(source, "profile.layout_policy != vdd::kDisplayManifestLayoutPolicyNone");
   expect_contains(source, "modes[*mode_index].sourceMode.position = POINTL {profile->position_x, profile->position_y}");
   expect_contains(source, "profile->layout_policy == vdd::kDisplayManifestLayoutPolicyApplyAndPersist");
@@ -140,8 +142,10 @@ TEST(VirtualDisplayProbeContract, PermanentSelfTestRestoresOriginalCount) {
 
   expect_contains(source, "const auto before = client.query_permanent_display_count()");
   expect_contains(source, "const auto changed = client.set_permanent_display_count(request)");
+  expect_contains(source, "RestorePermanentCountOnExit");
+  expect_contains(source, "restore_on_exit");
   expect_contains(source, "restore.display_count = before.value.current_display_count");
-  expect_contains(source, "const auto restored = client.set_permanent_display_count(restore)");
+  expect_contains(source, "const auto restored = restore_previous_count();");
 }
 
 TEST(VirtualDisplayProbeContract, HdrSelfTestVerifiesWindowsAdvancedColorState) {
@@ -156,6 +160,8 @@ TEST(VirtualDisplayProbeContract, HdrSelfTestVerifiesWindowsAdvancedColorState) 
   expect_contains(cmake, "target_link_libraries(virtualdisplay_probe PRIVATE libvirtualdisplay::driver advapi32 mscms)");
   expect_contains(source, "kEventHelperColorQueryCompleted");
   expect_contains(source, "const auto after = wait_for_advanced_color(");
+  expect_contains(source, "latest->active");
+  expect_contains(source, "DISPLAYCONFIG_ADVANCED_COLOR_MODE_HDR");
   expect_contains(source, "created.value.os_adapter_luid");
   expect_contains(source, "created.value.target_id");
   expect_contains(source, "temporary display is not reported as HDR-supported by Windows");
