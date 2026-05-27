@@ -1448,7 +1448,6 @@ namespace {
         added.push_back(descriptor.display_id);
       }
 
-      permanent_display_count_ = manifest.profile_count;
       return vdd::BackendError::None;
     }
 
@@ -1915,7 +1914,6 @@ namespace {
     IDDCX_ADAPTER adapter_ {};
     bool adapter_ready_ {};
     NTSTATUS adapter_init_status_ {STATUS_DEVICE_NOT_READY};
-    std::uint32_t permanent_display_count_ {};
     std::map<std::uint64_t, MonitorRecord> monitors_ {};
   };
 

@@ -304,7 +304,7 @@ TEST(VirtualDisplayWindowsDriverContract, LeavesPermanentPolicyPersistenceToBrok
   EXPECT_EQ(source.find("save_display_manifest(driver_, device_, manifest)"), std::string::npos);
   EXPECT_EQ(source.find("persisted_manifest_"), std::string::npos);
   EXPECT_NE(source.find("vdd::BackendError apply_display_manifest(const vdd::DisplayManifest &manifest) override"), std::string::npos);
-  EXPECT_NE(source.find("permanent_display_count_ = manifest.profile_count;"), std::string::npos);
+  EXPECT_EQ(source.find("permanent_display_count_"), std::string::npos);
   EXPECT_NE(source.find("load_temporary_connector_reservations(driver, device)"), std::string::npos);
 }
 
