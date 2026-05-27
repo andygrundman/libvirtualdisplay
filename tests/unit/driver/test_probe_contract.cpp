@@ -1,48 +1,138 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <sstream>
 #include <string>
+#include <system_error>
 
 namespace {
-  std::string read_probe_source() {
-    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} / "tools/virtualdisplay_probe.cpp";
+  constexpr std::uintmax_t kMaxContractFileBytes = 2u * 1024u * 1024u;
+
+  std::string read_text_file_limited(const std::filesystem::path &path) {
+    std::error_code error;
+    const auto size = std::filesystem::file_size(path, error);
+    if (error) {
+      ADD_FAILURE() << "Failed to stat " << path.string() << ": " << error.message();
+      return {};
+    }
+    if (size > kMaxContractFileBytes) {
+      ADD_FAILURE() << "Contract source file too large: " << path.string() << " size=" << size;
+      return {};
+    }
+
     std::ifstream file {path, std::ios::binary};
     if (!file) {
       ADD_FAILURE() << "Failed to open " << path.string();
       return {};
     }
 
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+    std::string content(static_cast<std::size_t>(size), '\0');
+    if (!content.empty()) {
+      file.read(content.data(), static_cast<std::streamsize>(content.size()));
+      if (file.gcount() != static_cast<std::streamsize>(content.size())) {
+        ADD_FAILURE() << "Failed to read complete file " << path.string();
+        return {};
+      }
+    }
+    content.erase(std::remove(content.begin(), content.end(), '\r'), content.end());
+    return content;
+  }
+
+  std::string strip_cpp_comments(const std::string &content) {
+    enum class State {
+      Code,
+      String,
+      Character,
+      LineComment,
+      BlockComment,
+    };
+
+    std::string stripped;
+    stripped.reserve(content.size());
+
+    State state {State::Code};
+    for (std::size_t i = 0; i < content.size(); ++i) {
+      const char current = content[i];
+      const char next = i + 1u < content.size() ? content[i + 1u] : '\0';
+
+      switch (state) {
+        case State::Code:
+          if (current == '/' && next == '/') {
+            stripped.push_back(' ');
+            stripped.push_back(' ');
+            ++i;
+            state = State::LineComment;
+          } else if (current == '/' && next == '*') {
+            stripped.push_back(' ');
+            stripped.push_back(' ');
+            ++i;
+            state = State::BlockComment;
+          } else {
+            stripped.push_back(current);
+            if (current == '"') {
+              state = State::String;
+            } else if (current == '\'') {
+              state = State::Character;
+            }
+          }
+          break;
+        case State::String:
+          stripped.push_back(current);
+          if (current == '\\' && next != '\0') {
+            stripped.push_back(next);
+            ++i;
+          } else if (current == '"') {
+            state = State::Code;
+          }
+          break;
+        case State::Character:
+          stripped.push_back(current);
+          if (current == '\\' && next != '\0') {
+            stripped.push_back(next);
+            ++i;
+          } else if (current == '\'') {
+            state = State::Code;
+          }
+          break;
+        case State::LineComment:
+          if (current == '\n') {
+            stripped.push_back(current);
+            state = State::Code;
+          } else {
+            stripped.push_back(' ');
+          }
+          break;
+        case State::BlockComment:
+          if (current == '*' && next == '/') {
+            stripped.push_back(' ');
+            stripped.push_back(' ');
+            ++i;
+            state = State::Code;
+          } else {
+            stripped.push_back(current == '\n' ? '\n' : ' ');
+          }
+          break;
+      }
+    }
+
+    return stripped;
+  }
+
+  std::string read_probe_source() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} / "tools/virtualdisplay_probe.cpp";
+    return read_text_file_limited(path);
   }
 
   std::string read_broker_source() {
     const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} / "tools/virtualdisplay_broker.cpp";
-    std::ifstream file {path, std::ios::binary};
-    if (!file) {
-      ADD_FAILURE() << "Failed to open " << path.string();
-      return {};
-    }
-
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+    return read_text_file_limited(path);
   }
 
   std::string read_driver_cmake() {
     const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} / "src/driver/CMakeLists.txt";
-    std::ifstream file {path, std::ios::binary};
-    if (!file) {
-      ADD_FAILURE() << "Failed to open " << path.string();
-      return {};
-    }
-
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+    return read_text_file_limited(path);
   }
 
   void expect_contains(const std::string &content, const std::string &needle) {
@@ -55,7 +145,7 @@ namespace {
 }  // namespace
 
 TEST(VirtualDisplayProbeContract, ExposesTemporaryAndPermanentRuntimeChecks) {
-  const auto source = read_probe_source();
+  const auto source = strip_cpp_comments(read_probe_source());
 
   expect_contains(source, "--diagnose");
   expect_contains(source, "--apply-extended-topology");
@@ -83,7 +173,7 @@ TEST(VirtualDisplayProbeContract, ExposesTemporaryAndPermanentRuntimeChecks) {
 }
 
 TEST(VirtualDisplayProbeContract, DiagnoseRunsBeforeControlDeviceOpen) {
-  const auto source = read_probe_source();
+  const auto source = strip_cpp_comments(read_probe_source());
 
   expect_contains(source, "vdd::enumerate_control_devices(&enumerate_error)");
   expect_contains(source, "control_interface_count=");
@@ -122,7 +212,7 @@ TEST(VirtualDisplayProbeContract, DiagnoseRunsBeforeControlDeviceOpen) {
 }
 
 TEST(VirtualDisplayProbeContract, ManifestTopologyAppliesStoredLayoutPolicy) {
-  const auto source = read_probe_source();
+  const auto source = strip_cpp_comments(read_probe_source());
 
   expect_contains(source, "if (command == \"--apply-manifest-topology\")");
   expect_contains(source, "apply_manifest_topology(client)");
@@ -147,7 +237,7 @@ TEST(VirtualDisplayProbeContract, ManifestTopologyAppliesStoredLayoutPolicy) {
 }
 
 TEST(VirtualDisplayProbeContract, PermanentSelfTestRestoresOriginalCount) {
-  const auto source = read_probe_source();
+  const auto source = strip_cpp_comments(read_probe_source());
 
   expect_contains(source, "const auto before = client.query_permanent_display_count()");
   expect_contains(source, "const auto changed = client.set_permanent_display_count(request)");
@@ -158,7 +248,7 @@ TEST(VirtualDisplayProbeContract, PermanentSelfTestRestoresOriginalCount) {
 }
 
 TEST(VirtualDisplayProbeContract, HdrSelfTestVerifiesWindowsAdvancedColorState) {
-  const auto source = read_probe_source();
+  const auto source = strip_cpp_comments(read_probe_source());
   const auto cmake = read_driver_cmake();
 
   expect_contains(source, "DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO_2");
@@ -178,7 +268,7 @@ TEST(VirtualDisplayProbeContract, HdrSelfTestVerifiesWindowsAdvancedColorState) 
 }
 
 TEST(VirtualDisplayProbeContract, DisplayConfigCommandsRequireInteractiveSession) {
-  const auto source = read_probe_source();
+  const auto source = strip_cpp_comments(read_probe_source());
 
   expect_contains(source, "command_uses_display_config");
   expect_contains(source, "--apply-extended-topology");
@@ -255,8 +345,8 @@ TEST(VirtualDisplayProbeContract, TemporaryIdentityRetentionQaRequiresRestoredHd
 }
 
 TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
-  const auto source = read_broker_source();
-  const auto probe_source = read_probe_source();
+  const auto source = strip_cpp_comments(read_broker_source());
+  const auto probe_source = strip_cpp_comments(read_probe_source());
   const auto cmake = read_driver_cmake();
 
   expect_contains(cmake, "add_executable(virtualdisplay_broker");

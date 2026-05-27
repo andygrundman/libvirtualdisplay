@@ -2,15 +2,34 @@
 #include "virtual_display/driver/display_identity.h"
 #include "virtual_display/driver/lease_store.h"
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 #include <string>
+#include <string_view>
 
 namespace vdd = virtual_display::driver;
 
 namespace {
   constexpr std::uint64_t lease_id(const std::uint64_t suffix) {
     return vdd::kMinOpaqueLeaseId | suffix;
+  }
+
+  template <std::size_t N>
+  void set_display_name(char (&destination)[N], const std::string_view name) {
+    static_assert(N > 0);
+    std::fill(std::begin(destination), std::end(destination), '\0');
+    const auto bytes_to_copy = (std::min)(name.size(), N - 1u);
+    std::memcpy(destination, name.data(), bytes_to_copy);
+  }
+
+  vdd::TemporaryDisplayRecord require_temporary_display(
+    const vdd::DisplayStore &store,
+    const std::uint64_t display_id
+  ) {
+    const auto record = store.find_temporary_display(display_id);
+    EXPECT_TRUE(record) << "missing temporary display " << display_id;
+    return record.value_or(vdd::TemporaryDisplayRecord {});
   }
 
   vdd::CreateTemporaryDisplayRequest make_create_request(
@@ -26,7 +45,7 @@ namespace {
     request.physical_height_mm = 300;
     request.refresh_rate_millihz = 60'000;
     request.requested_timeout_ms = 30'000;
-    std::memcpy(request.display_name, "Sunshine Display", 16);
+    set_display_name(request.display_name, "Sunshine Display");
     return request;
   }
 }  // namespace
@@ -205,8 +224,8 @@ TEST(VirtualDisplayDriverLeaseStore, AdditionalDisplaysUseExistingLeaseExpiry) {
 
   EXPECT_EQ(created.status.error, vdd::StoreError::None);
   EXPECT_EQ(created.result.effective_timeout_ms, 30'000u);
-  ASSERT_TRUE(store.find_temporary_display(201));
-  EXPECT_EQ(store.find_temporary_display(201)->timeout_ms, 30'000u);
+  const auto display201 = require_temporary_display(store, 201);
+  EXPECT_EQ(display201.timeout_ms, 30'000u);
 
   auto query = store.query_lease(lease_id(100), now + std::chrono::seconds(10));
   EXPECT_EQ(query.effective_timeout_ms, 30'000u);
@@ -272,13 +291,17 @@ TEST(VirtualDisplayDriverLeaseStore, TemporaryConnectorIndexesUseFixedReservedRa
   ASSERT_EQ(store.create_temporary_display(make_create_request(lease_id(1), 10), now).status.error, vdd::StoreError::None);
   ASSERT_EQ(store.create_temporary_display(make_create_request(lease_id(2), 20), now).status.error, vdd::StoreError::None);
 
-  EXPECT_EQ(store.find_temporary_display(10)->connector_index, 3u);
-  EXPECT_EQ(store.find_temporary_display(20)->connector_index, 4u);
+  auto display10 = require_temporary_display(store, 10);
+  auto display20 = require_temporary_display(store, 20);
+  EXPECT_EQ(display10.connector_index, 3u);
+  EXPECT_EQ(display20.connector_index, 4u);
 
   request.display_count = 0;
   EXPECT_EQ(store.set_permanent_display_count(request).error, vdd::StoreError::None);
-  EXPECT_EQ(store.find_temporary_display(10)->connector_index, 3u);
-  EXPECT_EQ(store.find_temporary_display(20)->connector_index, 4u);
+  display10 = require_temporary_display(store, 10);
+  display20 = require_temporary_display(store, 20);
+  EXPECT_EQ(display10.connector_index, 3u);
+  EXPECT_EQ(display20.connector_index, 4u);
 }
 
 TEST(VirtualDisplayDriverLeaseStore, ReusesReservedConnectorIndexForSameDisplayId) {
@@ -286,7 +309,8 @@ TEST(VirtualDisplayDriverLeaseStore, ReusesReservedConnectorIndexForSameDisplayI
   const auto now = std::chrono::steady_clock::now();
 
   ASSERT_EQ(store.create_temporary_display(make_create_request(lease_id(1), 10), now).status.error, vdd::StoreError::None);
-  ASSERT_EQ(store.find_temporary_display(10)->connector_index, 2u);
+  auto display10 = require_temporary_display(store, 10);
+  ASSERT_EQ(display10.connector_index, 2u);
 
   const vdd::LeaseDisplayRequest remove {
     vdd::kApiNamespaceGuid,
@@ -296,7 +320,8 @@ TEST(VirtualDisplayDriverLeaseStore, ReusesReservedConnectorIndexForSameDisplayI
   ASSERT_EQ(store.remove_temporary_display(remove).error, vdd::StoreError::None);
 
   ASSERT_EQ(store.create_temporary_display(make_create_request(lease_id(2), 10), now).status.error, vdd::StoreError::None);
-  EXPECT_EQ(store.find_temporary_display(10)->connector_index, 2u);
+  display10 = require_temporary_display(store, 10);
+  EXPECT_EQ(display10.connector_index, 2u);
 }
 
 TEST(VirtualDisplayDriverLeaseStore, RemovesDuplicateConnectorReservationWhenDisplayClaimsIt) {
@@ -304,7 +329,8 @@ TEST(VirtualDisplayDriverLeaseStore, RemovesDuplicateConnectorReservationWhenDis
   const auto now = std::chrono::steady_clock::now();
 
   ASSERT_EQ(store.create_temporary_display(make_create_request(lease_id(1), 10), now).status.error, vdd::StoreError::None);
-  EXPECT_EQ(store.find_temporary_display(10)->connector_index, 2u);
+  const auto display10 = require_temporary_display(store, 10);
+  EXPECT_EQ(display10.connector_index, 2u);
 
   const vdd::LeaseDisplayRequest remove {
     vdd::kApiNamespaceGuid,
@@ -314,7 +340,8 @@ TEST(VirtualDisplayDriverLeaseStore, RemovesDuplicateConnectorReservationWhenDis
   ASSERT_EQ(store.remove_temporary_display(remove).error, vdd::StoreError::None);
 
   ASSERT_EQ(store.create_temporary_display(make_create_request(lease_id(2), 20), now).status.error, vdd::StoreError::None);
-  EXPECT_EQ(store.find_temporary_display(20)->connector_index, 3u);
+  const auto display20 = require_temporary_display(store, 20);
+  EXPECT_EQ(display20.connector_index, 3u);
 }
 
 TEST(VirtualDisplayDriverLeaseStore, DoesNotReuseReservedConnectorIndexForDifferentDisplayId) {
@@ -332,10 +359,12 @@ TEST(VirtualDisplayDriverLeaseStore, DoesNotReuseReservedConnectorIndexForDiffer
   ASSERT_EQ(store.remove_temporary_display(remove).error, vdd::StoreError::None);
 
   ASSERT_EQ(store.create_temporary_display(make_create_request(lease_id(3), 30), now).status.error, vdd::StoreError::None);
-  EXPECT_EQ(store.find_temporary_display(30)->connector_index, 4u);
+  const auto display30 = require_temporary_display(store, 30);
+  EXPECT_EQ(display30.connector_index, 4u);
 
   ASSERT_EQ(store.create_temporary_display(make_create_request(lease_id(4), 10), now).status.error, vdd::StoreError::None);
-  EXPECT_EQ(store.find_temporary_display(10)->connector_index, 2u);
+  const auto display10 = require_temporary_display(store, 10);
+  EXPECT_EQ(display10.connector_index, 2u);
 }
 
 TEST(VirtualDisplayDriverLeaseStore, ReusesInactiveReservedConnectorWhenPoolIsOtherwiseExhausted) {
@@ -350,7 +379,8 @@ TEST(VirtualDisplayDriverLeaseStore, ReusesInactiveReservedConnectorWhenPoolIsOt
     vdd::StoreError::None
   );
   ASSERT_EQ(store.create_temporary_display(make_create_request(lease_id(3), 30), now).status.error, vdd::StoreError::None);
-  EXPECT_EQ(store.find_temporary_display(30)->connector_index, 0u);
+  const auto display30 = require_temporary_display(store, 30);
+  EXPECT_EQ(display30.connector_index, 0u);
 
   EXPECT_EQ(
     store.create_temporary_display(make_create_request(lease_id(4), 10), now).status.error,
@@ -363,8 +393,9 @@ TEST(VirtualDisplayDriverLeaseStore, EphemeralIdentityAvoidsRetainedConnectorWhe
   const auto now = std::chrono::steady_clock::now();
 
   ASSERT_EQ(store.create_temporary_display(make_create_request(lease_id(1), 10), now).status.error, vdd::StoreError::None);
-  EXPECT_EQ(store.find_temporary_display(10)->connector_index, 0u);
-  EXPECT_TRUE(store.find_temporary_display(10)->retain_identity);
+  auto display10 = require_temporary_display(store, 10);
+  EXPECT_EQ(display10.connector_index, 0u);
+  EXPECT_TRUE(display10.retain_identity);
 
   EXPECT_EQ(
     store.remove_temporary_display({vdd::kApiNamespaceGuid, lease_id(1), 10}).error,
@@ -374,10 +405,10 @@ TEST(VirtualDisplayDriverLeaseStore, EphemeralIdentityAvoidsRetainedConnectorWhe
   auto request = make_create_request(lease_id(2), 10);
   request.flags = vdd::kCreateTemporaryDisplayFlagEphemeralIdentity;
   ASSERT_EQ(store.create_temporary_display(request, now).status.error, vdd::StoreError::None);
-  ASSERT_TRUE(store.find_temporary_display(10));
-  EXPECT_EQ(store.find_temporary_display(10)->connector_index, 1u);
-  EXPECT_FALSE(store.find_temporary_display(10)->retain_identity);
-  EXPECT_NE(store.find_temporary_display(10)->identity_display_id, 10u);
+  display10 = require_temporary_display(store, 10);
+  EXPECT_EQ(display10.connector_index, 1u);
+  EXPECT_FALSE(display10.retain_identity);
+  EXPECT_NE(display10.identity_display_id, 10u);
 }
 
 TEST(VirtualDisplayDriverLeaseStore, ReleasesWholeLease) {
@@ -438,7 +469,7 @@ TEST(VirtualDisplayDriverLeaseStore, SetsAndQueriesPermanentDisplayCount) {
   request.physical_width_mm = 590;
   request.physical_height_mm = 330;
   request.refresh_rate_millihz = 120'000;
-  std::memcpy(request.display_name, "Desk Display", 13);
+  set_display_name(request.display_name, "Desk Display");
 
   EXPECT_EQ(store.set_permanent_display_count(request).error, vdd::StoreError::None);
 
@@ -462,7 +493,7 @@ TEST(VirtualDisplayDriverLeaseStore, ConvertsPermanentSettingsToDisplayManifest)
   request.physical_width_mm = 700;
   request.physical_height_mm = 390;
   request.refresh_rate_millihz = 144'000;
-  std::memcpy(request.display_name, "Desk Display", 13);
+  set_display_name(request.display_name, "Desk Display");
 
   const auto manifest = vdd::display_manifest_from_permanent_settings(request, 4);
 
@@ -505,8 +536,7 @@ TEST(VirtualDisplayDriverLeaseStore, AppliesDisplayManifestAsPermanentState) {
   profile.position_y = 0;
   profile.allowed_modes[0] = {1920, 1080, 60'000};
   profile.allowed_modes[1] = {2560, 1440, 120'000};
-  std::fill(std::begin(profile.display_name), std::end(profile.display_name), '\0');
-  std::memcpy(profile.display_name, "Side Display", 13);
+  set_display_name(profile.display_name, "Side Display");
 
   EXPECT_EQ(store.apply_display_manifest(manifest).error, vdd::StoreError::None);
 

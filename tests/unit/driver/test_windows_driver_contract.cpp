@@ -1,169 +1,213 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <sstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace {
-  std::string read_windows_driver_source() {
-    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
-                      "src/driver/windows_driver/driver_main.cpp";
+  constexpr std::uintmax_t kMaxContractFileBytes = 2u * 1024u * 1024u;
+
+  std::string read_text_file_limited(const std::filesystem::path &path) {
+    std::error_code error;
+    const auto size = std::filesystem::file_size(path, error);
+    if (error) {
+      ADD_FAILURE() << "Failed to stat " << path.string() << ": " << error.message();
+      return {};
+    }
+    if (size > kMaxContractFileBytes) {
+      ADD_FAILURE() << "Contract source file too large: " << path.string() << " size=" << size;
+      return {};
+    }
+
     std::ifstream file {path, std::ios::binary};
     if (!file) {
       ADD_FAILURE() << "Failed to open " << path.string();
       return {};
     }
 
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+    std::string content(static_cast<std::size_t>(size), '\0');
+    if (!content.empty()) {
+      file.read(content.data(), static_cast<std::streamsize>(content.size()));
+      if (file.gcount() != static_cast<std::streamsize>(content.size())) {
+        ADD_FAILURE() << "Failed to read complete file " << path.string();
+        return {};
+      }
+    }
+    content.erase(std::remove(content.begin(), content.end(), '\r'), content.end());
+    return content;
+  }
+
+  std::string strip_cpp_comments(const std::string &content) {
+    enum class State {
+      Code,
+      String,
+      Character,
+      LineComment,
+      BlockComment,
+    };
+
+    std::string stripped;
+    stripped.reserve(content.size());
+
+    State state {State::Code};
+    for (std::size_t i = 0; i < content.size(); ++i) {
+      const char current = content[i];
+      const char next = i + 1u < content.size() ? content[i + 1u] : '\0';
+
+      switch (state) {
+        case State::Code:
+          if (current == '/' && next == '/') {
+            stripped.push_back(' ');
+            stripped.push_back(' ');
+            ++i;
+            state = State::LineComment;
+          } else if (current == '/' && next == '*') {
+            stripped.push_back(' ');
+            stripped.push_back(' ');
+            ++i;
+            state = State::BlockComment;
+          } else {
+            stripped.push_back(current);
+            if (current == '"') {
+              state = State::String;
+            } else if (current == '\'') {
+              state = State::Character;
+            }
+          }
+          break;
+        case State::String:
+          stripped.push_back(current);
+          if (current == '\\' && next != '\0') {
+            stripped.push_back(next);
+            ++i;
+          } else if (current == '"') {
+            state = State::Code;
+          }
+          break;
+        case State::Character:
+          stripped.push_back(current);
+          if (current == '\\' && next != '\0') {
+            stripped.push_back(next);
+            ++i;
+          } else if (current == '\'') {
+            state = State::Code;
+          }
+          break;
+        case State::LineComment:
+          if (current == '\n') {
+            stripped.push_back(current);
+            state = State::Code;
+          } else {
+            stripped.push_back(' ');
+          }
+          break;
+        case State::BlockComment:
+          if (current == '*' && next == '/') {
+            stripped.push_back(' ');
+            stripped.push_back(' ');
+            ++i;
+            state = State::Code;
+          } else {
+            stripped.push_back(current == '\n' ? '\n' : ' ');
+          }
+          break;
+      }
+    }
+
+    return stripped;
+  }
+
+  std::string read_windows_driver_source() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
+                      "src/driver/windows_driver/driver_main.cpp";
+    return read_text_file_limited(path);
   }
 
   std::string read_windows_driver_inf() {
     const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
                       "src/driver/windows_driver/SunshineVirtualDisplayDriver.inf";
-    std::ifstream file {path, std::ios::binary};
-    if (!file) {
-      ADD_FAILURE() << "Failed to open " << path.string();
-      return {};
-    }
-
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+    return read_text_file_limited(path);
   }
 
   std::string read_windows_driver_cmake() {
     const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
                       "src/driver/windows_driver/CMakeLists.txt";
-    std::ifstream file {path, std::ios::binary};
-    if (!file) {
-      ADD_FAILURE() << "Failed to open " << path.string();
-      return {};
-    }
-
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+    return read_text_file_limited(path);
   }
 
   std::string read_windows_control_client_source() {
     const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
                       "src/driver/windows_control_client.cpp";
-    std::ifstream file {path, std::ios::binary};
-    if (!file) {
-      ADD_FAILURE() << "Failed to open " << path.string();
-      return {};
-    }
-
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+    return read_text_file_limited(path);
   }
 
   std::string read_driver_cmake() {
     const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
                       "src/driver/CMakeLists.txt";
-    std::ifstream file {path, std::ios::binary};
-    if (!file) {
-      ADD_FAILURE() << "Failed to open " << path.string();
-      return {};
-    }
-
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+    return read_text_file_limited(path);
   }
 
   std::string read_readme() {
     const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
                       "README.md";
-    std::ifstream file {path, std::ios::binary};
-    if (!file) {
-      ADD_FAILURE() << "Failed to open " << path.string();
-      return {};
-    }
-
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+    return read_text_file_limited(path);
   }
 
   std::string read_support_diagnostics() {
     const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
                       "docs/support-diagnostics.md";
-    std::ifstream file {path, std::ios::binary};
-    if (!file) {
-      ADD_FAILURE() << "Failed to open " << path.string();
-      return {};
-    }
-
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+    return read_text_file_limited(path);
   }
 
   std::string read_release_workflow() {
     const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
                       ".github/workflows/release.yml";
-    std::ifstream file {path, std::ios::binary};
-    if (!file) {
-      ADD_FAILURE() << "Failed to open " << path.string();
-      return {};
-    }
-
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+    return read_text_file_limited(path);
   }
 
   std::string read_release_evidence_validator() {
     const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
                       "tools/validate_release_evidence.ps1";
-    std::ifstream file {path, std::ios::binary};
-    if (!file) {
-      ADD_FAILURE() << "Failed to open " << path.string();
-      return {};
-    }
-
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+    return read_text_file_limited(path);
   }
 
   std::string read_top_issues_workflow() {
     const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
                       ".github/workflows/_top-issues.yml";
-    std::ifstream file {path, std::ios::binary};
-    if (!file) {
-      ADD_FAILURE() << "Failed to open " << path.string();
-      return {};
-    }
+    return read_text_file_limited(path);
+  }
 
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+  std::string read_codeql_workflow() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
+                      ".github/workflows/_codeql.yml";
+    return read_text_file_limited(path);
+  }
+
+  std::string read_common_lint_workflow() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
+                      ".github/workflows/_common-lint.yml";
+    return read_text_file_limited(path);
+  }
+
+  std::string read_ci_workflow() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
+                      ".github/workflows/ci.yml";
+    return read_text_file_limited(path);
   }
 
   std::string read_tests_cmake() {
     const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
                       "tests/CMakeLists.txt";
-    std::ifstream file {path, std::ios::binary};
-    if (!file) {
-      ADD_FAILURE() << "Failed to open " << path.string();
-      return {};
-    }
-
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+    return read_text_file_limited(path);
   }
 }  // namespace
 
 TEST(VirtualDisplayWindowsDriverContract, DeletesMonitorObjectWhenArrivalFails) {
-  const auto source = read_windows_driver_source();
+  const auto source = strip_cpp_comments(read_windows_driver_source());
 
   const auto arrival = source.find("status = IddCxMonitorArrival(create_out.MonitorObject, &arrival_out);");
   ASSERT_NE(arrival, std::string::npos);
