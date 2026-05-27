@@ -6,7 +6,6 @@ Sunshine virtual display stack.
 ## Signing Channel
 
 - Release packages use the project's self-signed driver package.
-- Releases do not claim EV signing, HLK, WHQL, or Windows certification.
 - Consumers must install the driver in environments that accept this package
   signing model.
 

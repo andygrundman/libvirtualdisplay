@@ -803,7 +803,9 @@ TEST(VirtualDisplayWindowsDriverContract, ReleaseWorkflowPublishesSelfSignedPack
   EXPECT_NE(workflow.find("package_sha256"), std::string::npos);
   EXPECT_NE(workflow.find("channel = 'self-signed'"), std::string::npos);
   EXPECT_NE(workflow.find("certificate_thumbprint"), std::string::npos);
-  EXPECT_NE(workflow.find("no EV, HLK, WHQL, or Windows certification claim"), std::string::npos);
+  EXPECT_NE(workflow.find("driver_catalog = 'self-signed'"), std::string::npos);
+  EXPECT_NE(workflow.find("Driver package signing model: self-signed catalog."), std::string::npos);
+  EXPECT_EQ(workflow.find("no EV, HLK, WHQL, or Windows certification claim"), std::string::npos);
   EXPECT_NE(workflow.find("prerelease: false"), std::string::npos);
   EXPECT_NE(workflow.find("overwrite_files: true"), std::string::npos);
   EXPECT_NE(workflow.find("body_path: build-driver/release-notes.md"), std::string::npos);

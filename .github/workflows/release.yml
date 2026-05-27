@@ -251,7 +251,7 @@ jobs:
               channel = 'self-signed'
               certificate_thumbprint = '${{ steps.signing_cert.outputs.thumbprint }}'
             }
-            certification = 'Self-signed CI package; no EV, HLK, WHQL, or Windows certification claim'
+            driver_catalog = 'self-signed'
           }
           $evidencePath = Join-Path 'build-driver' "libvirtualdisplay-${{ steps.version.outputs.package_version }}-evidence.json"
           $evidence | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $evidencePath -Encoding utf8
@@ -262,7 +262,7 @@ jobs:
             ''
             'This package was built by GitHub Actions from `${{ steps.version.outputs.commit }}`.'
             ''
-            'Driver package signing model: self-signed. This release does not claim EV, HLK, WHQL, or Windows certification.'
+            'Driver package signing model: self-signed catalog.'
             ''
             'Driver catalog certificate thumbprint: `${{ steps.signing_cert.outputs.thumbprint }}`.'
             ''
