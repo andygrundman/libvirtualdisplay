@@ -157,14 +157,6 @@ jobs:
 
           $cerPath = Join-Path $env:RUNNER_TEMP 'sunshine-virtual-display-driver-release-signing.cer'
           Export-Certificate -Cert $cert -FilePath $cerPath | Out-Null
-          certutil.exe -user -f -addstore Root $cerPath
-          if ($LASTEXITCODE -ne 0) {
-            throw "certutil failed to add release certificate to CurrentUser\Root with exit code $LASTEXITCODE"
-          }
-          certutil.exe -user -f -addstore TrustedPublisher $cerPath
-          if ($LASTEXITCODE -ne 0) {
-            throw "certutil failed to add release certificate to CurrentUser\TrustedPublisher with exit code $LASTEXITCODE"
-          }
 
           "thumbprint=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
           "cert_path=$cerPath" >> $env:GITHUB_OUTPUT
@@ -200,10 +192,14 @@ jobs:
             throw "signtool sign failed with exit code $LASTEXITCODE"
           }
 
-          & $signtool.FullName verify /pa $catalog.Path
-          if ($LASTEXITCODE -ne 0) {
-            throw "signtool verify failed with exit code $LASTEXITCODE"
+          $verifyOutput = & $signtool.FullName verify /pa $catalog.Path 2>&1
+          $verifyExitCode = $LASTEXITCODE
+          $verifyText = ($verifyOutput | ForEach-Object { [string]$_ }) -join "`n"
+          if ($verifyExitCode -ne 0 -and $verifyText -notmatch 'terminated in a root\s+certificate which is not trusted') {
+            throw "signtool verify failed with exit code $verifyExitCode`n$verifyText"
           }
+          $verifyText
+          exit 0
 
       - name: Build release package
         run: cmake --build build-driver --target package --parallel

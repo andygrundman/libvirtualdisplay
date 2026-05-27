@@ -788,14 +788,14 @@ TEST(VirtualDisplayWindowsDriverContract, ReleaseWorkflowPublishesSelfSignedPack
   EXPECT_NE(workflow.find("git checkout --detach $version"), std::string::npos);
   EXPECT_NE(workflow.find("Import release signing certificate"), std::string::npos);
   EXPECT_NE(workflow.find("VDD_SIGNING_CERT_PFX_BASE64 is required for release driver catalog signing."), std::string::npos);
-  EXPECT_NE(workflow.find("certutil.exe -user -f -addstore Root"), std::string::npos);
-  EXPECT_NE(workflow.find("certutil.exe -user -f -addstore TrustedPublisher"), std::string::npos);
   EXPECT_NE(workflow.find("cert_path=$cerPath"), std::string::npos);
   EXPECT_NE(workflow.find("Build driver package files"), std::string::npos);
   EXPECT_NE(workflow.find("SunshineVirtualDisplayDriverPackageFiles"), std::string::npos);
   EXPECT_NE(workflow.find("Sign driver catalog"), std::string::npos);
   EXPECT_NE(workflow.find("signtool.FullName sign /fd SHA256 /sha1"), std::string::npos);
   EXPECT_NE(workflow.find("signtool.FullName verify /pa"), std::string::npos);
+  EXPECT_NE(workflow.find("terminated in a root\\s+certificate which is not trusted"), std::string::npos);
+  EXPECT_NE(workflow.find("exit 0"), std::string::npos);
   EXPECT_NE(workflow.find("Add signing certificate to release package"), std::string::npos);
   EXPECT_NE(workflow.find("SunshineVirtualDisplayDriver.cer"), std::string::npos);
   EXPECT_NE(workflow.find("Generate package evidence"), std::string::npos);

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "virtual_display/driver/control_protocol.h"
+#include "virtual_display/driver/display_identity.h"
 #include "virtual_display/driver/windows_control_protocol.h"
 
 #include <cstring>
@@ -14,6 +15,17 @@ namespace vdd = virtual_display::driver;
 namespace {
   constexpr std::uint64_t lease_id(const std::uint64_t suffix) {
     return vdd::kMinOpaqueLeaseId | suffix;
+  }
+
+  void set_manifest_profile_identity(
+    vdd::DisplayManifestProfile &profile,
+    const std::uint32_t connector_index
+  ) {
+    profile.connector_index = connector_index;
+    profile.display_id = vdd::permanent_display_id(connector_index);
+    profile.container_id = vdd::container_guid_from_display_id(profile.display_id);
+    profile.product_code = vdd::permanent_product_code(connector_index);
+    profile.serial_number = vdd::serial_number_from_display_id(profile.display_id);
   }
 
   vdd::CreateTemporaryDisplayRequest valid_create_request() {
@@ -38,17 +50,8 @@ namespace {
     profile.flags = vdd::kDisplayManifestProfileFlagHdrSupported |
       vdd::kDisplayManifestProfileFlagRetainIdentity |
       vdd::kDisplayManifestProfileFlagPermanentIdentity;
-    profile.connector_index = 0;
-    profile.display_id = 0x7000000000000000ull;
-    profile.container_id = {
-      0x9161d0d5,
-      0x7000,
-      0x0000,
-      {0x93, 0x7d, 0x00, 0x00, 0x00, 0x00, 0x53, 0x44}
-    };
+    set_manifest_profile_identity(profile, 0);
     std::memcpy(profile.manufacturer_id, "SDD", 4);
-    profile.product_code = 0x4000;
-    profile.serial_number = 1;
     profile.physical_width_mm = 700;
     profile.physical_height_mm = 390;
     profile.native_mode_index = 0;
@@ -93,22 +96,60 @@ namespace {
     return buffer.str();
   }
 
+  std::string_view trim_line(std::string_view line) {
+    if (!line.empty() && line.back() == '\r') {
+      line.remove_suffix(1);
+    }
+    while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) {
+      line.remove_prefix(1);
+    }
+    return line;
+  }
+
   std::string_view inf_section(const std::string &inf, const std::string_view name) {
     const auto header = "[" + std::string {name} + "]";
-    const auto section_begin = inf.find(header);
-    if (section_begin == std::string::npos) {
+    const auto content = std::string_view {inf};
+    std::size_t cursor = 0;
+    std::size_t body_begin = std::string_view::npos;
+
+    while (cursor < content.size()) {
+      const auto line_begin = cursor;
+      const auto line_end = content.find('\n', cursor);
+      const auto next_cursor = line_end == std::string_view::npos ? content.size() : line_end + 1;
+      const auto line = content.substr(
+        line_begin,
+        line_end == std::string_view::npos ? std::string_view::npos : line_end - line_begin
+      );
+      const auto trimmed = trim_line(line);
+      if (!trimmed.starts_with(';') && trimmed == header) {
+        body_begin = next_cursor;
+        break;
+      }
+      cursor = next_cursor;
+    }
+
+    if (body_begin == std::string_view::npos) {
       ADD_FAILURE() << "missing INF section: " << name;
       return {};
     }
 
-    const auto body_begin = inf.find('\n', section_begin);
-    if (body_begin == std::string::npos) {
-      return {};
+    cursor = body_begin;
+    while (cursor < content.size()) {
+      const auto line_begin = cursor;
+      const auto line_end = content.find('\n', cursor);
+      const auto next_cursor = line_end == std::string_view::npos ? content.size() : line_end + 1;
+      const auto line = content.substr(
+        line_begin,
+        line_end == std::string_view::npos ? std::string_view::npos : line_end - line_begin
+      );
+      const auto trimmed = trim_line(line);
+      if (!trimmed.starts_with(';') && trimmed.starts_with('[')) {
+        return content.substr(body_begin, line_begin - body_begin);
+      }
+      cursor = next_cursor;
     }
 
-    const auto next_section = inf.find("\n[", body_begin + 1);
-    const auto body_end = next_section == std::string::npos ? inf.size() : next_section + 1;
-    return std::string_view {inf}.substr(body_begin + 1, body_end - body_begin - 1);
+    return content.substr(body_begin);
   }
 
   std::vector<std::string_view> section_security_lines(const std::string_view section) {
@@ -525,16 +566,7 @@ TEST(VirtualDisplayDriverControlProtocol, RejectsDuplicateManifestIdentities) {
   manifest.profile_count = 2;
   manifest.max_profile_count = 2;
   manifest.profiles[1] = manifest.profiles[0];
-  manifest.profiles[1].connector_index = 1;
-  manifest.profiles[1].display_id = 0x7000000000000001ull;
-  manifest.profiles[1].container_id = {
-    0x9161d0d5,
-    0x7000,
-    0x0000,
-    {0x93, 0x7d, 0x00, 0x00, 0x00, 0x01, 0x53, 0x44}
-  };
-  manifest.profiles[1].product_code = 0x4001;
-  manifest.profiles[1].serial_number = 2;
+  set_manifest_profile_identity(manifest.profiles[1], 1);
 
   EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::None);
 

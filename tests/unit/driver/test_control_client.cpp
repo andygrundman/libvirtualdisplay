@@ -38,6 +38,9 @@ namespace {
 
       bytes_returned = 0;
       if (!next_output.empty()) {
+        if (output_size > 0 && output == nullptr) {
+          return false;
+        }
         const auto copy_size = std::min(output_size, next_output.size());
         if (copy_size > 0 && output && !suppress_output_copy) {
           std::memcpy(output, next_output.data(), copy_size);
@@ -213,6 +216,10 @@ TEST(VirtualDisplayDriverControlClient, PermanentDisplayOperationsReturnCounts) 
 
   ASSERT_TRUE(set_result.ok());
   ASSERT_TRUE(query_result.ok());
+  EXPECT_EQ(set_result.value.current_display_count, 2u);
+  EXPECT_EQ(set_result.value.max_display_count, 4u);
+  EXPECT_EQ(query_result.value.current_display_count, 2u);
+  EXPECT_EQ(query_result.value.max_display_count, 4u);
   ASSERT_EQ(transport.calls.size(), 2u);
   EXPECT_EQ(transport.calls[0].ioctl_code, vdd::kIoctlSetPermanentDisplayCount);
   EXPECT_EQ(transport.calls[1].ioctl_code, vdd::kIoctlQueryPermanentDisplayCount);
