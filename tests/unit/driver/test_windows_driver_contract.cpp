@@ -4,6 +4,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace {
   std::string read_windows_driver_source() {
@@ -410,6 +411,69 @@ TEST(VirtualDisplayWindowsDriverContract, RecoversRenderDeviceBeforeAbandoningSw
   );
 }
 
+TEST(VirtualDisplayWindowsDriverContract, MonitorCallbacksValidateCurrentHandle) {
+  const auto source = read_windows_driver_source();
+
+  EXPECT_NE(
+    source.find("auto find_current_monitor_locked(const std::uint64_t display_id, const IDDCX_MONITOR monitor)"),
+    std::string::npos
+  );
+  EXPECT_NE(source.find("record->second.monitor != monitor"), std::string::npos);
+
+  const std::vector<std::string> callback_sections {
+    "NTSTATUS assign_swapchain",
+    "NTSTATUS unassign_swapchain",
+    "NTSTATUS set_default_hdr_metadata",
+    "NTSTATUS set_gamma_ramp",
+    "std::optional<ModeShape> requested_mode_shape"
+  };
+  for (const auto &section_name: callback_sections) {
+    const auto section = source.find(section_name);
+    ASSERT_NE(section, std::string::npos) << section_name;
+    EXPECT_NE(
+      source.find("find_current_monitor_locked(context->display_id, monitor)", section),
+      std::string::npos
+    ) << section_name;
+  }
+}
+
+TEST(VirtualDisplayWindowsDriverContract, AssignSwapChainDoesNotJoinWorkerWhileBackendLocked) {
+  const auto source = read_windows_driver_source();
+
+  const auto assign_swapchain = source.find("NTSTATUS assign_swapchain");
+  ASSERT_NE(assign_swapchain, std::string::npos);
+  const auto unassign_swapchain = source.find("NTSTATUS unassign_swapchain", assign_swapchain);
+  ASSERT_NE(unassign_swapchain, std::string::npos);
+  const auto assign_body = source.substr(assign_swapchain, unassign_swapchain - assign_swapchain);
+
+  EXPECT_NE(assign_body.find("std::unique_ptr<SwapChainProcessor> previous_processor;"), std::string::npos);
+  EXPECT_NE(assign_body.find("previous_processor = std::move(record->second.swapchain_processor);"), std::string::npos);
+  EXPECT_NE(assign_body.find("record->second.swapchain_processor = std::move(processor);"), std::string::npos);
+
+  const auto retire = assign_body.find("if (previous_processor)");
+  ASSERT_NE(retire, std::string::npos);
+  const auto stop = assign_body.find("previous_processor->stop();", retire);
+  ASSERT_NE(stop, std::string::npos);
+  const auto retire_lock = assign_body.find("std::lock_guard lock {mutex_};", stop);
+  ASSERT_NE(retire_lock, std::string::npos);
+  EXPECT_LT(stop, retire_lock);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, DepartureWaitsOnlyForInflightAssignCallbacks) {
+  const auto source = read_windows_driver_source();
+
+  EXPECT_NE(source.find("std::uint32_t assign_callbacks_in_flight {};"), std::string::npos);
+  EXPECT_NE(source.find("void finish_assign_callback"), std::string::npos);
+  EXPECT_NE(source.find("AssignCallbackScope assign_scope {*this, context->display_id, monitor};"), std::string::npos);
+  EXPECT_NE(source.find("++record->second.assign_callbacks_in_flight;"), std::string::npos);
+  EXPECT_NE(source.find("--record->second.assign_callbacks_in_flight;"), std::string::npos);
+
+  const auto depart_display = source.find("vdd::BackendError depart_display");
+  ASSERT_NE(depart_display, std::string::npos);
+  EXPECT_NE(source.find("departure_cv_.wait_for(lock, std::chrono::milliseconds(250)", depart_display), std::string::npos);
+  EXPECT_EQ(source.find("std::this_thread::sleep_for(std::chrono::milliseconds(250));"), std::string::npos);
+}
+
 TEST(VirtualDisplayWindowsDriverContract, GatesHdrDescriptorsOnRuntimeIddCxSupport) {
   const auto source = read_windows_driver_source();
 
@@ -608,18 +672,47 @@ TEST(VirtualDisplayWindowsDriverContract, AbandonsInvalidatedSwapchainHandlesDur
     source.find("stop_swapchain_processors_without_delete(retired_processors_to_stop);", unassign_swapchain),
     std::string::npos
   );
+  const auto unassign_end = source.find("NTSTATUS set_default_hdr_metadata", unassign_swapchain);
+  ASSERT_NE(unassign_end, std::string::npos);
+  EXPECT_EQ(
+    source.substr(unassign_swapchain, unassign_end - unassign_swapchain).find("monitors_.erase(record);"),
+    std::string::npos
+  );
 }
 
-TEST(VirtualDisplayWindowsDriverContract, MonitorDepartureFailureDoesNotRestoreStoppedProcessors) {
+TEST(VirtualDisplayWindowsDriverContract, MonitorDepartureFailureKeepsRecordRetryable) {
   const auto source = read_windows_driver_source();
 
   const auto depart_display = source.find("vdd::BackendError depart_display");
   ASSERT_NE(depart_display, std::string::npos);
   const auto failure = source.find("MonitorDepartureFailed", depart_display);
   ASSERT_NE(failure, std::string::npos);
-  EXPECT_NE(source.find("monitors_.erase(monitor);", failure), std::string::npos);
-  EXPECT_EQ(source.find("monitor->second.departing = false;", failure), std::string::npos);
+  const auto failure_return = source.find("return vdd::BackendError::Failed;", failure);
+  ASSERT_NE(failure_return, std::string::npos);
+  const auto failure_body = source.substr(failure, failure_return - failure);
+  EXPECT_NE(failure_body.find("monitor->second.departing = false;"), std::string::npos);
+  EXPECT_EQ(failure_body.find("monitors_.erase(monitor);"), std::string::npos);
   EXPECT_EQ(source.find("monitor->second.swapchain_processor = std::move(processor_to_stop);", failure), std::string::npos);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, MonitorWrappersValidateHandleBeforeContextLookup) {
+  const auto source = read_windows_driver_source();
+
+  const std::vector<std::string> wrappers {
+    "NTSTATUS SunshineEvtQueryTargetModes(",
+    "NTSTATUS SunshineEvtQueryTargetModes2(",
+    "NTSTATUS SunshineEvtAssignSwapChain(",
+    "NTSTATUS SunshineEvtUnassignSwapChain("
+  };
+  for (const auto &wrapper_name: wrappers) {
+    const auto wrapper = source.find(wrapper_name);
+    ASSERT_NE(wrapper, std::string::npos) << wrapper_name;
+    const auto null_check = source.find("if (!monitor)", wrapper);
+    ASSERT_NE(null_check, std::string::npos) << wrapper_name;
+    const auto context_lookup = source.find("auto *context = GetMonitorContext(monitor);", wrapper);
+    ASSERT_NE(context_lookup, std::string::npos) << wrapper_name;
+    EXPECT_LT(null_check, context_lookup) << wrapper_name;
+  }
 }
 
 TEST(VirtualDisplayWindowsDriverContract, TargetModesUseRequestedDescriptorTiming) {

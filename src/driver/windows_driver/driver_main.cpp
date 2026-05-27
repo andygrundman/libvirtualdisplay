@@ -99,6 +99,7 @@ namespace {
     std::vector<std::unique_ptr<SwapChainProcessor>> retired_swapchain_processors {};
     bool permanent {};
     bool departing {};
+    std::uint32_t assign_callbacks_in_flight {};
     IDDCX_DEFAULT_HDR_METADATA_TYPE default_hdr_metadata_type {IDDCX_HDRMETADATA_TYPE_UNINITIALIZED};
     UINT default_hdr_metadata_size {};
     IDDCX_GAMMARAMP_TYPE gamma_ramp_type {IDDCX_GAMMARAMP_TYPE_UNINITIALIZED};
@@ -1442,6 +1443,47 @@ namespace {
     }
 
   private:
+    auto find_current_monitor_locked(const std::uint64_t display_id, const IDDCX_MONITOR monitor) {
+      const auto record = monitors_.find(display_id);
+      if (record == monitors_.end() || record->second.monitor != monitor) {
+        return monitors_.end();
+      }
+
+      return record;
+    }
+
+    void finish_assign_callback(const std::uint64_t display_id, const IDDCX_MONITOR monitor) {
+      {
+        std::lock_guard lock {mutex_};
+        const auto record = find_current_monitor_locked(display_id, monitor);
+        if (record != monitors_.end() && record->second.assign_callbacks_in_flight > 0) {
+          --record->second.assign_callbacks_in_flight;
+        }
+      }
+      departure_cv_.notify_all();
+    }
+
+    class AssignCallbackScope {
+    public:
+      AssignCallbackScope(IddCxBackend &backend, const std::uint64_t display_id, const IDDCX_MONITOR monitor):
+          backend_ {backend},
+          display_id_ {display_id},
+          monitor_ {monitor} {
+      }
+
+      ~AssignCallbackScope() {
+        backend_.finish_assign_callback(display_id_, monitor_);
+      }
+
+      AssignCallbackScope(const AssignCallbackScope &) = delete;
+      AssignCallbackScope &operator=(const AssignCallbackScope &) = delete;
+
+    private:
+      IddCxBackend &backend_;
+      std::uint64_t display_id_ {};
+      IDDCX_MONITOR monitor_ {};
+    };
+
     vdd::BackendDisplayResult arrive_display(const vdd::DisplayDescriptor &requested_descriptor, const bool permanent) {
       const auto descriptor = descriptor_with_runtime_hdr_policy(requested_descriptor);
       IDDCX_ADAPTER adapter {};
@@ -1492,12 +1534,17 @@ namespace {
       monitor_context->display_id = descriptor.display_id;
 
       {
-        std::lock_guard lock {mutex_};
-        if (!adapter_ready_ || adapter_ != adapter || monitors_.contains(descriptor.display_id)) {
-          status = STATUS_DEVICE_NOT_READY;
-        } else {
-          monitors_.emplace(descriptor.display_id, std::move(record));
-          status = STATUS_SUCCESS;
+        try {
+          std::lock_guard lock {mutex_};
+          if (!adapter_ready_ || adapter_ != adapter || monitors_.contains(descriptor.display_id)) {
+            status = STATUS_DEVICE_NOT_READY;
+          } else {
+            monitors_.emplace(descriptor.display_id, std::move(record));
+            status = STATUS_SUCCESS;
+          }
+        } catch (...) {
+          WdfObjectDelete(create_out.MonitorObject);
+          return {vdd::BackendError::Failed, {}, 0};
         }
       }
       if (!NT_SUCCESS(status)) {
@@ -1537,24 +1584,27 @@ namespace {
       std::unique_ptr<SwapChainProcessor> processor_to_stop;
       std::vector<std::unique_ptr<SwapChainProcessor>> retired_processors_to_stop;
       {
-        std::lock_guard lock {mutex_};
-        const auto monitor = monitors_.find(display_id);
+        std::unique_lock lock {mutex_};
+        auto monitor = monitors_.find(display_id);
         if (monitor == monitors_.end() || monitor->second.departing) {
           return vdd::BackendError::None;
         }
 
         monitor->second.departing = true;
         monitor_handle = monitor->second.monitor;
-      }
+        if (monitor->second.assign_callbacks_in_flight > 0) {
+          // DisplayConfig can remove a just-activated path while IddCx is still
+          // unwinding HandleNewSwapChain. Mark departure first, then wait only
+          // for known in-flight assign callbacks to observe teardown.
+          departure_cv_.wait_for(lock, std::chrono::milliseconds(250), [&]() {
+            const auto current = monitors_.find(display_id);
+            return current == monitors_.end() ||
+                   current->second.monitor != monitor_handle ||
+                   current->second.assign_callbacks_in_flight == 0;
+          });
+        }
 
-      // DisplayConfig can remove a just-activated path while IddCx is still
-      // unwinding HandleNewSwapChain. Mark departure first, then let any racing
-      // assign callback see ABANDON_SWAPCHAIN before we tear down the monitor.
-      std::this_thread::sleep_for(std::chrono::milliseconds(250));
-
-      {
-        std::lock_guard lock {mutex_};
-        const auto monitor = monitors_.find(display_id);
+        monitor = monitors_.find(display_id);
         if (monitor == monitors_.end() || monitor->second.monitor != monitor_handle) {
           return vdd::BackendError::None;
         }
@@ -1584,7 +1634,7 @@ namespace {
         if (const auto monitor = monitors_.find(display_id);
             monitor != monitors_.end() &&
             monitor->second.monitor == monitor_handle) {
-          monitors_.erase(monitor);
+          monitor->second.departing = false;
         }
         return vdd::BackendError::Failed;
       }
@@ -1613,42 +1663,64 @@ namespace {
 
       {
         std::lock_guard lock {mutex_};
-        const auto record = monitors_.find(context->display_id);
+        const auto record = find_current_monitor_locked(context->display_id, monitor);
         if (record == monitors_.end() || record->second.departing) {
           // This status is the IddCx-approved way to decline a swapchain that
           // races with monitor teardown; generic failures trip verifier 0x700.
           return STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN;
         }
+        ++record->second.assign_callbacks_in_flight;
       }
+      AssignCallbackScope assign_scope {*this, context->display_id, monitor};
 
-      auto processor = std::make_unique<SwapChainProcessor>(args->hSwapChain, args->hNextSurfaceAvailable);
+      std::unique_ptr<SwapChainProcessor> processor;
+      try {
+        processor = std::make_unique<SwapChainProcessor>(args->hSwapChain, args->hNextSurfaceAvailable);
+      } catch (...) {
+        return STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN;
+      }
       const HRESULT hr = processor->start(args->RenderAdapterLuid);
       if (FAILED(hr)) {
         processor->abandon_swapchain();
         return STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN;
       }
 
+      std::unique_ptr<SwapChainProcessor> previous_processor;
+      bool abandon_new_processor = false;
       {
         std::lock_guard lock {mutex_};
-        const auto record = monitors_.find(context->display_id);
-        if (record == monitors_.end()) {
-          processor->stop();
-          processor->abandon_swapchain();
-          return STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN;
-        }
-        if (!record->second.departing) {
-          auto previous_processor = std::move(record->second.swapchain_processor);
-          if (previous_processor) {
-            // IddCx rotates swapchains inside HandleNewSwapChain. Keep the old
-            // WDF object alive until monitor teardown to avoid racing that path.
-            previous_processor->stop();
-            record->second.retired_swapchain_processors.push_back(std::move(previous_processor));
-          }
-          record->second.swapchain_processor = std::move(processor);
+        const auto record = find_current_monitor_locked(context->display_id, monitor);
+        if (record == monitors_.end() || record->second.departing) {
+          abandon_new_processor = true;
         } else {
-          processor->stop();
-          processor->abandon_swapchain();
-          return STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN;
+          previous_processor = std::move(record->second.swapchain_processor);
+          record->second.swapchain_processor = std::move(processor);
+        }
+      }
+
+      if (abandon_new_processor) {
+        processor->stop();
+        processor->abandon_swapchain();
+        return STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN;
+      }
+
+      if (previous_processor) {
+        // IddCx rotates swapchains inside HandleNewSwapChain. Keep the old WDF
+        // object alive until monitor teardown, but never join its worker while
+        // holding the backend monitor map mutex.
+        previous_processor->stop();
+        bool retired = false;
+        try {
+          std::lock_guard lock {mutex_};
+          const auto record = find_current_monitor_locked(context->display_id, monitor);
+          if (record != monitors_.end()) {
+            record->second.retired_swapchain_processors.push_back(std::move(previous_processor));
+            retired = true;
+          }
+        } catch (...) {
+        }
+        if (!retired && previous_processor) {
+          previous_processor->abandon_swapchain();
         }
       }
 
@@ -1675,10 +1747,9 @@ namespace {
 
       std::unique_ptr<SwapChainProcessor> processor_to_stop;
       std::vector<std::unique_ptr<SwapChainProcessor>> retired_processors_to_stop;
-      bool erase_departing_record = false;
       {
         std::lock_guard lock {mutex_};
-        const auto record = monitors_.find(context->display_id);
+        const auto record = find_current_monitor_locked(context->display_id, monitor);
         if (record == monitors_.end()) {
           // Monitor departure may remove our bookkeeping before IddCx delivers a
           // final unassign callback. The swapchain is already gone in that case.
@@ -1687,10 +1758,6 @@ namespace {
 
         processor_to_stop = std::move(record->second.swapchain_processor);
         retired_processors_to_stop = std::move(record->second.retired_swapchain_processors);
-        erase_departing_record = record->second.departing;
-        if (erase_departing_record) {
-          monitors_.erase(record);
-        }
       }
 
       // IddCx calls UnassignSwapChain after the associated swapchain is no
@@ -1717,7 +1784,7 @@ namespace {
 
       {
         std::lock_guard lock {mutex_};
-        const auto record = monitors_.find(context->display_id);
+        const auto record = find_current_monitor_locked(context->display_id, monitor);
         if (record == monitors_.end()) {
           return STATUS_DEVICE_NOT_READY;
         }
@@ -1747,7 +1814,7 @@ namespace {
 
       {
         std::lock_guard lock {mutex_};
-        const auto record = monitors_.find(context->display_id);
+        const auto record = find_current_monitor_locked(context->display_id, monitor);
         if (record == monitors_.end()) {
           return STATUS_DEVICE_NOT_READY;
         }
@@ -1803,7 +1870,7 @@ namespace {
       }
 
       std::lock_guard lock {mutex_};
-      const auto record = monitors_.find(context->display_id);
+      const auto record = find_current_monitor_locked(context->display_id, monitor);
       if (record == monitors_.end()) {
         return std::nullopt;
       }
@@ -1812,6 +1879,7 @@ namespace {
     }
 
     std::mutex mutex_ {};
+    std::condition_variable departure_cv_ {};
     WDFDRIVER driver_ {};
     WDFDEVICE device_ {};
     IDDCX_ADAPTER adapter_ {};
@@ -2059,8 +2127,10 @@ NTSTATUS SunshineEvtDeviceAdd(WDFDRIVER driver, PWDFDEVICE_INIT device_init) {
   }
 
   auto *context = GetDeviceContext(device);
-  context->state = new (std::nothrow) DeviceState(driver, device);
-  if (!context->state) {
+  try {
+    context->state = new DeviceState(driver, device);
+  } catch (...) {
+    context->state = nullptr;
     TraceLoggingWrite(
       g_trace_provider,
       "DeviceAddFailed",
@@ -2129,6 +2199,10 @@ NTSTATUS SunshineEvtQueryTargetModes(
   const IDARG_IN_QUERYTARGETMODES *input,
   IDARG_OUT_QUERYTARGETMODES *output
 ) {
+  if (!monitor) {
+    return STATUS_INVALID_PARAMETER;
+  }
+
   auto *context = GetMonitorContext(monitor);
   if (context && context->backend) {
     return context->backend->query_target_modes(monitor, input, output);
@@ -2206,6 +2280,10 @@ NTSTATUS SunshineEvtQueryTargetModes2(
   const IDARG_IN_QUERYTARGETMODES2 *input,
   IDARG_OUT_QUERYTARGETMODES *output
 ) {
+  if (!monitor) {
+    return STATUS_INVALID_PARAMETER;
+  }
+
   auto *context = GetMonitorContext(monitor);
   if (context && context->backend) {
     return context->backend->query_target_modes2(monitor, input, output);
@@ -2215,6 +2293,10 @@ NTSTATUS SunshineEvtQueryTargetModes2(
 }
 
 NTSTATUS SunshineEvtAssignSwapChain(IDDCX_MONITOR monitor, const IDARG_IN_SETSWAPCHAIN *args) {
+  if (!monitor) {
+    return STATUS_INVALID_PARAMETER;
+  }
+
   auto *context = GetMonitorContext(monitor);
   if (!context || !context->backend) {
     return STATUS_DEVICE_NOT_READY;
@@ -2224,6 +2306,10 @@ NTSTATUS SunshineEvtAssignSwapChain(IDDCX_MONITOR monitor, const IDARG_IN_SETSWA
 }
 
 NTSTATUS SunshineEvtUnassignSwapChain(IDDCX_MONITOR monitor) {
+  if (!monitor) {
+    return STATUS_INVALID_PARAMETER;
+  }
+
   auto *context = GetMonitorContext(monitor);
   if (!context || !context->backend) {
     return STATUS_DEVICE_NOT_READY;
