@@ -36,10 +36,47 @@ jobs:
       - name: Install WDK
         shell: pwsh
         run: |
-          $wdfPath = 'C:\Program Files (x86)\Windows Kits\10\Include\wdf\umdf\2.25'
-          if (-not (Test-Path $wdfPath)) {
-            winget install --id Microsoft.WindowsWDK.10.0.26100 --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+          $ErrorActionPreference = 'Stop'
+          $defaultKitRoot = 'C:\Program Files (x86)\Windows Kits\10\'
+
+          function Find-UsableSdkVersion($root) {
+            if ([string]::IsNullOrWhiteSpace($root) -or -not (Test-Path (Join-Path $root 'Lib'))) {
+              return $null
+            }
+            $versions = Get-ChildItem (Join-Path $root 'Lib') -Directory |
+              Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
+              Sort-Object { [version]$_.Name } -Descending |
+              Select-Object -ExpandProperty Name
+
+            foreach ($version in $versions) {
+              $required = @(
+                Join-Path $root 'Include\wdf\umdf\2.25'
+                Join-Path $root 'Lib\wdf\umdf\x64\2.25\WdfDriverStubUm.lib'
+                Join-Path $root "Lib\$version\um\x64\iddcx\1.10\IddCxStub.lib"
+              )
+              if (($required | Where-Object { -not (Test-Path $_) }).Count -eq 0) {
+                return $version
+              }
+            }
+            return $null
           }
+
+          $kitRoot = if ($env:WindowsSdkDir) { $env:WindowsSdkDir } else { $defaultKitRoot }
+          $sdkVersion = Find-UsableSdkVersion $kitRoot
+          if (-not $sdkVersion -and $kitRoot -ne $defaultKitRoot) {
+            $kitRoot = $defaultKitRoot
+            $sdkVersion = Find-UsableSdkVersion $kitRoot
+          }
+          if (-not $sdkVersion) {
+            winget install --id Microsoft.WindowsWDK.10.0.26100 --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+            $kitRoot = $defaultKitRoot
+            $sdkVersion = Find-UsableSdkVersion $kitRoot
+          }
+          if (-not $sdkVersion) {
+            throw 'Unable to find a WDK/SDK version with required WDF and IddCx files.'
+          }
+          "WindowsSdkDir=$kitRoot" >> $env:GITHUB_ENV
+          "WindowsSDKVersion=$sdkVersion" >> $env:GITHUB_ENV
 
       - name: Resolve release version
         id: version
@@ -49,7 +86,8 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($version)) {
             $version = '${{ github.ref_name }}'
           }
-          if ($version -notmatch '^v\d+\.\d+\.\d+([.-][0-9A-Za-z][0-9A-Za-z.-]*)?$') {
+          $semverPattern = '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+          if ($version -notmatch $semverPattern) {
             throw "Release version must be a v-prefixed semantic version tag: $version"
           }
           git fetch --force --tags origin $version
@@ -136,6 +174,7 @@ jobs:
           cmake -S . -B build-driver -G Ninja
           -DBUILD_TESTS=OFF
           -DBUILD_SUNSHINE_VIRTUAL_DISPLAY_DRIVER=ON
+          -DBUILD_VIRTUALDISPLAY_TOOLS=ON
           -DBUILD_VIRTUALDISPLAY_PROBE=ON
           '-DLIBVIRTUALDISPLAY_PACKAGE_VERSION=${{ steps.version.outputs.package_version }}'
 

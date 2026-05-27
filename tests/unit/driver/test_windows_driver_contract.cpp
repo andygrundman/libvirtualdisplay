@@ -151,6 +151,12 @@ namespace {
     return read_text_file_limited(path);
   }
 
+  std::string read_root_cmake() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
+                      "CMakeLists.txt";
+    return read_text_file_limited(path);
+  }
+
   std::string read_readme() {
     const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
                       "README.md";
@@ -616,6 +622,17 @@ TEST(VirtualDisplayWindowsDriverContract, LinksTraceLoggingRuntime) {
   EXPECT_EQ(cmake.find("/os:10_X64"), std::string::npos);
 }
 
+TEST(VirtualDisplayWindowsDriverContract, ResolvesSdkByRequiredWdkFiles) {
+  const auto cmake = read_windows_driver_cmake();
+
+  EXPECT_NE(cmake.find("_sunshine_driver_find_sdk_version"), std::string::npos);
+  EXPECT_NE(cmake.find("_sunshine_driver_sdk_is_usable"), std::string::npos);
+  EXPECT_NE(cmake.find("Include/wdf/umdf/${SUNSHINE_DRIVER_WDF_VERSION}"), std::string::npos);
+  EXPECT_NE(cmake.find("WdfDriverStubUm.lib"), std::string::npos);
+  EXPECT_NE(cmake.find("IddCxStub.lib"), std::string::npos);
+  EXPECT_NE(cmake.find("Unable to find a WDK/SDK version with required WDF and IddCx files"), std::string::npos);
+}
+
 TEST(VirtualDisplayWindowsDriverContract, DocumentsSupportDiagnosticsCapture) {
   const auto readme = read_readme();
   const auto docs = read_support_diagnostics();
@@ -634,9 +651,17 @@ TEST(VirtualDisplayWindowsDriverContract, DocumentsSupportDiagnosticsCapture) {
 }
 
 TEST(VirtualDisplayWindowsDriverContract, PackagesDriverSymbolsWithReleaseZip) {
+  const auto root_cmake = read_root_cmake();
   const auto cmake = read_windows_driver_cmake();
+  const auto driver_cmake = read_driver_cmake();
   const auto readme = read_readme();
 
+  EXPECT_NE(root_cmake.find("LICENSE is still the template placeholder"), std::string::npos);
+  EXPECT_NE(root_cmake.find("CPACK_PACKAGE_FILE_NAME"), std::string::npos);
+  EXPECT_NE(root_cmake.find("_libvirtualdisplay_package_arch"), std::string::npos);
+  EXPECT_NE(driver_cmake.find("add_library(${MODULE} STATIC"), std::string::npos);
+  EXPECT_NE(driver_cmake.find("option(BUILD_VIRTUALDISPLAY_TOOLS"), std::string::npos);
+  EXPECT_NE(driver_cmake.find("add_custom_target(virtualdisplay_tools DEPENDS"), std::string::npos);
   EXPECT_NE(
     cmake.find("install(FILES \"$<TARGET_PDB_FILE:${SUNSHINE_DRIVER_TARGET}>\" DESTINATION driver OPTIONAL)"),
     std::string::npos
@@ -645,11 +670,23 @@ TEST(VirtualDisplayWindowsDriverContract, PackagesDriverSymbolsWithReleaseZip) {
     readme.find("driver/SunshineVirtualDisplayDriver.pdb"),
     std::string::npos
   );
+  EXPECT_NE(
+    readme.find("tools/virtualdisplay_broker.exe"),
+    std::string::npos
+  );
+  EXPECT_NE(
+    readme.find("cmake --build build-driver --target SunshineVirtualDisplayDriver virtualdisplay_tools"),
+    std::string::npos
+  );
 }
 
 TEST(VirtualDisplayWindowsDriverContract, ReleaseWorkflowPublishesSelfSignedPackageEvidence) {
   const auto workflow = read_release_workflow();
 
+  EXPECT_NE(workflow.find("Find-UsableSdkVersion"), std::string::npos);
+  EXPECT_NE(workflow.find("Unable to find a WDK/SDK version with required WDF and IddCx files."), std::string::npos);
+  EXPECT_NE(workflow.find("-DBUILD_VIRTUALDISPLAY_TOOLS=ON"), std::string::npos);
+  EXPECT_NE(workflow.find("$semverPattern = '^v(0|[1-9]\\d*)"), std::string::npos);
   EXPECT_NE(workflow.find("Release version must be a v-prefixed semantic version tag"), std::string::npos);
   EXPECT_NE(workflow.find("git checkout --detach $version"), std::string::npos);
   EXPECT_NE(workflow.find("Import release signing certificate"), std::string::npos);
@@ -678,6 +715,18 @@ TEST(VirtualDisplayWindowsDriverContract, ReleaseWorkflowPublishesSelfSignedPack
   EXPECT_EQ(workflow.find("LIBVIRTUALDISPLAY_RELEASE_EVIDENCE_JSON"), std::string::npos);
   EXPECT_EQ(workflow.find("Validate release evidence"), std::string::npos);
   EXPECT_EQ(workflow.find("Validate release package evidence"), std::string::npos);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, CiWorkflowResolvesUsableWdkBeforePackaging) {
+  const auto workflow = read_ci_workflow();
+
+  EXPECT_NE(workflow.find("Find-UsableSdkVersion"), std::string::npos);
+  EXPECT_NE(workflow.find("Include\\wdf\\umdf\\2.25"), std::string::npos);
+  EXPECT_NE(workflow.find("WdfDriverStubUm.lib"), std::string::npos);
+  EXPECT_NE(workflow.find("IddCxStub.lib"), std::string::npos);
+  EXPECT_NE(workflow.find("WindowsSdkDir=$kitRoot"), std::string::npos);
+  EXPECT_NE(workflow.find("WindowsSDKVersion=$sdkVersion"), std::string::npos);
+  EXPECT_NE(workflow.find("-DBUILD_VIRTUALDISPLAY_TOOLS=ON"), std::string::npos);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, ThirdPartyWorkflowInputsUseImmutableRefs) {
