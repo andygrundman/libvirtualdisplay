@@ -21,10 +21,16 @@ Keep these artifacts with each release record:
 - Signing submission result and returned catalog details.
 - Test machine OS build, GPU/render adapter, and driver package version.
 
-The GitHub release workflow requires this evidence as JSON before it publishes
-the release ZIP. For manual dispatch, pass `release_evidence_json`; for tag
-pushes, set the repository variable `LIBVIRTUALDISPLAY_RELEASE_EVIDENCE_JSON`.
-The validator is `tools/validate_release_evidence.ps1`.
+The GitHub release workflow validates this evidence as JSON before it publishes
+a production-certified release ZIP. For manual dispatch, pass
+`release_evidence_json`; for tag pushes, set the repository variable
+`LIBVIRTUALDISPLAY_RELEASE_EVIDENCE_JSON`. The validator is
+`tools/validate_release_evidence.ps1`.
+
+If no production evidence is supplied, the workflow may still publish a
+CI-built GitHub package for testing. That release is marked as a prerelease, it
+includes generated package evidence with the commit and ZIP hash, and it must
+not be described as Windows Certified.
 
 ## HLK Graphics Gate
 

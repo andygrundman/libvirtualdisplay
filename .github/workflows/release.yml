@@ -13,7 +13,7 @@ on:
         type: string
       release_evidence_json:
         description: 'JSON evidence proving HLK/WHQL, HVCI, Memory Integrity, install, identity, and cleanup gates.'
-        required: true
+        required: false
         type: string
 
 permissions:
@@ -67,7 +67,18 @@ jobs:
           "package_version=$packageVersion" >> $env:GITHUB_OUTPUT
           "commit=$commit" >> $env:GITHUB_OUTPUT
 
+      - name: Determine release validation mode
+        id: release_mode
+        shell: pwsh
+        env:
+          RELEASE_EVIDENCE_JSON: ${{ github.event.inputs.release_evidence_json || vars.LIBVIRTUALDISPLAY_RELEASE_EVIDENCE_JSON }}
+        run: |
+          $hasProductionEvidence = -not [string]::IsNullOrWhiteSpace($env:RELEASE_EVIDENCE_JSON)
+          "production=$($hasProductionEvidence.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "prerelease=$(( -not $hasProductionEvidence ).ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
       - name: Validate release evidence
+        if: steps.release_mode.outputs.production == 'true'
         shell: pwsh
         env:
           RELEASE_EVIDENCE_JSON: ${{ github.event.inputs.release_evidence_json || vars.LIBVIRTUALDISPLAY_RELEASE_EVIDENCE_JSON }}
@@ -113,15 +124,71 @@ jobs:
         run: cmake --build build-driver --target package --parallel
 
       - name: Validate release package evidence
+        if: steps.release_mode.outputs.production == 'true'
         shell: pwsh
         env:
           RELEASE_EVIDENCE_JSON: ${{ github.event.inputs.release_evidence_json || vars.LIBVIRTUALDISPLAY_RELEASE_EVIDENCE_JSON }}
         run: |
           ./tools/validate_release_evidence.ps1 -EvidenceJson $env:RELEASE_EVIDENCE_JSON -ExpectedTag '${{ steps.version.outputs.version }}' -ExpectedCommit '${{ steps.version.outputs.commit }}' -PackagePath 'build-driver/libvirtualdisplay-*-windows-x64.zip'
 
+      - name: Generate CI package evidence
+        shell: pwsh
+        run: |
+          $package = @(Get-ChildItem -Path 'build-driver/libvirtualdisplay-*-windows-x64.zip' -File)
+          if ($package.Count -ne 1) {
+            throw "Expected exactly one release package, found $($package.Count)."
+          }
+
+          $hash = (Get-FileHash -LiteralPath $package[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $productionEvidenceValidated = [bool]::Parse('${{ steps.release_mode.outputs.production }}')
+          $certification = if ($productionEvidenceValidated) {
+            'HLK/WHQL evidence supplied and validated'
+          } else {
+            'No HLK/WHQL evidence supplied; CI package is not Windows Certified'
+          }
+          $evidence = [ordered] @{
+            tag = '${{ steps.version.outputs.version }}'
+            commit_sha = '${{ steps.version.outputs.commit }}'
+            package = $package[0].Name
+            package_sha256 = $hash
+            package_size = $package[0].Length
+            windows_sdk_version = $env:WindowsSDKVersion
+            wdk_umdf_version = '2.25'
+            production_evidence_validated = $productionEvidenceValidated
+            certification = $certification
+          }
+          $evidencePath = Join-Path 'build-driver' "libvirtualdisplay-${{ steps.version.outputs.package_version }}-evidence.json"
+          $evidence | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $evidencePath -Encoding utf8
+
+          $releaseNotesPath = Join-Path 'build-driver' 'release-notes.md'
+          if ($productionEvidenceValidated) {
+            $releaseNotes = @(
+              'CI-built libvirtualdisplay package.'
+              ''
+              'Production release evidence was supplied and validated by `tools/validate_release_evidence.ps1`.'
+              ''
+              "Package SHA256: $hash"
+            )
+          } else {
+            $releaseNotes = @(
+              'CI-built libvirtualdisplay package.'
+              ''
+              'This package was built by GitHub Actions from `${{ steps.version.outputs.commit }}`.'
+              ''
+              'No HLK/WHQL production release evidence was supplied, so this GitHub release is marked as a prerelease and must not be described as Windows Certified.'
+              ''
+              "Package SHA256: $hash"
+            )
+          }
+          $releaseNotes | Set-Content -LiteralPath $releaseNotesPath -Encoding utf8
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: libvirtualdisplay ${{ steps.version.outputs.version }}
-          files: build-driver/libvirtualdisplay-*-windows-x64.zip
+          body_path: build-driver/release-notes.md
+          prerelease: ${{ steps.release_mode.outputs.prerelease }}
+          files: |
+            build-driver/libvirtualdisplay-*-windows-x64.zip
+            build-driver/libvirtualdisplay-*-evidence.json

@@ -662,6 +662,10 @@ TEST(VirtualDisplayWindowsDriverContract, ReleaseWorkflowRequiresCertificationEv
   EXPECT_NE(workflow.find("git checkout --detach $version"), std::string::npos);
   EXPECT_NE(workflow.find("Validate release evidence"), std::string::npos);
   EXPECT_NE(workflow.find("Validate release package evidence"), std::string::npos);
+  EXPECT_NE(workflow.find("Determine release validation mode"), std::string::npos);
+  EXPECT_NE(workflow.find("Generate CI package evidence"), std::string::npos);
+  EXPECT_NE(workflow.find("prerelease: ${{ steps.release_mode.outputs.prerelease }}"), std::string::npos);
+  EXPECT_NE(workflow.find("No HLK/WHQL production release evidence was supplied"), std::string::npos);
   EXPECT_NE(workflow.find("tools/validate_release_evidence.ps1"), std::string::npos);
   EXPECT_NE(workflow.find("-ExpectedTag '${{ steps.version.outputs.version }}'"), std::string::npos);
   EXPECT_NE(workflow.find("-ExpectedCommit '${{ steps.version.outputs.commit }}'"), std::string::npos);
