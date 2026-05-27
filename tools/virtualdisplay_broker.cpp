@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -107,6 +108,22 @@ namespace {
     return true;
   }
 
+  bool is_luid_text(const std::string_view value) {
+    const auto separator = value.find(':');
+    if (separator == std::string_view::npos || separator == 0 || separator + 1 >= value.size()) {
+      return false;
+    }
+
+    std::int32_t high {};
+    std::uint32_t low {};
+    return parse_i32(value.substr(0, separator), high) && parse_u32(value.substr(separator + 1), low);
+  }
+
+  bool is_u32_text(const std::string_view value) {
+    std::uint32_t parsed {};
+    return parse_u32(value, parsed);
+  }
+
   std::vector<std::string_view> split_words(const std::string_view text, const std::size_t max_words) {
     std::vector<std::string_view> words;
     std::size_t cursor = 0;
@@ -165,17 +182,17 @@ namespace {
       text,
       sizeof(text),
       "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-      guid.data1,
-      guid.data2,
-      guid.data3,
-      guid.data4[0],
-      guid.data4[1],
-      guid.data4[2],
-      guid.data4[3],
-      guid.data4[4],
-      guid.data4[5],
-      guid.data4[6],
-      guid.data4[7]
+      static_cast<unsigned int>(guid.data1),
+      static_cast<unsigned int>(guid.data2),
+      static_cast<unsigned int>(guid.data3),
+      static_cast<unsigned int>(guid.data4[0]),
+      static_cast<unsigned int>(guid.data4[1]),
+      static_cast<unsigned int>(guid.data4[2]),
+      static_cast<unsigned int>(guid.data4[3]),
+      static_cast<unsigned int>(guid.data4[4]),
+      static_cast<unsigned int>(guid.data4[5]),
+      static_cast<unsigned int>(guid.data4[6]),
+      static_cast<unsigned int>(guid.data4[7])
     );
     return text;
   }
@@ -393,6 +410,8 @@ namespace {
   }
 
 #ifdef _WIN32
+  void report_event_log(WORD type, DWORD event_id, std::wstring_view text);
+
   class LocalMemory {
   public:
     explicit LocalMemory(void *value):
@@ -528,7 +547,8 @@ namespace {
       (token_is_member_of_well_known_sid(token.get(), WinLocalSystemSid) ||
        token_is_member_of_well_known_sid(token.get(), WinBuiltinAdministratorsSid));
     if (!RevertToSelf()) {
-      return false;
+      report_event_log(EVENTLOG_ERROR_TYPE, kEventServiceFailed, L"RevertToSelf failed after pipe client impersonation");
+      std::terminate();
     }
     return authorized;
   }
@@ -640,7 +660,9 @@ namespace {
     if (status != ERROR_SUCCESS) {
       return std::nullopt;
     }
-    if (RegSetKeySecurity(key.get(), DACL_SECURITY_INFORMATION, security->attributes.lpSecurityDescriptor) != ERROR_SUCCESS) {
+    constexpr SECURITY_INFORMATION kRegistrySecurityInfo =
+      DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION;
+    if (RegSetKeySecurity(key.get(), kRegistrySecurityInfo, security->attributes.lpSecurityDescriptor) != ERROR_SUCCESS) {
       return std::nullopt;
     }
     return std::optional<RegistryKey> {std::move(key)};
@@ -794,8 +816,20 @@ namespace {
     return quoted;
   }
 
-  DWORD launch_console_helper(const std::wstring &arguments) {
-    const DWORD session_id = WTSGetActiveConsoleSessionId();
+  std::optional<DWORD> pipe_client_session_id(HANDLE pipe) {
+    DWORD client_pid = 0;
+    if (!GetNamedPipeClientProcessId(pipe, &client_pid)) {
+      return std::nullopt;
+    }
+
+    DWORD session_id = 0;
+    if (!ProcessIdToSessionId(client_pid, &session_id)) {
+      return std::nullopt;
+    }
+    return session_id;
+  }
+
+  DWORD launch_session_helper(const DWORD session_id, const std::wstring &arguments) {
     if (session_id == 0xffffffffu) {
       return ERROR_NO_TOKEN;
     }
@@ -908,10 +942,15 @@ namespace {
         return std::nullopt;
       }
 
-      std::wstring arguments = L"--associate-color-profile ";
-      arguments += widen_ascii(fields[0]);
+      if (!is_luid_text(fields[0]) || !is_u32_text(fields[1])) {
+        return std::nullopt;
+      }
+
+      std::wstring arguments = quote_argument(L"--associate-color-profile");
       arguments += L" ";
-      arguments += widen_ascii(fields[1]);
+      arguments += quote_argument(widen_ascii(fields[0]));
+      arguments += L" ";
+      arguments += quote_argument(widen_ascii(fields[1]));
       arguments += L" ";
       arguments += quote_argument(widen_ascii(payload.substr(profile_offset)));
       if (fields[2] == "advanced") {
@@ -929,7 +968,7 @@ namespace {
     return std::nullopt;
   }
 
-  std::string handle_command(vdd::ControlClient &client, const std::string_view command) {
+  std::string handle_command(vdd::ControlClient &client, HANDLE pipe, const std::string_view command) {
     if (command == "protocol") {
       const auto result = client.query_protocol_version();
       if (!result.ok()) {
@@ -1054,17 +1093,22 @@ namespace {
     }
 
     if (const auto helper_arguments = helper_arguments_for_broker_command(command)) {
-      report_event_log(EVENTLOG_INFORMATION_TYPE, kEventHelperStarting, L"Starting active-session helper");
-      const DWORD helper_result = launch_console_helper(*helper_arguments);
+      const auto session_id = pipe_client_session_id(pipe);
+      if (!session_id) {
+        return "error client_session_failed\n";
+      }
+
+      report_event_log(EVENTLOG_INFORMATION_TYPE, kEventHelperStarting, L"Starting client-session helper");
+      const DWORD helper_result = launch_session_helper(*session_id, *helper_arguments);
       if (helper_result != ERROR_SUCCESS) {
         report_event_log(
           EVENTLOG_ERROR_TYPE,
           kEventHelperFinished,
-          "Active-session helper failed result=" + std::to_string(helper_result)
+          "Client-session helper failed result=" + std::to_string(helper_result)
         );
         return "error helper_result=" + std::to_string(helper_result) + "\n";
       }
-      report_event_log(EVENTLOG_INFORMATION_TYPE, kEventHelperFinished, L"Active-session helper completed");
+      report_event_log(EVENTLOG_INFORMATION_TYPE, kEventHelperFinished, L"Client-session helper completed");
       return "ok helper_result=0\n";
     }
 
@@ -1110,7 +1154,7 @@ namespace {
       response = "error read_failed\n";
     } else {
       input[(std::min<DWORD>)(bytes_read, sizeof(input) - 1)] = '\0';
-      response = handle_command(client, trim_command(input));
+      response = handle_command(client, pipe, trim_command(input));
     }
 
     DWORD bytes_written = 0;

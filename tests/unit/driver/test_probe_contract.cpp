@@ -361,7 +361,8 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "ConvertStringSecurityDescriptorToSecurityDescriptorW");
   expect_contains(source, "RegCreateKeyExW");
   expect_contains(source, "RegSetKeySecurity");
-  expect_contains(source, "RegSetKeySecurity(key.get(), DACL_SECURITY_INFORMATION, security->attributes.lpSecurityDescriptor) != ERROR_SUCCESS");
+  expect_contains(source, "DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION");
+  expect_contains(source, "RegSetKeySecurity(key.get(), kRegistrySecurityInfo, security->attributes.lpSecurityDescriptor) != ERROR_SUCCESS");
   expect_contains(source, "RegQueryValueExW");
   expect_contains(source, "RegSetValueExW");
   expect_contains(source, "profile.native_mode_index < profile.allowed_mode_count");
@@ -378,6 +379,7 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "CreateNamedPipeW");
   expect_contains(source, "ImpersonateNamedPipeClient");
   expect_contains(source, "if (!RevertToSelf())");
+  expect_contains(source, "std::terminate()");
   expect_contains(source, "CheckTokenMembership");
   expect_contains(source, "authorize_pipe_client(pipe)");
   expect_contains(source, "open_first_control_device()");
@@ -402,11 +404,17 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "return L\"--apply-manifest-topology\"");
   expect_contains(source, "return L\"--query-color-profiles\"");
   expect_contains(source, "helper-associate-color-profile ");
-  expect_contains(source, "--associate-color-profile ");
+  expect_contains(source, "is_luid_text(fields[0])");
+  expect_contains(source, "is_u32_text(fields[1])");
+  expect_contains(source, "quote_argument(L\"--associate-color-profile\")");
+  expect_contains(source, "quote_argument(widen_ascii(fields[0]))");
+  expect_contains(source, "quote_argument(widen_ascii(fields[1]))");
   expect_contains(source, "--advanced-color");
   expect_contains(source, "--default");
-  expect_contains(source, "launch_console_helper(*helper_arguments)");
-  expect_contains(source, "WTSGetActiveConsoleSessionId()");
+  expect_contains(source, "pipe_client_session_id(pipe)");
+  expect_contains(source, "launch_session_helper(*session_id, *helper_arguments)");
+  expect_contains(source, "GetNamedPipeClientProcessId(pipe, &client_pid)");
+  expect_contains(source, "ProcessIdToSessionId(client_pid, &session_id)");
   expect_contains(probe_source, "(std::min)(manifest.profile_count, vdd::kMaxPermanentDisplayProfiles)");
   expect_contains(probe_source, "color_profile_active_paths=");
   expect_contains(probe_source, "color profile query failed for every active path");
