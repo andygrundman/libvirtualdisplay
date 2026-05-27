@@ -1,62 +1,32 @@
 # Release Validation
 
-Production driver releases must be validated as Windows driver packages before
-they are distributed as supported builds.
+libvirtualdisplay release packages are CI-built driver/tool bundles for the
+Sunshine virtual display stack.
 
 ## Signing Channel
 
-- Production distribution targets HLK/WHQL.
-- Attestation signing is reserved for controlled lab, pilot, or developer
-  side-load builds.
-- Builds signed only through attestation must not be described as Windows
-  Certified.
+- Release packages use the project's self-signed driver package.
+- Releases do not claim EV signing, HLK, WHQL, or Windows certification.
+- Consumers must install the driver in environments that accept this package
+  signing model.
 
-## Required Release Evidence
+## Release Evidence
 
 Keep these artifacts with each release record:
 
 - Driver package with INF, CAT, DLL, and PDB.
 - Tool package with `virtualdisplay.exe` and `virtualdisplay_probe.exe`.
-- Exact commit SHA, tag, Windows SDK version, and WDK version.
-- Signing submission result and returned catalog details.
-- Test machine OS build, GPU/render adapter, and driver package version.
+- Exact commit SHA, tag, Windows SDK version, WDK version, and ZIP SHA256.
+- Generated evidence JSON attached to the GitHub release.
 
-The GitHub release workflow validates this evidence as JSON before it publishes
-a production-certified release ZIP. For manual dispatch, pass
-`release_evidence_json`; for tag pushes, set the repository variable
-`LIBVIRTUALDISPLAY_RELEASE_EVIDENCE_JSON`. The validator is
-`tools/validate_release_evidence.ps1`.
+## Validation
 
-If no production evidence is supplied, the workflow may still publish a
-CI-built GitHub package for testing. That release is marked as a prerelease, it
-includes generated package evidence with the commit and ZIP hash, and it must
-not be described as Windows Certified.
-
-## HLK Graphics Gate
-
-Run the IDD-focused graphics HLK coverage on each production candidate:
-
-- Indirect Display Inactive Path.
-- Indirect Display Mode Change.
-- Indirect Display PnP Stop-Start Indirect Display Adapter.
-- Indirect Display PnP Stop-Start Render Adapter.
-- Indirect Display Render Adapter TDR.
-
-The release record must include the HLK project or playlist, pass/fail summary,
-test environment, and any accepted waivers.
-
-## HVCI Gate
-
-Run the HyperVisor Code Integrity Readiness Test for every driver-signing
-candidate. Also run functional validation with Windows Memory Integrity enabled:
+Run functional validation for each supported release candidate:
 
 - Install the package.
 - Create and remove a permanent virtual display.
 - Create, feed, and release a temporary virtual display.
-- Run the HDR probe on a supported Windows 11 HDR test system.
-
-The release record must state whether Memory Integrity was enabled during each
-functional pass.
+- Run the probe tools for the relevant display mode and HDR scenarios.
 
 ## Functional Matrix
 
@@ -74,9 +44,7 @@ At minimum, release validation must cover:
 
 A production release is blocked until resolved when any of these are true:
 
-- The driver package has not passed the required HLK/WHQL path.
-- HVCI readiness fails.
-- Memory Integrity functional validation fails.
-- Required IDD HLK graphics coverage fails without an accepted waiver.
 - The shipped package contains sample identifiers, a permissive control
   interface ACL, or undocumented protocol/ABI changes.
+- CI packaging fails or the release ZIP/evidence JSON is missing.
+- Functional install, upgrade, identity-retention, or cleanup validation fails.
