@@ -493,6 +493,18 @@ namespace {
       vdd::read_serial_number(descriptor.edid)
     };
 
+    profiles.erase(
+      std::remove_if(
+        profiles.begin(),
+        profiles.end(),
+        [&](const TemporaryDisplayProfile &entry) {
+          return entry.connector_index == descriptor.connector_index &&
+                 entry.display_id != descriptor.display_id;
+        }
+      ),
+      profiles.end()
+    );
+
     const auto existing = std::find_if(
       profiles.begin(),
       profiles.end(),
@@ -503,16 +515,6 @@ namespace {
     if (existing != profiles.end()) {
       *existing = profile;
     } else {
-      profiles.erase(
-        std::remove_if(
-          profiles.begin(),
-          profiles.end(),
-          [&](const TemporaryDisplayProfile &entry) {
-            return entry.connector_index == descriptor.connector_index;
-          }
-        ),
-        profiles.end()
-      );
       if (profiles.size() >= kMaxTemporaryDisplays) {
         return vdd::BackendError::Failed;
       }
@@ -990,7 +992,12 @@ namespace {
         return hr;
       }
 
-      return device.As(&dxgi_device);
+      const HRESULT as_hr = device.As(&dxgi_device);
+      if (FAILED(as_hr)) {
+        dxgi_device.Reset();
+        device.Reset();
+      }
+      return as_hr;
     };
 
     Microsoft::WRL::ComPtr<IDXGIFactory4> factory;
@@ -1053,7 +1060,11 @@ namespace {
     HRESULT start(const LUID &render_adapter_luid) {
       try {
         worker_ = std::thread([this, render_adapter_luid]() {
-          process_frames(render_adapter_luid);
+          try {
+            process_frames(render_adapter_luid);
+          } catch (...) {
+            publish_startup_result(E_FAIL);
+          }
         });
       } catch (...) {
         return E_OUTOFMEMORY;
@@ -1063,7 +1074,14 @@ namespace {
       startup_ready_.wait(lock, [this]() {
         return startup_result_.has_value();
       });
-      return *startup_result_;
+      const auto result = *startup_result_;
+      lock.unlock();
+
+      if (FAILED(result)) {
+        stop();
+      }
+
+      return result;
     }
 
     void stop() {
@@ -1157,7 +1175,6 @@ namespace {
       HRESULT hr = reset_render_device(render_adapter_luid);
       publish_startup_result(hr);
       if (FAILED(hr) || stop_requested_.load(std::memory_order_acquire)) {
-        delete_swapchain();
         return;
       }
 
@@ -1246,6 +1263,9 @@ namespace {
     void publish_startup_result(const HRESULT hr) {
       {
         std::lock_guard lock {startup_mutex_};
+        if (startup_result_) {
+          return;
+        }
         startup_result_ = hr;
       }
       startup_ready_.notify_all();
@@ -1357,7 +1377,7 @@ namespace {
     vdd::BackendError set_permanent_display_count(const vdd::PermanentDisplayCountRequest &request) override {
       auto normalized = request;
       vdd::set_default_permanent_display_settings(normalized);
-      if (normalized.display_count > kMaxPermanentDisplays) {
+      if (vdd::validate_permanent_display_count(normalized, kMaxPermanentDisplays) != vdd::ValidationError::None) {
         return vdd::BackendError::Failed;
       }
 
@@ -1365,7 +1385,7 @@ namespace {
     }
 
     vdd::BackendError apply_display_manifest(const vdd::DisplayManifest &manifest) override {
-      if (manifest.profile_count > kMaxPermanentDisplays) {
+      if (vdd::validate_display_manifest(manifest, kMaxPermanentDisplays) != vdd::ValidationError::None) {
         return vdd::BackendError::Failed;
       }
 
@@ -1380,15 +1400,13 @@ namespace {
         }
       }
 
-      std::vector<vdd::DisplayDescriptor> departed;
       for (const auto &descriptor: active_permanent_descriptors) {
         if (depart_display(descriptor.display_id) != vdd::BackendError::None) {
-          for (const auto &restore_descriptor: departed) {
+          for (const auto &restore_descriptor: active_permanent_descriptors) {
             (void) arrive_display(restore_descriptor, true);
           }
           return vdd::BackendError::Failed;
         }
-        departed.push_back(descriptor);
       }
 
       std::vector<std::uint64_t> added;

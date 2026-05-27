@@ -219,6 +219,24 @@ TEST(VirtualDisplayDriverLeaseStore, ReusesReservedConnectorIndexForSameDisplayI
   EXPECT_EQ(store.find_temporary_display(10)->connector_index, 2u);
 }
 
+TEST(VirtualDisplayDriverLeaseStore, RemovesDuplicateConnectorReservationWhenDisplayClaimsIt) {
+  vdd::DisplayStore store {2, 4, {{10, 2}, {20, 2}}};
+  const auto now = std::chrono::steady_clock::now();
+
+  ASSERT_EQ(store.create_temporary_display(make_create_request(lease_id(1), 10), now).status.error, vdd::StoreError::None);
+  EXPECT_EQ(store.find_temporary_display(10)->connector_index, 2u);
+
+  const vdd::LeaseDisplayRequest remove {
+    vdd::kApiNamespaceGuid,
+    lease_id(1),
+    10
+  };
+  ASSERT_EQ(store.remove_temporary_display(remove).error, vdd::StoreError::None);
+
+  ASSERT_EQ(store.create_temporary_display(make_create_request(lease_id(2), 20), now).status.error, vdd::StoreError::None);
+  EXPECT_EQ(store.find_temporary_display(20)->connector_index, 3u);
+}
+
 TEST(VirtualDisplayDriverLeaseStore, DoesNotReuseReservedConnectorIndexForDifferentDisplayId) {
   vdd::DisplayStore store {2, 4};
   const auto now = std::chrono::steady_clock::now();

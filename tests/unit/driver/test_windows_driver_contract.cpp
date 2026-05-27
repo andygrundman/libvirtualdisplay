@@ -289,11 +289,53 @@ TEST(VirtualDisplayWindowsDriverContract, SwapChainStartupReportsInitialDeviceAs
   const auto start = source.find("HRESULT start(const LUID &render_adapter_luid)");
   ASSERT_NE(start, std::string::npos);
   EXPECT_NE(source.find("startup_ready_.wait(lock", start), std::string::npos);
-  EXPECT_NE(source.find("return *startup_result_;", start), std::string::npos);
+  EXPECT_NE(source.find("const auto result = *startup_result_;", start), std::string::npos);
 
   const auto process_frames = source.find("void process_frames(const LUID render_adapter_luid)");
   ASSERT_NE(process_frames, std::string::npos);
   EXPECT_NE(source.find("publish_startup_result(hr);", process_frames), std::string::npos);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, JoinsFailedStartupBeforeAbandoningSwapChain) {
+  const auto source = read_windows_driver_source();
+
+  const auto start = source.find("HRESULT start(const LUID &render_adapter_luid)");
+  ASSERT_NE(start, std::string::npos);
+  const auto failed_result = source.find("if (FAILED(result))", start);
+  ASSERT_NE(failed_result, std::string::npos);
+  EXPECT_NE(source.find("stop();", failed_result), std::string::npos);
+
+  const auto process_frames = source.find("void process_frames(const LUID render_adapter_luid)");
+  ASSERT_NE(process_frames, std::string::npos);
+  const auto startup_failure = source.find("if (FAILED(hr) || stop_requested_.load(std::memory_order_acquire))", process_frames);
+  ASSERT_NE(startup_failure, std::string::npos);
+  const auto normal_loop = source.find("while (!stop_requested_.load(std::memory_order_acquire))", startup_failure);
+  ASSERT_NE(normal_loop, std::string::npos);
+  EXPECT_EQ(
+    source.substr(startup_failure, normal_loop - startup_failure).find("delete_swapchain();"),
+    std::string::npos
+  );
+
+  const auto assign_swapchain = source.find("NTSTATUS assign_swapchain");
+  ASSERT_NE(assign_swapchain, std::string::npos);
+  const auto failed_start = source.find("if (FAILED(hr))", assign_swapchain);
+  ASSERT_NE(failed_start, std::string::npos);
+  EXPECT_NE(source.find("processor->abandon_swapchain();", failed_start), std::string::npos);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, WorkerPublishesFailureOnStartupException) {
+  const auto source = read_windows_driver_source();
+
+  const auto start = source.find("HRESULT start(const LUID &render_adapter_luid)");
+  ASSERT_NE(start, std::string::npos);
+  const auto thread_body = source.find("worker_ = std::thread([this, render_adapter_luid]()", start);
+  ASSERT_NE(thread_body, std::string::npos);
+  EXPECT_NE(source.find("catch (...)", thread_body), std::string::npos);
+  EXPECT_NE(source.find("publish_startup_result(E_FAIL);", thread_body), std::string::npos);
+
+  const auto publish = source.find("void publish_startup_result(const HRESULT hr)");
+  ASSERT_NE(publish, std::string::npos);
+  EXPECT_NE(source.find("if (startup_result_)"), std::string::npos);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, StopsSwapChainOnFrameCompletionFailure) {
@@ -631,10 +673,40 @@ TEST(VirtualDisplayWindowsDriverContract, PermanentManifestUpdatesRestorePreviou
   const auto source = read_windows_driver_source();
 
   EXPECT_NE(source.find("return apply_display_manifest(vdd::display_manifest_from_permanent_settings(normalized, kMaxPermanentDisplays));"), std::string::npos);
+  EXPECT_NE(source.find("vdd::validate_display_manifest(manifest, kMaxPermanentDisplays)"), std::string::npos);
   EXPECT_NE(source.find("std::vector<vdd::DisplayDescriptor> active_permanent_descriptors"), std::string::npos);
   EXPECT_NE(source.find("active_permanent_descriptors.push_back(record.descriptor);"), std::string::npos);
-  EXPECT_NE(source.find("std::vector<vdd::DisplayDescriptor> departed;"), std::string::npos);
-  EXPECT_NE(source.find("departed.push_back(descriptor);"), std::string::npos);
-  EXPECT_NE(source.find("(void) arrive_display(restore_descriptor, true);"), std::string::npos);
+  const auto depart_failure = source.find("if (depart_display(descriptor.display_id) != vdd::BackendError::None)");
+  ASSERT_NE(depart_failure, std::string::npos);
+  const auto restore_all = source.find("for (const auto &restore_descriptor: active_permanent_descriptors)", depart_failure);
+  ASSERT_NE(restore_all, std::string::npos);
+  EXPECT_NE(source.find("(void) arrive_display(restore_descriptor, true);", restore_all), std::string::npos);
   EXPECT_EQ(source.find("save_display_manifest(driver_, device_, manifest)"), std::string::npos);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, TemporaryProfileSaveKeepsConnectorReservationsUnique) {
+  const auto source = read_windows_driver_source();
+
+  const auto save_profile = source.find("vdd::BackendError save_temporary_display_profile");
+  ASSERT_NE(save_profile, std::string::npos);
+  const auto remove_conflict = source.find("entry.connector_index == descriptor.connector_index &&", save_profile);
+  ASSERT_NE(remove_conflict, std::string::npos);
+  EXPECT_NE(source.find("entry.display_id != descriptor.display_id", remove_conflict), std::string::npos);
+  const auto find_existing = source.find("const auto existing = std::find_if", remove_conflict);
+  ASSERT_NE(find_existing, std::string::npos);
+  EXPECT_LT(remove_conflict, find_existing);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, ClearsPartialRenderDeviceWhenDxgiQueryFails) {
+  const auto source = read_windows_driver_source();
+
+  const auto create_device = source.find("const auto create_device = [&](IDXGIAdapter *adapter");
+  ASSERT_NE(create_device, std::string::npos);
+  const auto as_result = source.find("const HRESULT as_hr = device.As(&dxgi_device);", create_device);
+  ASSERT_NE(as_result, std::string::npos);
+  const auto failure = source.find("if (FAILED(as_hr))", as_result);
+  ASSERT_NE(failure, std::string::npos);
+  EXPECT_NE(source.find("dxgi_device.Reset();", failure), std::string::npos);
+  EXPECT_NE(source.find("device.Reset();", failure), std::string::npos);
+  EXPECT_NE(source.find("return as_hr;", failure), std::string::npos);
 }

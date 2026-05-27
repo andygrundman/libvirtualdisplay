@@ -157,6 +157,7 @@ namespace virtual_display::driver {
     }
 
     if (retain_identity) {
+      remove_connector_reservation(connector_index, request.display_id);
       connector_reservations_by_display_id_[request.display_id] = connector_index;
     }
     auto effective_timeout_ms = validated.effective_timeout_ms;
