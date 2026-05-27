@@ -671,6 +671,10 @@ TEST(VirtualDisplayWindowsDriverContract, ReleaseWorkflowRequiresCertificationEv
   EXPECT_NE(validator.find("Release evidence commit"), std::string::npos);
   EXPECT_NE(validator.find("package_sha256"), std::string::npos);
   EXPECT_NE(validator.find("Get-FileHash"), std::string::npos);
+  EXPECT_NE(validator.find("Require-BooleanTrue"), std::string::npos);
+  EXPECT_NE(validator.find("must be JSON boolean true"), std::string::npos);
+  EXPECT_NE(validator.find("$matches.Count -ne 1"), std::string::npos);
+  EXPECT_NE(validator.find("accepted JSON boolean waiver"), std::string::npos);
   EXPECT_NE(validator.find("Indirect Display Mode Change"), std::string::npos);
   EXPECT_NE(validator.find("Indirect Display Render Adapter TDR"), std::string::npos);
   EXPECT_NE(validator.find("hvci_readiness_passed"), std::string::npos);

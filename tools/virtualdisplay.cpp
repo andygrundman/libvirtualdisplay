@@ -70,6 +70,12 @@ namespace {
     L"SeAssignPrimaryTokenPrivilege\0"
     L"SeIncreaseQuotaPrivilege\0"
     L"SeTcbPrivilege\0";
+  constexpr DWORD kBrokerServiceInstallAccess {
+    SERVICE_CHANGE_CONFIG | SERVICE_QUERY_STATUS | SERVICE_START | SERVICE_QUERY_CONFIG | WRITE_DAC | DELETE
+  };
+  constexpr DWORD kBrokerServiceUpdateAccess {
+    SERVICE_CHANGE_CONFIG | SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG | WRITE_DAC
+  };
   constexpr DWORD kBrokerServiceStateTimeoutMs {30'000};
   constexpr DWORD kBrokerServiceStatePollMs {250};
   constexpr std::size_t kMaxBrokerResponseBytes {1024 * 1024};
@@ -162,14 +168,123 @@ namespace {
       return {};
     }
 
-    const int size = MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0);
+    if (value.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
+      return {};
+    }
+
+    const int input_size = static_cast<int>(value.size());
+    const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), input_size, nullptr, 0);
     if (size <= 0) {
       return {};
     }
 
     std::wstring output(static_cast<std::size_t>(size), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), output.data(), size);
+    const int written = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), input_size, output.data(), size);
+    if (written != size) {
+      return {};
+    }
     return output;
+  }
+
+  bool create_known_sid(const WELL_KNOWN_SID_TYPE type, std::vector<BYTE> &buffer) {
+    DWORD sid_size = SECURITY_MAX_SID_SIZE;
+    buffer.assign(sid_size, 0);
+    if (!CreateWellKnownSid(type, nullptr, buffer.data(), &sid_size)) {
+      return false;
+    }
+    buffer.resize(sid_size);
+    return true;
+  }
+
+  bool is_unprivileged_sid(const PSID sid) {
+    std::vector<BYTE> everyone_sid;
+    std::vector<BYTE> authenticated_users_sid;
+    std::vector<BYTE> builtin_users_sid;
+    if (!create_known_sid(WinWorldSid, everyone_sid) ||
+        !create_known_sid(WinAuthenticatedUserSid, authenticated_users_sid) ||
+        !create_known_sid(WinBuiltinUsersSid, builtin_users_sid)) {
+      return false;
+    }
+
+    return EqualSid(sid, everyone_sid.data()) ||
+           EqualSid(sid, authenticated_users_sid.data()) ||
+           EqualSid(sid, builtin_users_sid.data());
+  }
+
+  bool grants_file_replace_access(const ACCESS_MASK mask) {
+    constexpr ACCESS_MASK kUnsafeAccess =
+      GENERIC_ALL |
+      GENERIC_WRITE |
+      WRITE_DAC |
+      WRITE_OWNER |
+      DELETE |
+      FILE_WRITE_DATA |
+      FILE_APPEND_DATA |
+      FILE_WRITE_EA |
+      FILE_WRITE_ATTRIBUTES |
+      FILE_ADD_FILE |
+      FILE_ADD_SUBDIRECTORY |
+      FILE_DELETE_CHILD;
+    return (mask & kUnsafeAccess) != 0;
+  }
+
+  bool dacl_allows_unprivileged_write(const PACL dacl) {
+    if (!dacl) {
+      return true;
+    }
+
+    for (DWORD index = 0; index < dacl->AceCount; ++index) {
+      void *ace_pointer {};
+      if (!GetAce(dacl, index, &ace_pointer) || !ace_pointer) {
+        return true;
+      }
+
+      const ACE_HEADER *header = static_cast<const ACE_HEADER *>(ace_pointer);
+      if (header->AceType != ACCESS_ALLOWED_ACE_TYPE) {
+        continue;
+      }
+
+      const auto *allowed = static_cast<const ACCESS_ALLOWED_ACE *>(ace_pointer);
+      const PSID sid = const_cast<PSID>(static_cast<const void *>(&allowed->SidStart));
+      if (IsValidSid(sid) && is_unprivileged_sid(sid) && grants_file_replace_access(allowed->Mask)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  bool path_allows_unprivileged_write(const std::filesystem::path &path) {
+    PACL dacl {};
+    PSECURITY_DESCRIPTOR descriptor {};
+    const auto path_text = path.wstring();
+    const DWORD result = GetNamedSecurityInfoW(
+      const_cast<LPWSTR>(path_text.c_str()),
+      SE_FILE_OBJECT,
+      DACL_SECURITY_INFORMATION,
+      nullptr,
+      nullptr,
+      &dacl,
+      nullptr,
+      &descriptor
+    );
+    if (result != ERROR_SUCCESS) {
+      std::cerr << "inspect broker path security failed native_error=" << result << " path=" << path.string() << '\n';
+      return true;
+    }
+
+    const LocalMemory security_descriptor {descriptor};
+    return dacl_allows_unprivileged_write(dacl);
+  }
+
+  bool broker_executable_path_is_protected(const std::filesystem::path &broker_path) {
+    const auto directory = broker_path.parent_path();
+    if (directory.empty() || path_allows_unprivileged_write(directory) || path_allows_unprivileged_write(broker_path)) {
+      std::cerr << "broker executable must be installed in a directory not writable by standard users: "
+                << broker_path.string() << '\n';
+      return false;
+    }
+    return true;
   }
 
   bool is_process_elevated() {
@@ -382,6 +497,46 @@ namespace {
     return true;
   }
 
+  std::optional<std::wstring> query_service_binary_path(SC_HANDLE service) {
+    DWORD bytes_needed {};
+    if (QueryServiceConfigW(service, nullptr, 0, &bytes_needed) || GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+      std::cerr << "query broker service config failed native_error=" << GetLastError() << '\n';
+      return std::nullopt;
+    }
+
+    std::vector<BYTE> buffer(bytes_needed);
+    auto *config = reinterpret_cast<QUERY_SERVICE_CONFIGW *>(buffer.data());
+    if (!QueryServiceConfigW(service, config, static_cast<DWORD>(buffer.size()), &bytes_needed)) {
+      std::cerr << "query broker service config failed native_error=" << GetLastError() << '\n';
+      return std::nullopt;
+    }
+
+    if (!config->lpBinaryPathName || config->lpBinaryPathName[0] == L'\0') {
+      std::cerr << "broker service config is missing binary path\n";
+      return std::nullopt;
+    }
+
+    return std::wstring {config->lpBinaryPathName};
+  }
+
+  void restore_service_binary_path(SC_HANDLE service, const std::wstring &previous_binary_path) {
+    if (!ChangeServiceConfigW(
+          service,
+          SERVICE_NO_CHANGE,
+          SERVICE_NO_CHANGE,
+          SERVICE_NO_CHANGE,
+          previous_binary_path.c_str(),
+          nullptr,
+          nullptr,
+          nullptr,
+          nullptr,
+          nullptr,
+          kBrokerServiceDisplayName
+        )) {
+      std::cerr << "restore broker service binary path failed native_error=" << GetLastError() << '\n';
+    }
+  }
+
   int install_broker_service(const std::vector<std::string> &args) {
     if (!is_process_elevated()) {
       return relaunch_elevated(args);
@@ -390,6 +545,9 @@ namespace {
     const auto broker_path = broker_executable_path();
     if (broker_path.empty() || !std::filesystem::exists(broker_path)) {
       std::cerr << "broker executable not found: " << broker_path.string() << '\n';
+      return 1;
+    }
+    if (!broker_executable_path_is_protected(broker_path)) {
       return 1;
     }
 
@@ -404,7 +562,7 @@ namespace {
       manager.value,
       kBrokerServiceName,
       kBrokerServiceDisplayName,
-      SERVICE_CHANGE_CONFIG | SERVICE_QUERY_STATUS | SERVICE_START,
+      kBrokerServiceInstallAccess,
       SERVICE_WIN32_OWN_PROCESS,
       SERVICE_AUTO_START,
       SERVICE_ERROR_NORMAL,
@@ -418,12 +576,16 @@ namespace {
 
     bool updated = false;
     if (!service_handle && GetLastError() == ERROR_SERVICE_EXISTS) {
-      service_handle = OpenServiceW(manager.value, kBrokerServiceName, SERVICE_CHANGE_CONFIG | SERVICE_QUERY_STATUS);
+      service_handle = OpenServiceW(manager.value, kBrokerServiceName, kBrokerServiceUpdateAccess);
       if (!service_handle) {
         std::cerr << "open broker service failed native_error=" << GetLastError() << '\n';
         return 1;
       }
       ServiceHandle service {service_handle};
+      const auto previous_binary_path = query_service_binary_path(service.value);
+      if (!previous_binary_path) {
+        return 1;
+      }
       if (!ChangeServiceConfigW(
             service.value,
             SERVICE_NO_CHANGE,
@@ -441,6 +603,7 @@ namespace {
         return 1;
       }
       if (!harden_broker_service(service.value)) {
+        restore_service_binary_path(service.value, *previous_binary_path);
         return 1;
       }
       updated = true;
@@ -456,6 +619,9 @@ namespace {
 
     ServiceHandle service {service_handle};
     if (!harden_broker_service(service.value)) {
+      if (!DeleteService(service.value)) {
+        std::cerr << "delete incomplete broker service failed native_error=" << GetLastError() << '\n';
+      }
       return 1;
     }
     std::cout << "broker_service_installed=1\n";

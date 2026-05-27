@@ -31,10 +31,15 @@ function Require-Value($Object, [string] $Name) {
   return $value
 }
 
-function Require-Pass($Object, [string] $Name) {
-  $value = Require-Value $Object $Name
-  if ($value -ne $true) {
-    throw "Release evidence '$Name' must be true."
+function Require-BooleanTrue($Object, [string] $Name) {
+  $property = $Object.PSObject.Properties[$Name]
+  if ($null -eq $property) {
+    throw "Release evidence is missing '$Name'."
+  }
+
+  $value = $property.Value
+  if ($value -isnot [bool] -or $value -ne $true) {
+    throw "Release evidence '$Name' must be JSON boolean true."
   }
 }
 
@@ -71,21 +76,25 @@ $requiredHlkTests = @(
 $hlk = Require-Value $evidence 'hlk'
 Require-Value $hlk 'project' | Out-Null
 foreach ($testName in $requiredHlkTests) {
-  $entry = $hlk.tests | Where-Object { $_.name -eq $testName } | Select-Object -First 1
-  if ($null -eq $entry) {
-    throw "HLK evidence is missing '$testName'."
+  $matches = @($hlk.tests | Where-Object { $_.name -eq $testName })
+  if ($matches.Count -ne 1) {
+    throw "HLK evidence must contain exactly one '$testName' result; found $($matches.Count)."
   }
-  if ($entry.status -ne 'passed' -and $entry.waiver_accepted -ne $true) {
-    throw "HLK test '$testName' must pass or have an accepted waiver."
+
+  $entry = $matches[0]
+  $waiver = $entry.PSObject.Properties['waiver_accepted']
+  $waiverAccepted = $null -ne $waiver -and $waiver.Value -is [bool] -and $waiver.Value
+  if ($entry.status -ne 'passed' -and -not $waiverAccepted) {
+    throw "HLK test '$testName' must pass or have an accepted JSON boolean waiver."
   }
 }
 
-Require-Pass $evidence 'hvci_readiness_passed'
-Require-Pass $evidence 'memory_integrity_functional_passed'
-Require-Pass $evidence 'fresh_install_passed'
-Require-Pass $evidence 'upgrade_install_passed'
-Require-Pass $evidence 'permanent_identity_retention_passed'
-Require-Pass $evidence 'temporary_cleanup_passed'
+Require-BooleanTrue $evidence 'hvci_readiness_passed'
+Require-BooleanTrue $evidence 'memory_integrity_functional_passed'
+Require-BooleanTrue $evidence 'fresh_install_passed'
+Require-BooleanTrue $evidence 'upgrade_install_passed'
+Require-BooleanTrue $evidence 'permanent_identity_retention_passed'
+Require-BooleanTrue $evidence 'temporary_cleanup_passed'
 
 if (-not [string]::IsNullOrWhiteSpace($PackagePath)) {
   $packages = @(Get-ChildItem -Path $PackagePath -File)

@@ -99,6 +99,11 @@ TEST(VirtualDisplayCliContract, BrokerServiceCommandsManageWindowsService) {
   expect_contains(source, "ChangeServiceConfig2W");
   expect_contains(source, "SERVICE_CONFIG_SERVICE_SID_INFO");
   expect_contains(source, "SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO");
+  expect_contains(source, "kBrokerServiceInstallAccess");
+  expect_contains(source, "kBrokerServiceUpdateAccess");
+  expect_contains(source, "SERVICE_QUERY_CONFIG");
+  expect_contains(source, "WRITE_DAC");
+  expect_contains(source, "broker_executable_path_is_protected(broker_path)");
   expect_contains(source, "SERVICE_AUTO_START");
   expect_contains(source, "SERVICE_SID_TYPE_UNRESTRICTED");
   expect_contains(source, "SeTcbPrivilege");
@@ -120,6 +125,22 @@ TEST(VirtualDisplayCliContract, BrokerServiceCommandsManageWindowsService) {
   expect_contains(source, "wait_for_broker_service_state(service.value, SERVICE_STOPPED)");
   expect_contains(source, "broker_service_started=1");
   expect_contains(source, "broker_service_stopped=1");
+
+  const auto create_service = source.find("CreateServiceW");
+  const auto harden_service = source.find("harden_broker_service(service.value)", create_service);
+  const auto cleanup_service = source.find("DeleteService(service.value)", harden_service);
+  ASSERT_NE(create_service, std::string::npos);
+  ASSERT_NE(harden_service, std::string::npos);
+  EXPECT_NE(cleanup_service, std::string::npos);
+  EXPECT_NE(source.find("restore_service_binary_path(service.value, *previous_binary_path)"), std::string::npos);
+}
+
+TEST(VirtualDisplayCliContract, WindowsUtf8WideningRejectsInvalidAndOversizedInput) {
+  const auto source = read_cli_source();
+
+  expect_contains(source, "value.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())");
+  expect_contains(source, "MB_ERR_INVALID_CHARS");
+  expect_contains(source, "written != size");
 }
 
 TEST(VirtualDisplayCliContract, PermanentCommandsApplyModeAndNameSettings) {
