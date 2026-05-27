@@ -309,6 +309,41 @@ TEST(VirtualDisplayProbeContract, ActiveDisplayChecksApplyRequestedResolution) {
   expect_not_contains(source, "return activate_result == ERROR_SUCCESS && mode_ready ? 0 : 1");
 }
 
+TEST(VirtualDisplayProbeContract, ProbeHardensDisplayConfigAndGdiModeInputs) {
+  const auto source = read_probe_source();
+
+  expect_contains(source, "valid_display_mode_dimensions");
+  expect_contains(source, "kMaxReasonableDisplayExtent = 16'384");
+  expect_contains(source, "activate_error=invalid_mode");
+  expect_contains(source, "gdi_set_mode_error=invalid_mode");
+  expect_contains(source, "rational_to_millihz(path.targetInfo.refreshRate)");
+  expect_contains(source, "rational_to_millihz(mode.targetMode.targetVideoSignalInfo.vSyncFreq)");
+  expect_contains(source, "auto fallback_query = query_display_config_result(query_flags)");
+  expect_contains(source, "activate_topology_fallback_query_error");
+  expect_contains(source, "activate_topology_fallback_error=target_not_found");
+  expect_not_contains(
+    source,
+    "static_cast<std::uint32_t>(\n"
+    "            (static_cast<std::uint64_t>(path.targetInfo.refreshRate.Numerator) * 1000ull)"
+  );
+  expect_contains(source, "kMaxEnumeratedDisplayModes = 4096");
+  expect_contains(source, "gdi_set_mode_warning=mode_enumeration_limit_reached");
+  expect_contains(source, "matching_modes != (std::numeric_limits<DWORD>::max)()");
+}
+
+TEST(VirtualDisplayProbeContract, ColorProfileBuffersAreDefensivelyOwned) {
+  const auto source = read_probe_source();
+
+  expect_contains(source, "LocalWideString(const LocalWideString &) = delete");
+  expect_contains(source, "LocalWideString &operator=(const LocalWideString &) = delete");
+  expect_contains(source, "LocalWideString(LocalWideString &&other) noexcept");
+  expect_contains(source, "std::exchange(other.value_, nullptr)");
+  expect_contains(source, "LocalProfileList(const LocalProfileList &) = delete");
+  expect_contains(source, "LocalProfileList &operator=(const LocalProfileList &) = delete");
+  expect_contains(source, "LocalProfileList(LocalProfileList &&other) noexcept");
+  expect_contains(source, "associated_profiles_error=null_profile_list");
+}
+
 TEST(VirtualDisplayProbeContract, TemporaryLeaseQaFeedsWhileValidatingHdr) {
   const auto source = read_probe_source();
 

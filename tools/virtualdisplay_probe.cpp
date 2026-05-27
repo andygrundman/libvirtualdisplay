@@ -131,6 +131,30 @@ namespace {
     return saturating_u32(static_cast<std::uint64_t>(refresh_hz) * 1000ull);
   }
 
+#ifdef _WIN32
+  bool valid_display_mode_dimensions(const std::uint32_t width, const std::uint32_t height) {
+    constexpr auto kMaxLong = static_cast<std::uint32_t>((std::numeric_limits<LONG>::max)());
+    constexpr std::uint32_t kMaxReasonableDisplayExtent = 16'384;
+    return width != 0 &&
+           height != 0 &&
+           width <= kMaxLong &&
+           height <= kMaxLong &&
+           width <= kMaxReasonableDisplayExtent &&
+           height <= kMaxReasonableDisplayExtent;
+  }
+
+  std::uint32_t rational_to_millihz(const DISPLAYCONFIG_RATIONAL &rate) {
+    if (rate.Denominator == 0) {
+      return 0;
+    }
+
+    return saturating_u32(
+      (static_cast<std::uint64_t>(rate.Numerator) * 1000ull) /
+      rate.Denominator
+    );
+  }
+#endif
+
   vdd::CreateTemporaryDisplayRequest make_temporary_request(
     const std::uint32_t width,
     const std::uint32_t height,
@@ -637,6 +661,14 @@ namespace {
     const std::uint32_t height,
     const std::uint32_t refresh_hz
   ) {
+    if (!valid_display_mode_dimensions(width, height) || refresh_hz == 0) {
+      std::cout << "activate_error=invalid_mode"
+                << " width=" << width
+                << " height=" << height
+                << " refresh_hz=" << refresh_hz << '\n';
+      return ERROR_INVALID_PARAMETER;
+    }
+
     const auto luid = vdd::to_windows_luid(adapter_luid);
 
     UINT32 query_flags = QDC_ALL_PATHS | QDC_VIRTUAL_MODE_AWARE;
@@ -768,8 +800,16 @@ namespace {
     }
 
     if (result == ERROR_GEN_FAILURE || result == ERROR_INVALID_PARAMETER) {
-      auto full_paths = display_config.paths;
+      auto fallback_query = query_display_config_result(query_flags);
+      if (!fallback_query.data) {
+        std::cout << "activate_topology_fallback_query_error flags=" << query_flags
+                  << " native_error=" << fallback_query.native_error << '\n';
+        return fallback_query.native_error;
+      }
+
+      auto full_paths = std::move(fallback_query.data->paths);
       clone_group_id = 0;
+      bool found_target = false;
       for (auto &path: full_paths) {
         const bool already_active = (path.flags & DISPLAYCONFIG_PATH_ACTIVE) != 0;
         const bool is_target =
@@ -782,8 +822,13 @@ namespace {
           prepare_legacy_topology_path(path, already_active || is_target);
         }
         if (is_target) {
+          found_target = true;
           path.targetInfo.targetAvailable = TRUE;
         }
+      }
+      if (!found_target) {
+        std::cout << "activate_topology_fallback_error=target_not_found\n";
+        return ERROR_NOT_FOUND;
       }
 
       result = SetDisplayConfig(
@@ -1051,12 +1096,7 @@ namespace {
 
         DisplayPathInfo info {};
         info.active = (path.flags & DISPLAYCONFIG_PATH_ACTIVE) != 0;
-        info.refresh_millihz = path.targetInfo.refreshRate.Denominator == 0 ?
-          0 :
-          static_cast<std::uint32_t>(
-            (static_cast<std::uint64_t>(path.targetInfo.refreshRate.Numerator) * 1000ull) /
-            path.targetInfo.refreshRate.Denominator
-          );
+        info.refresh_millihz = rational_to_millihz(path.targetInfo.refreshRate);
 
         const auto target_idx = target_mode_index(path, flags);
         if (target_idx && *target_idx < display_config->modes.size()) {
@@ -1066,10 +1106,7 @@ namespace {
             info.height = mode.targetMode.targetVideoSignalInfo.activeSize.cy;
             if (info.refresh_millihz == 0 &&
                 mode.targetMode.targetVideoSignalInfo.vSyncFreq.Denominator != 0) {
-              info.refresh_millihz = static_cast<std::uint32_t>(
-                (static_cast<std::uint64_t>(mode.targetMode.targetVideoSignalInfo.vSyncFreq.Numerator) * 1000ull) /
-                mode.targetMode.targetVideoSignalInfo.vSyncFreq.Denominator
-              );
+              info.refresh_millihz = rational_to_millihz(mode.targetMode.targetVideoSignalInfo.vSyncFreq);
             }
           }
         }
@@ -1167,17 +1204,34 @@ namespace {
 
   class LocalWideString {
   public:
-    ~LocalWideString() {
-      if (value_) {
-        LocalFree(value_);
+    LocalWideString() = default;
+    LocalWideString(const LocalWideString &) = delete;
+    LocalWideString &operator=(const LocalWideString &) = delete;
+
+    LocalWideString(LocalWideString &&other) noexcept:
+        value_ {std::exchange(other.value_, nullptr)} {}
+
+    LocalWideString &operator=(LocalWideString &&other) noexcept {
+      if (this != &other) {
+        reset();
+        value_ = std::exchange(other.value_, nullptr);
       }
+      return *this;
     }
 
-    [[nodiscard]] LPWSTR *put() {
+    ~LocalWideString() {
+      reset();
+    }
+
+    void reset() noexcept {
       if (value_) {
         LocalFree(value_);
         value_ = nullptr;
       }
+    }
+
+    [[nodiscard]] LPWSTR *put() {
+      reset();
       return &value_;
     }
 
@@ -1191,17 +1245,34 @@ namespace {
 
   class LocalProfileList {
   public:
-    ~LocalProfileList() {
-      if (value_) {
-        LocalFree(value_);
+    LocalProfileList() = default;
+    LocalProfileList(const LocalProfileList &) = delete;
+    LocalProfileList &operator=(const LocalProfileList &) = delete;
+
+    LocalProfileList(LocalProfileList &&other) noexcept:
+        value_ {std::exchange(other.value_, nullptr)} {}
+
+    LocalProfileList &operator=(LocalProfileList &&other) noexcept {
+      if (this != &other) {
+        reset();
+        value_ = std::exchange(other.value_, nullptr);
       }
+      return *this;
     }
 
-    [[nodiscard]] LPWSTR **put() {
+    ~LocalProfileList() {
+      reset();
+    }
+
+    void reset() noexcept {
       if (value_) {
         LocalFree(value_);
         value_ = nullptr;
       }
+    }
+
+    [[nodiscard]] LPWSTR **put() {
+      reset();
       return &value_;
     }
 
@@ -1326,6 +1397,10 @@ namespace {
     }
 
     std::cout << "associated_profile_count=" << profile_count << '\n';
+    if (profile_count != 0 && profile_list.get() == nullptr) {
+      std::cout << "associated_profiles_error=null_profile_list\n";
+      return;
+    }
     for (DWORD index = 0; index < profile_count; ++index) {
       const wchar_t *profile_name = profile_list.get()[index] ? profile_list.get()[index] : L"";
       std::wcout << L"associated_profile[" << index << L"]=\"" << profile_name << L"\"\n";
@@ -1477,21 +1552,31 @@ namespace {
       std::cout << "gdi_set_mode_error=no_gdi_name source_id=" << *source_id << '\n';
       return DISP_CHANGE_BADPARAM;
     }
+    if (!valid_display_mode_dimensions(width, height) || refresh_hz == 0) {
+      std::cout << "gdi_set_mode_error=invalid_mode\n";
+      return DISP_CHANGE_BADMODE;
+    }
 
+    constexpr DWORD kMaxEnumeratedDisplayModes = 4096;
     DWORD matching_modes = 0;
-    DWORD mode_index = 0;
-    DEVMODEW enumerated {};
-    while (true) {
-      enumerated = {};
+    bool mode_enumeration_limit_reached = true;
+    for (DWORD mode_index = 0; mode_index < kMaxEnumeratedDisplayModes; ++mode_index) {
+      DEVMODEW enumerated {};
       enumerated.dmSize = sizeof(enumerated);
-      if (!EnumDisplaySettingsExW(gdi_name->c_str(), mode_index++, &enumerated, 0)) {
+      if (!EnumDisplaySettingsExW(gdi_name->c_str(), mode_index, &enumerated, 0)) {
+        mode_enumeration_limit_reached = false;
         break;
       }
       if (enumerated.dmPelsWidth == width &&
           enumerated.dmPelsHeight == height &&
-          enumerated.dmDisplayFrequency == refresh_hz) {
+          enumerated.dmDisplayFrequency == refresh_hz &&
+          matching_modes != (std::numeric_limits<DWORD>::max)()) {
         ++matching_modes;
       }
+    }
+    if (mode_enumeration_limit_reached) {
+      std::cout << "gdi_set_mode_warning=mode_enumeration_limit_reached"
+                << " limit=" << kMaxEnumeratedDisplayModes << '\n';
     }
     std::wcout << L"gdi_set_mode_device=" << *gdi_name
                << L" source_id=" << *source_id
