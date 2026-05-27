@@ -15,6 +15,8 @@ namespace virtual_display::driver {
       return static_cast<std::uint8_t>(value);
     }
 
+    constexpr std::byte kDefaultHdrMaxLuminanceCtaValue {0x8b};
+
     void put_le16(std::span<std::byte> data, const std::size_t offset, const std::uint16_t value) {
       data[offset] = byte(value);
       data[offset + 1] = byte(value >> 8);
@@ -230,7 +232,7 @@ namespace virtual_display::driver {
         std::byte {0x60}, std::byte {0x01}, std::byte {0x02}, std::byte {0x03}, std::byte {0x67}, std::byte {0xd8}, std::byte {0x5d}, std::byte {0xc4},
         std::byte {0x01}, std::byte {0x78}, std::byte {0x80}, std::byte {0x03}, std::byte {0xe3}, std::byte {0x05}, std::byte {0xe0}, std::byte {0x01},
         std::byte {0xe4}, std::byte {0x0f}, std::byte {0x18}, std::byte {0x00}, std::byte {0x00}, std::byte {0xe6}, std::byte {0x06}, std::byte {0x0f},
-        std::byte {0x01}, std::byte {0xc8}, std::byte {0xc8}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00},
+        std::byte {0x01}, kDefaultHdrMaxLuminanceCtaValue, kDefaultHdrMaxLuminanceCtaValue, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00},
         std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00},
         std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00},
         std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00}, std::byte {0x00},
@@ -323,7 +325,7 @@ namespace virtual_display::driver {
         std::byte {0xe3}, std::byte {0x05}, std::byte {0xe0}, std::byte {0x01},
         std::byte {0xe4}, std::byte {0x0f}, std::byte {0x18}, std::byte {0x00},
         std::byte {0x00}, std::byte {0xe6}, std::byte {0x06}, std::byte {0x0f},
-        std::byte {0x01}, std::byte {0xc8}, std::byte {0xc8}, std::byte {0x00}
+        std::byte {0x01}, kDefaultHdrMaxLuminanceCtaValue, kDefaultHdrMaxLuminanceCtaValue, std::byte {0x00}
       };
       // Windows HDR classification expects the complete CTA metadata block set.
       // Keep that block stable while the base EDID remains identity-specific.

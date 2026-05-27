@@ -654,8 +654,8 @@ TEST(VirtualDisplayWindowsDriverContract, ReleaseWorkflowPublishesSelfSignedPack
   EXPECT_NE(workflow.find("git checkout --detach $version"), std::string::npos);
   EXPECT_NE(workflow.find("Import release signing certificate"), std::string::npos);
   EXPECT_NE(workflow.find("VDD_SIGNING_CERT_PFX_BASE64 is required for release driver catalog signing."), std::string::npos);
-  EXPECT_NE(workflow.find("Cert:\\CurrentUser\\Root"), std::string::npos);
-  EXPECT_NE(workflow.find("Cert:\\CurrentUser\\TrustedPublisher"), std::string::npos);
+  EXPECT_NE(workflow.find("certutil.exe -user -f -addstore Root"), std::string::npos);
+  EXPECT_NE(workflow.find("certutil.exe -user -f -addstore TrustedPublisher"), std::string::npos);
   EXPECT_NE(workflow.find("cert_path=$cerPath"), std::string::npos);
   EXPECT_NE(workflow.find("Build driver package files"), std::string::npos);
   EXPECT_NE(workflow.find("SunshineVirtualDisplayDriverPackageFiles"), std::string::npos);

@@ -119,8 +119,14 @@ jobs:
 
           $cerPath = Join-Path $env:RUNNER_TEMP 'sunshine-virtual-display-driver-release-signing.cer'
           Export-Certificate -Cert $cert -FilePath $cerPath | Out-Null
-          Import-Certificate -FilePath $cerPath -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
-          Import-Certificate -FilePath $cerPath -CertStoreLocation Cert:\CurrentUser\TrustedPublisher | Out-Null
+          certutil.exe -user -f -addstore Root $cerPath
+          if ($LASTEXITCODE -ne 0) {
+            throw "certutil failed to add release certificate to CurrentUser\Root with exit code $LASTEXITCODE"
+          }
+          certutil.exe -user -f -addstore TrustedPublisher $cerPath
+          if ($LASTEXITCODE -ne 0) {
+            throw "certutil failed to add release certificate to CurrentUser\TrustedPublisher with exit code $LASTEXITCODE"
+          }
 
           "thumbprint=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
           "cert_path=$cerPath" >> $env:GITHUB_OUTPUT

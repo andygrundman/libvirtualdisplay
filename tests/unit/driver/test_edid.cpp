@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include "virtual_display/driver/edid.h"
 
+#include <cmath>
+
 namespace vdd = virtual_display::driver;
 
 namespace {
@@ -32,6 +34,10 @@ namespace {
       static_cast<std::uint16_t>(edid[67]) |
       ((static_cast<std::uint16_t>(edid[68]) & 0x0fu) << 8u)
     );
+  }
+
+  double decode_hdr_static_metadata_luminance_nits(const std::byte value) {
+    return 50.0 * std::pow(2.0, static_cast<std::uint8_t>(value) / 32.0);
   }
 }  // namespace
 
@@ -193,9 +199,18 @@ TEST(VirtualDisplayDriverEdid, EmitsWindowsHdrClassifiedCtaMetadata) {
   EXPECT_EQ(edid[cta + 62], std::byte {0x06});
   EXPECT_EQ(edid[cta + 63], std::byte {0x0f});
   EXPECT_EQ(edid[cta + 64], std::byte {0x01});
-  EXPECT_EQ(edid[cta + 65], std::byte {0xc8});
-  EXPECT_EQ(edid[cta + 66], std::byte {0xc8});
+  EXPECT_EQ(edid[cta + 65], std::byte {0x8b});
+  EXPECT_EQ(edid[cta + 66], std::byte {0x8b});
   EXPECT_EQ(edid[cta + 67], std::byte {0x00});
+}
+
+TEST(VirtualDisplayDriverEdid, DefaultsHdrStaticMetadataToAtLeastThousandNitMaximum) {
+  const auto edid = vdd::create_edid(default_options());
+  const auto cta = vdd::kEdidBlockSize;
+
+  EXPECT_GE(decode_hdr_static_metadata_luminance_nits(edid[cta + 65]), 1000.0);
+  EXPECT_NEAR(decode_hdr_static_metadata_luminance_nits(edid[cta + 65]), 1015.24, 0.01);
+  EXPECT_EQ(edid[cta + 66], edid[cta + 65]);
 }
 
 TEST(VirtualDisplayDriverEdid, OmitsHdrStaticMetadataWhenDisabled) {
