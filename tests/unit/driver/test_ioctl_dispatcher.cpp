@@ -1,7 +1,8 @@
 #include <gtest/gtest.h>
 #include "virtual_display/driver/ioctl_dispatcher.h"
 
-#include <cstring>
+#include <algorithm>
+#include <string_view>
 #include <vector>
 
 namespace vdd = virtual_display::driver;
@@ -9,6 +10,13 @@ namespace vdd = virtual_display::driver;
 namespace {
   constexpr std::uint64_t lease_id(const std::uint64_t suffix) {
     return vdd::kMinOpaqueLeaseId | suffix;
+  }
+
+  template<std::size_t N>
+  void set_display_name(char (&destination)[N], const std::string_view value) {
+    static_assert(N > 0);
+    std::fill_n(destination, N, '\0');
+    std::copy_n(value.data(), (std::min)(value.size(), N - 1), destination);
   }
 
   class FakeBackend: public vdd::DisplayDriverBackend {
@@ -64,7 +72,7 @@ namespace {
     request.physical_height_mm = 300;
     request.refresh_rate_millihz = 60'000;
     request.requested_timeout_ms = 30'000;
-    std::memcpy(request.display_name, "Sunshine", 9);
+    set_display_name(request.display_name, "Sunshine");
     return request;
   }
 }  // namespace
@@ -101,6 +109,7 @@ TEST(VirtualDisplayDriverIoctlDispatcher, RejectsShortCreateInput) {
   );
 
   EXPECT_EQ(result.status, vdd::IoctlStatus::InvalidInputBuffer);
+  EXPECT_EQ(result.bytes_returned, 0u);
 }
 
 TEST(VirtualDisplayDriverIoctlDispatcher, CreateTemporaryDisplayWritesResultAndArrivesBackend) {
@@ -143,6 +152,7 @@ TEST(VirtualDisplayDriverIoctlDispatcher, CreateTemporaryDisplayRejectsShortOutp
   );
 
   EXPECT_EQ(result.status, vdd::IoctlStatus::InvalidOutputBuffer);
+  EXPECT_EQ(result.bytes_returned, 0u);
   EXPECT_EQ(harness.controller.store().temporary_display_count(), 0u);
   EXPECT_TRUE(harness.backend.arrived.empty());
   EXPECT_TRUE(harness.backend.departed.empty());
@@ -164,6 +174,7 @@ TEST(VirtualDisplayDriverIoctlDispatcher, CreateTemporaryDisplayMapsBackendFailu
   );
 
   EXPECT_EQ(result.status, vdd::IoctlStatus::BackendFailed);
+  EXPECT_EQ(result.bytes_returned, 0u);
   EXPECT_EQ(harness.controller.store().temporary_display_count(), 0u);
 }
 
@@ -189,6 +200,7 @@ TEST(VirtualDisplayDriverIoctlDispatcher, RemoveTemporaryDisplayDepartsBackend) 
   );
 
   EXPECT_EQ(result.status, vdd::IoctlStatus::Success);
+  EXPECT_EQ(result.bytes_returned, 0u);
   EXPECT_EQ(harness.backend.departed, (std::vector<std::uint64_t> {request.display_id}));
 }
 
@@ -215,9 +227,24 @@ TEST(VirtualDisplayDriverIoctlDispatcher, RemoveTemporaryDisplayBackendFailureKe
   );
 
   EXPECT_EQ(result.status, vdd::IoctlStatus::BackendFailed);
+  EXPECT_EQ(result.bytes_returned, 0u);
   EXPECT_EQ(harness.controller.store().temporary_display_count(), 1u);
   EXPECT_TRUE(harness.controller.store().find_temporary_display(request.display_id));
   EXPECT_EQ(harness.backend.departed, (std::vector<std::uint64_t> {request.display_id}));
+
+  vdd::LeaseRequest feed {};
+  feed.lease_id = request.lease_id;
+  feed.requested_timeout_ms = 60'000;
+  const auto feed_result = harness.dispatcher.dispatch(
+    vdd::kIoctlFeedLease,
+    &feed,
+    sizeof(feed),
+    nullptr,
+    0,
+    std::chrono::steady_clock::now()
+  );
+  EXPECT_EQ(feed_result.status, vdd::IoctlStatus::NotFound);
+  EXPECT_EQ(feed_result.bytes_returned, 0u);
 }
 
 TEST(VirtualDisplayDriverIoctlDispatcher, QueryAndFeedLeaseUseLeaseApi) {
@@ -233,10 +260,16 @@ TEST(VirtualDisplayDriverIoctlDispatcher, QueryAndFeedLeaseUseLeaseApi) {
   vdd::LeaseRequest feed {};
   feed.lease_id = request.lease_id;
   feed.requested_timeout_ms = 60'000;
-  EXPECT_EQ(
-    harness.dispatcher.dispatch(vdd::kIoctlFeedLease, &feed, sizeof(feed), nullptr, 0, now + std::chrono::seconds(10)).status,
-    vdd::IoctlStatus::Success
+  const auto feed_result = harness.dispatcher.dispatch(
+    vdd::kIoctlFeedLease,
+    &feed,
+    sizeof(feed),
+    nullptr,
+    0,
+    now + std::chrono::seconds(10)
   );
+  EXPECT_EQ(feed_result.status, vdd::IoctlStatus::Success);
+  EXPECT_EQ(feed_result.bytes_returned, 0u);
 
   vdd::QueryLeaseResult query {};
   const auto query_result = harness.dispatcher.dispatch(
@@ -249,6 +282,7 @@ TEST(VirtualDisplayDriverIoctlDispatcher, QueryAndFeedLeaseUseLeaseApi) {
   );
 
   EXPECT_EQ(query_result.status, vdd::IoctlStatus::Success);
+  EXPECT_EQ(query_result.bytes_returned, sizeof(query));
   EXPECT_EQ(query.lease_exists, 1u);
   EXPECT_EQ(query.effective_timeout_ms, 60'000u);
 }
@@ -322,9 +356,24 @@ TEST(VirtualDisplayDriverIoctlDispatcher, ReleaseLeaseBackendFailureKeepsStore) 
   );
 
   EXPECT_EQ(result.status, vdd::IoctlStatus::BackendFailed);
+  EXPECT_EQ(result.bytes_returned, 0u);
   EXPECT_EQ(harness.controller.store().temporary_display_count(), 2u);
   EXPECT_EQ(harness.controller.query_lease(first.lease_id, now).lease_exists, 1u);
   EXPECT_EQ(harness.backend.departed, (std::vector<std::uint64_t> {first.display_id, second.display_id}));
+
+  vdd::LeaseRequest feed {};
+  feed.lease_id = first.lease_id;
+  feed.requested_timeout_ms = 60'000;
+  const auto feed_result = harness.dispatcher.dispatch(
+    vdd::kIoctlFeedLease,
+    &feed,
+    sizeof(feed),
+    nullptr,
+    0,
+    now
+  );
+  EXPECT_EQ(feed_result.status, vdd::IoctlStatus::NotFound);
+  EXPECT_EQ(feed_result.bytes_returned, 0u);
 }
 
 TEST(VirtualDisplayDriverIoctlDispatcher, SetAndQueryPermanentDisplayCountUsePermanentApi) {
@@ -336,7 +385,7 @@ TEST(VirtualDisplayDriverIoctlDispatcher, SetAndQueryPermanentDisplayCountUsePer
   request.physical_width_mm = 590;
   request.physical_height_mm = 330;
   request.refresh_rate_millihz = 120'000;
-  std::memcpy(request.display_name, "CLI Display", 12);
+  set_display_name(request.display_name, "CLI Display");
   vdd::PermanentDisplayCountResult output {};
 
   const auto set_result = harness.dispatcher.dispatch(
@@ -349,6 +398,7 @@ TEST(VirtualDisplayDriverIoctlDispatcher, SetAndQueryPermanentDisplayCountUsePer
   );
 
   EXPECT_EQ(set_result.status, vdd::IoctlStatus::Success);
+  EXPECT_EQ(set_result.bytes_returned, sizeof(output));
   EXPECT_EQ(output.current_display_count, 2u);
   EXPECT_EQ(output.width, 2560u);
   EXPECT_EQ(output.height, 1440u);
@@ -371,6 +421,7 @@ TEST(VirtualDisplayDriverIoctlDispatcher, SetAndQueryPermanentDisplayCountUsePer
   );
 
   EXPECT_EQ(query_result.status, vdd::IoctlStatus::Success);
+  EXPECT_EQ(query_result.bytes_returned, sizeof(output));
   EXPECT_EQ(output.current_display_count, 2u);
   EXPECT_EQ(output.width, 2560u);
   EXPECT_EQ(output.physical_width_mm, 590u);
@@ -451,7 +502,7 @@ TEST(VirtualDisplayDriverIoctlDispatcher, SetAndQueryDisplayManifestUseManifestA
   profile.position_y = 0;
   profile.allowed_modes[0] = {1920, 1080, 60'000};
   profile.allowed_modes[1] = {2560, 1440, 120'000};
-  std::memcpy(profile.display_name, "Side Display", 13);
+  set_display_name(profile.display_name, "Side Display");
   vdd::DisplayManifest output {};
 
   const auto set_result = harness.dispatcher.dispatch(
@@ -485,6 +536,7 @@ TEST(VirtualDisplayDriverIoctlDispatcher, SetAndQueryDisplayManifestUseManifestA
   );
 
   EXPECT_EQ(query_result.status, vdd::IoctlStatus::Success);
+  EXPECT_EQ(query_result.bytes_returned, sizeof(output));
   EXPECT_EQ(output.api_namespace, vdd::kApiNamespaceGuid);
   EXPECT_EQ(output.profiles[0].display_id, 0x7000000000000100ull);
   EXPECT_EQ(vdd::trim_display_name(output.profiles[0].display_name), "Side Display");
@@ -505,6 +557,7 @@ TEST(VirtualDisplayDriverIoctlDispatcher, SetPermanentDisplayCountRejectsShortOu
   );
 
   EXPECT_EQ(result.status, vdd::IoctlStatus::InvalidOutputBuffer);
+  EXPECT_EQ(result.bytes_returned, 0u);
   EXPECT_TRUE(harness.backend.permanent_counts.empty());
   EXPECT_EQ(harness.controller.query_permanent_display_count().current_display_count, 0u);
 }
@@ -522,4 +575,5 @@ TEST(VirtualDisplayDriverIoctlDispatcher, RejectsUnknownIoctl) {
   );
 
   EXPECT_EQ(result.status, vdd::IoctlStatus::InvalidIoctl);
+  EXPECT_EQ(result.bytes_returned, 0u);
 }

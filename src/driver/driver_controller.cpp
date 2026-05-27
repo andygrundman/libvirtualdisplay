@@ -89,6 +89,7 @@ namespace virtual_display::driver {
 
     if (const auto backend_error = backend_.depart_temporary_display(request.display_id);
         backend_error != BackendError::None) {
+      (void) store_.mark_temporary_display_pending_departure(request);
       return {StoreError::None, ValidationError::None, backend_error};
     }
 
@@ -121,6 +122,10 @@ namespace virtual_display::driver {
         remove.display_id = display.display_id;
         (void) store_.remove_temporary_display(remove);
       } else {
+        LeaseDisplayRequest pending {};
+        pending.lease_id = display.lease_id;
+        pending.display_id = display.display_id;
+        (void) store_.mark_temporary_display_pending_departure(pending);
         backend_error = BackendError::Failed;
       }
     }
@@ -241,6 +246,11 @@ namespace virtual_display::driver {
         if (store_.remove_temporary_display(remove).error == StoreError::None) {
           ++removed;
         }
+      } else {
+        LeaseDisplayRequest pending {};
+        pending.lease_id = display.lease_id;
+        pending.display_id = display.display_id;
+        (void) store_.mark_temporary_display_pending_departure(pending);
       }
     }
 

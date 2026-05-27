@@ -41,6 +41,7 @@ namespace virtual_display::driver {
     std::chrono::steady_clock::time_point expires_at {};
     bool retain_identity {true};
     std::uint64_t identity_display_id {};
+    bool pending_departure {};
   };
 
   struct StoreResult {
@@ -82,6 +83,7 @@ namespace virtual_display::driver {
       const LeaseDisplayRequest &request,
       RemoveTemporaryDisplayMode mode = RemoveTemporaryDisplayMode::RetainConnectorReservation
     );
+    StoreResult mark_temporary_display_pending_departure(const LeaseDisplayRequest &request);
     StoreResult feed_lease(const LeaseRequest &request, std::chrono::steady_clock::time_point now);
     StoreResult release_lease(const LeaseRequest &request);
     QueryLeaseResult query_lease(std::uint64_t lease_id, std::chrono::steady_clock::time_point now) const;
@@ -110,6 +112,7 @@ namespace virtual_display::driver {
     void remove_connector_reservation(std::uint32_t connector_index, std::uint64_t except_display_id);
     std::uint32_t connector_index_for_display(std::uint64_t display_id, bool retain_identity);
     bool lease_has_displays(std::uint64_t lease_id) const;
+    bool lease_has_pending_departure(std::uint64_t lease_id) const;
     void remove_lease_if_empty(std::uint64_t lease_id);
 
     std::uint32_t max_permanent_displays_ {};

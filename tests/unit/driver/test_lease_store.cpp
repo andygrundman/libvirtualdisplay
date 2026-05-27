@@ -161,6 +161,39 @@ TEST(VirtualDisplayDriverLeaseStore, QueriesAndFeedsLease) {
   EXPECT_EQ(query.remaining_ms, 60'000u);
 }
 
+TEST(VirtualDisplayDriverLeaseStore, RejectsFeedAfterLeaseExpiry) {
+  vdd::DisplayStore store {2, 4};
+  const auto now = std::chrono::steady_clock::now();
+  ASSERT_EQ(store.create_temporary_display(make_create_request(), now).status.error, vdd::StoreError::None);
+
+  const vdd::LeaseRequest feed {
+    vdd::kApiNamespaceGuid,
+    lease_id(100),
+    60'000,
+    0
+  };
+
+  EXPECT_EQ(store.feed_lease(feed, now + std::chrono::milliseconds(30'000)).error, vdd::StoreError::LeaseNotFound);
+  const auto query = store.query_lease(lease_id(100), now + std::chrono::milliseconds(30'000));
+  EXPECT_EQ(query.lease_exists, 1u);
+  EXPECT_EQ(query.remaining_ms, 0u);
+}
+
+TEST(VirtualDisplayDriverLeaseStore, RejectsAdditionalDisplayAfterLeaseExpiry) {
+  vdd::DisplayStore store {2, 4};
+  const auto now = std::chrono::steady_clock::now();
+  ASSERT_EQ(store.create_temporary_display(make_create_request(), now).status.error, vdd::StoreError::None);
+
+  const auto created = store.create_temporary_display(
+    make_create_request(lease_id(100), 201),
+    now + std::chrono::milliseconds(30'000)
+  );
+
+  EXPECT_EQ(created.status.error, vdd::StoreError::LeaseNotFound);
+  EXPECT_EQ(store.temporary_display_count(), 1u);
+  EXPECT_FALSE(store.find_temporary_display(201));
+}
+
 TEST(VirtualDisplayDriverLeaseStore, AdditionalDisplaysUseExistingLeaseExpiry) {
   vdd::DisplayStore store {2, 4};
   const auto now = std::chrono::steady_clock::now();

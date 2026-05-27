@@ -150,6 +150,12 @@ namespace virtual_display::driver {
       return CreateStoreResult {{StoreError::TemporaryDisplayLimitReached, ValidationError::None}, {}};
     }
 
+    const auto lease = leases_by_id_.find(request.lease_id);
+    if (lease != leases_by_id_.end() &&
+        (lease->second.expires_at <= now || lease_has_pending_departure(request.lease_id))) {
+      return CreateStoreResult {{StoreError::LeaseNotFound, ValidationError::None}, {}};
+    }
+
     const bool retain_identity = (validated.request.flags & kCreateTemporaryDisplayFlagEphemeralIdentity) == 0;
     const auto connector_index = connector_index_for_display(request.display_id, retain_identity);
     if (!is_temporary_connector_index(connector_index)) {
@@ -174,7 +180,6 @@ namespace virtual_display::driver {
     }
     auto effective_timeout_ms = validated.effective_timeout_ms;
     auto expires_at = now + std::chrono::milliseconds(effective_timeout_ms);
-    const auto lease = leases_by_id_.find(request.lease_id);
     if (lease != leases_by_id_.end()) {
       effective_timeout_ms = lease->second.timeout_ms;
       expires_at = lease->second.expires_at;
@@ -195,7 +200,8 @@ namespace virtual_display::driver {
         std::string {validated.display_name},
         expires_at,
         retain_identity,
-        identity_display_id
+        identity_display_id,
+        false
       }
     );
 
@@ -241,6 +247,21 @@ namespace virtual_display::driver {
     return {};
   }
 
+  StoreResult DisplayStore::mark_temporary_display_pending_departure(const LeaseDisplayRequest &request) {
+    if (const auto validation = validate_lease_display_request(request);
+        validation != ValidationError::None) {
+      return validation_failure(validation);
+    }
+
+    auto display = displays_by_id_.find(request.display_id);
+    if (display == displays_by_id_.end() || display->second.lease_id != request.lease_id) {
+      return {StoreError::DisplayNotFound, ValidationError::None};
+    }
+
+    display->second.pending_departure = true;
+    return {};
+  }
+
   StoreResult DisplayStore::feed_lease(
     const LeaseRequest &request,
     const std::chrono::steady_clock::time_point now
@@ -252,6 +273,10 @@ namespace virtual_display::driver {
 
     auto lease = leases_by_id_.find(request.lease_id);
     if (lease == leases_by_id_.end()) {
+      return {StoreError::LeaseNotFound, ValidationError::None};
+    }
+
+    if (lease->second.expires_at <= now || lease_has_pending_departure(request.lease_id)) {
       return {StoreError::LeaseNotFound, ValidationError::None};
     }
 
@@ -548,6 +573,12 @@ namespace virtual_display::driver {
   bool DisplayStore::lease_has_displays(const std::uint64_t lease_id) const {
     return std::any_of(displays_by_id_.begin(), displays_by_id_.end(), [lease_id](const auto &entry) {
       return entry.second.lease_id == lease_id;
+    });
+  }
+
+  bool DisplayStore::lease_has_pending_departure(const std::uint64_t lease_id) const {
+    return std::any_of(displays_by_id_.begin(), displays_by_id_.end(), [lease_id](const auto &entry) {
+      return entry.second.lease_id == lease_id && entry.second.pending_departure;
     });
   }
 

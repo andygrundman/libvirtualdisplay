@@ -114,9 +114,14 @@ TEST(VirtualDisplayDriverEdid, HdrEdidDoesNotEncodeRequestedHighRefreshInBaseTim
   EXPECT_EQ(timing.vertical_active, 2160u);
   EXPECT_NE(timing.pixel_clock_10khz, 0xffffu);
 
-  const auto total_pixels =
-    static_cast<std::uint64_t>(timing.horizontal_active + timing.horizontal_blanking) *
-    static_cast<std::uint64_t>(timing.vertical_active + timing.vertical_blanking);
+  const auto horizontal_total =
+    static_cast<std::uint64_t>(timing.horizontal_active) + static_cast<std::uint64_t>(timing.horizontal_blanking);
+  const auto vertical_total =
+    static_cast<std::uint64_t>(timing.vertical_active) + static_cast<std::uint64_t>(timing.vertical_blanking);
+  ASSERT_GT(horizontal_total, 0u);
+  ASSERT_GT(vertical_total, 0u);
+
+  const auto total_pixels = horizontal_total * vertical_total;
   const auto effective_millihz = static_cast<std::uint64_t>(timing.pixel_clock_10khz) * 10'000'000ull / total_pixels;
 
   EXPECT_NEAR(static_cast<double>(effective_millihz), 60'000.0, 10.0);
