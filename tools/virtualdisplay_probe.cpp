@@ -10,6 +10,7 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <new>
 #include <optional>
 #include <random>
 #include <string>
@@ -344,6 +345,13 @@ namespace {
     LONG native_error = ERROR_SUCCESS;
   };
 
+  constexpr UINT32 kMaxDisplayConfigPaths = 128;
+  constexpr UINT32 kMaxDisplayConfigModes = 256;
+
+  bool display_config_counts_are_reasonable(const UINT32 path_count, const UINT32 mode_count) {
+    return path_count <= kMaxDisplayConfigPaths && mode_count <= kMaxDisplayConfigModes;
+  }
+
   bool same_luid(const LUID &left, const LUID &right) {
     return left.LowPart == right.LowPart && left.HighPart == right.HighPart;
   }
@@ -392,32 +400,48 @@ namespace {
       return {std::nullopt, result};
     }
 
-    std::vector<DISPLAYCONFIG_PATH_INFO> paths(path_count);
-    std::vector<DISPLAYCONFIG_MODE_INFO> modes(mode_count);
-    for (int attempt = 0; attempt < 4; ++attempt) {
-      UINT32 query_path_count = static_cast<UINT32>(paths.size());
-      UINT32 query_mode_count = static_cast<UINT32>(modes.size());
-      result = QueryDisplayConfig(
-        flags,
-        &query_path_count,
-        query_path_count == 0 ? nullptr : paths.data(),
-        &query_mode_count,
-        query_mode_count == 0 ? nullptr : modes.data(),
-        nullptr
-      );
+    if (!display_config_counts_are_reasonable(path_count, mode_count)) {
+      return {std::nullopt, ERROR_INVALID_DATA};
+    }
 
-      if (result == ERROR_SUCCESS) {
-        paths.resize(query_path_count);
-        modes.resize(query_mode_count);
-        return {DisplayConfigData {std::move(paths), std::move(modes), flags}, ERROR_SUCCESS};
+    try {
+      std::vector<DISPLAYCONFIG_PATH_INFO> paths(path_count);
+      std::vector<DISPLAYCONFIG_MODE_INFO> modes(mode_count);
+      for (int attempt = 0; attempt < 4; ++attempt) {
+        UINT32 query_path_count = static_cast<UINT32>(paths.size());
+        UINT32 query_mode_count = static_cast<UINT32>(modes.size());
+        result = QueryDisplayConfig(
+          flags,
+          &query_path_count,
+          query_path_count == 0 ? nullptr : paths.data(),
+          &query_mode_count,
+          query_mode_count == 0 ? nullptr : modes.data(),
+          nullptr
+        );
+
+        if (result == ERROR_SUCCESS) {
+          if (!display_config_counts_are_reasonable(query_path_count, query_mode_count)) {
+            return {std::nullopt, ERROR_INVALID_DATA};
+          }
+          paths.resize(query_path_count);
+          modes.resize(query_mode_count);
+          return {DisplayConfigData {std::move(paths), std::move(modes), flags}, ERROR_SUCCESS};
+        }
+
+        if (result != ERROR_INSUFFICIENT_BUFFER) {
+          return {std::nullopt, result};
+        }
+
+        const auto next_path_count = (std::max)(query_path_count, static_cast<UINT32>(paths.size() + 1));
+        const auto next_mode_count = (std::max)(query_mode_count, static_cast<UINT32>(modes.size() + 1));
+        if (!display_config_counts_are_reasonable(next_path_count, next_mode_count)) {
+          return {std::nullopt, ERROR_INVALID_DATA};
+        }
+        paths.resize(next_path_count);
+        modes.resize(next_mode_count);
       }
-
-      if (result != ERROR_INSUFFICIENT_BUFFER) {
-        return {std::nullopt, result};
-      }
-
-      paths.resize((std::max)(query_path_count, static_cast<UINT32>(paths.size() + 1)));
-      modes.resize((std::max)(query_mode_count, static_cast<UINT32>(modes.size() + 1)));
+    } catch (const std::bad_alloc &) {
+      return {std::nullopt, ERROR_NOT_ENOUGH_MEMORY};
     }
 
     return {std::nullopt, result};

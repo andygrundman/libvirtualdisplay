@@ -14,6 +14,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -719,11 +720,56 @@ namespace {
   struct BrokerContext {
     SERVICE_STATUS_HANDLE service_status_handle {};
     SERVICE_STATUS service_status {};
+    std::mutex stop_event_mutex;
     HANDLE stop_event {};
     std::atomic<bool> stop_requested {false};
   };
 
   BrokerContext g_context {};
+
+  ScopedHandle duplicate_stop_event() {
+    std::lock_guard lock {g_context.stop_event_mutex};
+    if (!g_context.stop_event) {
+      return {};
+    }
+
+    HANDLE duplicate = nullptr;
+    if (!DuplicateHandle(
+          GetCurrentProcess(),
+          g_context.stop_event,
+          GetCurrentProcess(),
+          &duplicate,
+          SYNCHRONIZE | EVENT_MODIFY_STATE,
+          FALSE,
+          0
+        )) {
+      return {};
+    }
+    return ScopedHandle {duplicate};
+  }
+
+  void set_stop_event_handle(HANDLE stop_event) {
+    std::lock_guard lock {g_context.stop_event_mutex};
+    if (g_context.stop_event) {
+      CloseHandle(g_context.stop_event);
+    }
+    g_context.stop_event = stop_event;
+  }
+
+  void close_stop_event_handle() {
+    std::lock_guard lock {g_context.stop_event_mutex};
+    if (g_context.stop_event) {
+      CloseHandle(g_context.stop_event);
+      g_context.stop_event = nullptr;
+    }
+  }
+
+  void signal_stop_event() {
+    auto stop_event = duplicate_stop_event();
+    if (stop_event.valid()) {
+      SetEvent(stop_event.get());
+    }
+  }
 
   std::wstring widen_ascii(const std::string_view text) {
     std::wstring wide;
@@ -890,8 +936,9 @@ namespace {
     }
 
     CloseHandle(process.hThread);
-    HANDLE wait_handles[] {process.hProcess, g_context.stop_event};
-    const DWORD wait_result = g_context.stop_event ?
+    auto stop_event = duplicate_stop_event();
+    HANDLE wait_handles[] {process.hProcess, stop_event.get()};
+    const DWORD wait_result = stop_event.valid() ?
       WaitForMultipleObjects(2, wait_handles, FALSE, kHelperProcessTimeoutMs) :
       WaitForSingleObject(process.hProcess, kHelperProcessTimeoutMs);
     if (wait_result == WAIT_TIMEOUT || wait_result == WAIT_OBJECT_0 + 1) {
@@ -1117,6 +1164,7 @@ namespace {
 
   bool wait_for_pipe_input(HANDLE pipe) {
     const auto deadline = GetTickCount64() + kPipeClientReadTimeoutMs;
+    auto stop_event = duplicate_stop_event();
     while (!g_context.stop_requested.load(std::memory_order_acquire)) {
       DWORD available = 0;
       if (!PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr)) {
@@ -1129,8 +1177,8 @@ namespace {
         SetLastError(ERROR_TIMEOUT);
         return false;
       }
-      if (g_context.stop_event) {
-        const DWORD wait_result = WaitForSingleObject(g_context.stop_event, kPipeClientPollMs);
+      if (stop_event.valid()) {
+        const DWORD wait_result = WaitForSingleObject(stop_event.get(), kPipeClientPollMs);
         if (wait_result == WAIT_OBJECT_0) {
           SetLastError(ERROR_CANCELLED);
           return false;
@@ -1244,9 +1292,9 @@ namespace {
     while (!g_context.stop_requested.load(std::memory_order_acquire)) {
       HANDLE pipe = CreateNamedPipeW(
         kPipeName,
-        PIPE_ACCESS_DUPLEX,
-        PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-        PIPE_UNLIMITED_INSTANCES,
+        PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
+        PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+        1,
         kPipeBufferBytes,
         kPipeBufferBytes,
         0,
@@ -1264,14 +1312,14 @@ namespace {
 
       const BOOL connected = ConnectNamedPipe(pipe, nullptr) ? TRUE : GetLastError() == ERROR_PIPE_CONNECTED;
       if (connected && !g_context.stop_requested.load(std::memory_order_acquire)) {
-      if (authorize_pipe_client(pipe)) {
-        serve_pipe_client(pipe, client);
-      } else {
-        const char response[] = "error access_denied\n";
-        DWORD bytes_written = 0;
-        (void) WriteFile(pipe, response, sizeof(response) - 1, &bytes_written, nullptr);
-        FlushFileBuffers(pipe);
-      }
+        if (authorize_pipe_client(pipe)) {
+          serve_pipe_client(pipe, client);
+        } else {
+          const char response[] = "error access_denied\n";
+          DWORD bytes_written = 0;
+          (void) WriteFile(pipe, response, sizeof(response) - 1, &bytes_written, nullptr);
+          FlushFileBuffers(pipe);
+        }
       }
 
       DisconnectNamedPipe(pipe);
@@ -1289,9 +1337,7 @@ namespace {
     report_service_status(SERVICE_STOP_PENDING);
     report_event_log(EVENTLOG_INFORMATION_TYPE, kEventServiceStopping, L"Broker service stop requested");
     g_context.stop_requested.store(true, std::memory_order_release);
-    if (g_context.stop_event) {
-      SetEvent(g_context.stop_event);
-    }
+    signal_stop_event();
 
     HANDLE client = CreateFileW(
       kPipeName,
@@ -1299,7 +1345,7 @@ namespace {
       0,
       nullptr,
       OPEN_EXISTING,
-      FILE_ATTRIBUTE_NORMAL,
+      FILE_ATTRIBUTE_NORMAL | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
       nullptr
     );
     if (client != INVALID_HANDLE_VALUE) {
@@ -1313,16 +1359,13 @@ namespace {
       return;
     }
 
-    g_context.stop_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    set_stop_event_handle(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     report_service_status(SERVICE_START_PENDING);
     report_event_log(EVENTLOG_INFORMATION_TYPE, kEventServiceStarting, L"Broker service starting");
     report_service_status(SERVICE_RUNNING);
     report_event_log(EVENTLOG_INFORMATION_TYPE, kEventServiceRunning, L"Broker service running");
     const int result = run_broker_loop();
-    if (g_context.stop_event) {
-      CloseHandle(g_context.stop_event);
-      g_context.stop_event = nullptr;
-    }
+    close_stop_event_handle();
     report_event_log(
       result == 0 ? EVENTLOG_INFORMATION_TYPE : EVENTLOG_ERROR_TYPE,
       result == 0 ? kEventServiceStopped : kEventServiceFailed,

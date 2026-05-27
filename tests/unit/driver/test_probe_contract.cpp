@@ -377,6 +377,13 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   expect_contains(source, "save_display_manifest");
   expect_contains(source, "restore_persisted_display_manifest(client)");
   expect_contains(source, "CreateNamedPipeW");
+  expect_contains(source, "PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE");
+  expect_contains(source, "PIPE_REJECT_REMOTE_CLIENTS");
+  expect_not_contains(source, "PIPE_UNLIMITED_INSTANCES");
+  expect_contains(source, "SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION");
+  expect_contains(source, "std::mutex stop_event_mutex");
+  expect_contains(source, "DuplicateHandle(");
+  expect_contains(source, "duplicate_stop_event()");
   expect_contains(source, "ImpersonateNamedPipeClient");
   expect_contains(source, "if (!RevertToSelf())");
   expect_contains(source, "std::terminate()");
@@ -443,4 +450,16 @@ TEST(VirtualDisplayProbeContract, BrokerOwnsDriverAccessBehindSecuredPipe) {
   ASSERT_NE(denied, std::string::npos);
   EXPECT_LT(authorize, serve);
   EXPECT_LT(authorize, denied);
+}
+
+TEST(VirtualDisplayProbeContract, DisplayConfigQueryCapsOsReportedAllocationSizes) {
+  const auto source = read_probe_source();
+
+  expect_contains(source, "constexpr UINT32 kMaxDisplayConfigPaths = 128");
+  expect_contains(source, "constexpr UINT32 kMaxDisplayConfigModes = 256");
+  expect_contains(source, "display_config_counts_are_reasonable(path_count, mode_count)");
+  expect_contains(source, "return {std::nullopt, ERROR_INVALID_DATA}");
+  expect_contains(source, "catch (const std::bad_alloc &)");
+  expect_contains(source, "return {std::nullopt, ERROR_NOT_ENOUGH_MEMORY}");
+  expect_contains(source, "display_config_counts_are_reasonable(next_path_count, next_mode_count)");
 }
