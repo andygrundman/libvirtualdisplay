@@ -159,7 +159,14 @@ namespace virtual_display::driver {
     if (retain_identity) {
       connector_reservations_by_display_id_[request.display_id] = connector_index;
     }
-    const auto expires_at = now + std::chrono::milliseconds(validated.effective_timeout_ms);
+    auto effective_timeout_ms = validated.effective_timeout_ms;
+    auto expires_at = now + std::chrono::milliseconds(effective_timeout_ms);
+    const auto lease = leases_by_id_.find(request.lease_id);
+    if (lease != leases_by_id_.end()) {
+      effective_timeout_ms = lease->second.timeout_ms;
+      expires_at = lease->second.expires_at;
+    }
+
     constexpr std::uint64_t kEphemeralDisplayIdBase = 0x6000000000000000ull;
     const auto identity_display_id = retain_identity ?
       request.display_id :
@@ -175,7 +182,7 @@ namespace virtual_display::driver {
         validated.request.physical_width_mm,
         validated.request.physical_height_mm,
         validated.request.refresh_rate_millihz,
-        validated.effective_timeout_ms,
+        effective_timeout_ms,
         connector_index,
         std::string {validated.display_name},
         expires_at,
@@ -184,21 +191,29 @@ namespace virtual_display::driver {
       }
     );
 
-    leases_by_id_[request.lease_id] = LeaseRecord {
-      validated.effective_timeout_ms,
-      expires_at
-    };
+    if (lease == leases_by_id_.end()) {
+      leases_by_id_.emplace(
+        request.lease_id,
+        LeaseRecord {
+          effective_timeout_ms,
+          expires_at
+        }
+      );
+    }
 
     CreateTemporaryDisplayResult result {};
     result.lease_id = request.lease_id;
     result.display_id = request.display_id;
     result.connector_index = connector_index;
-    result.effective_timeout_ms = validated.effective_timeout_ms;
+    result.effective_timeout_ms = effective_timeout_ms;
 
     return CreateStoreResult {{}, result};
   }
 
-  StoreResult DisplayStore::remove_temporary_display(const LeaseDisplayRequest &request) {
+  StoreResult DisplayStore::remove_temporary_display(
+    const LeaseDisplayRequest &request,
+    const RemoveTemporaryDisplayMode mode
+  ) {
     if (const auto validation = validate_lease_display_request(request);
         validation != ValidationError::None) {
       return validation_failure(validation);
@@ -207,6 +222,10 @@ namespace virtual_display::driver {
     auto display = displays_by_id_.find(request.display_id);
     if (display == displays_by_id_.end() || display->second.lease_id != request.lease_id) {
       return {StoreError::DisplayNotFound, ValidationError::None};
+    }
+
+    if (mode == RemoveTemporaryDisplayMode::ReleaseConnectorReservation) {
+      connector_reservations_by_display_id_.erase(request.display_id);
     }
 
     displays_by_id_.erase(display);

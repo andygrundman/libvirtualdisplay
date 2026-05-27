@@ -114,6 +114,31 @@ TEST(VirtualDisplayDriverLeaseStore, QueriesAndFeedsLease) {
   EXPECT_EQ(query.remaining_ms, 60'000u);
 }
 
+TEST(VirtualDisplayDriverLeaseStore, AdditionalDisplaysUseExistingLeaseExpiry) {
+  vdd::DisplayStore store {2, 4};
+  const auto now = std::chrono::steady_clock::now();
+  ASSERT_EQ(store.create_temporary_display(make_create_request(lease_id(100), 200), now).status.error, vdd::StoreError::None);
+
+  auto request = make_create_request(lease_id(100), 201);
+  request.requested_timeout_ms = 5'000;
+  const auto created = store.create_temporary_display(request, now + std::chrono::seconds(10));
+
+  EXPECT_EQ(created.status.error, vdd::StoreError::None);
+  EXPECT_EQ(created.result.effective_timeout_ms, 30'000u);
+  ASSERT_TRUE(store.find_temporary_display(201));
+  EXPECT_EQ(store.find_temporary_display(201)->timeout_ms, 30'000u);
+
+  auto query = store.query_lease(lease_id(100), now + std::chrono::seconds(10));
+  EXPECT_EQ(query.effective_timeout_ms, 30'000u);
+  EXPECT_EQ(query.remaining_ms, 20'000u);
+  EXPECT_EQ(query.temporary_display_count, 2u);
+
+  EXPECT_EQ(store.reap_expired(now + std::chrono::milliseconds(29'999)), 0u);
+  EXPECT_EQ(store.temporary_display_count(), 2u);
+  EXPECT_EQ(store.reap_expired(now + std::chrono::milliseconds(30'000)), 2u);
+  EXPECT_EQ(store.query_lease(lease_id(100), now + std::chrono::milliseconds(30'000)).lease_exists, 0u);
+}
+
 TEST(VirtualDisplayDriverLeaseStore, RemovesSingleDisplayFromLease) {
   vdd::DisplayStore store {2, 4};
   const auto now = std::chrono::steady_clock::now();

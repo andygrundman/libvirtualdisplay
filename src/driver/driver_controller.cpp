@@ -41,7 +41,10 @@ namespace virtual_display::driver {
         LeaseDisplayRequest rollback {};
         rollback.lease_id = request.lease_id;
         rollback.display_id = request.display_id;
-        (void) store_.remove_temporary_display(rollback);
+        (void) store_.remove_temporary_display(
+          rollback,
+          RemoveTemporaryDisplayMode::ReleaseConnectorReservation
+        );
         return {
           {StoreError::None, ValidationError::None, backend_error},
           {}
@@ -58,7 +61,10 @@ namespace virtual_display::driver {
       LeaseDisplayRequest rollback {};
       rollback.lease_id = request.lease_id;
       rollback.display_id = request.display_id;
-      (void) store_.remove_temporary_display(rollback);
+      (void) store_.remove_temporary_display(
+        rollback,
+        RemoveTemporaryDisplayMode::ReleaseConnectorReservation
+      );
       return {
         {StoreError::None, ValidationError::None, backend_result.error},
         {}

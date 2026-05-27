@@ -52,6 +52,11 @@ namespace virtual_display::driver {
     CreateTemporaryDisplayResult result {};
   };
 
+  enum class RemoveTemporaryDisplayMode {
+    RetainConnectorReservation,
+    ReleaseConnectorReservation,
+  };
+
   class DisplayStore {
   public:
     explicit DisplayStore(
@@ -72,7 +77,10 @@ namespace virtual_display::driver {
       const CreateTemporaryDisplayRequest &request,
       std::chrono::steady_clock::time_point now
     );
-    StoreResult remove_temporary_display(const LeaseDisplayRequest &request);
+    StoreResult remove_temporary_display(
+      const LeaseDisplayRequest &request,
+      RemoveTemporaryDisplayMode mode = RemoveTemporaryDisplayMode::RetainConnectorReservation
+    );
     StoreResult feed_lease(const LeaseRequest &request, std::chrono::steady_clock::time_point now);
     StoreResult release_lease(const LeaseRequest &request);
     QueryLeaseResult query_lease(std::uint64_t lease_id, std::chrono::steady_clock::time_point now) const;

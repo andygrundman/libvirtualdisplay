@@ -156,6 +156,14 @@ TEST(VirtualDisplayDriverController, CreateTemporaryDisplayRollsBackStoreWhenIde
   EXPECT_EQ(backend.reserved.size(), 1u);
   EXPECT_TRUE(backend.arrived.empty());
   EXPECT_EQ(backend.events, (std::vector<std::string> {"reserve"}));
+
+  backend.fail_reserve = false;
+  const auto retried = controller.create_temporary_display(
+    make_create_request(lease_id(101), 0x87654321),
+    std::chrono::steady_clock::now()
+  );
+  EXPECT_TRUE(retried.status.ok());
+  EXPECT_EQ(retried.result.connector_index, 4u);
 }
 
 TEST(VirtualDisplayDriverController, CreateTemporaryDisplayRollsBackStoreWhenBackendFails) {
@@ -171,6 +179,14 @@ TEST(VirtualDisplayDriverController, CreateTemporaryDisplayRollsBackStoreWhenBac
   EXPECT_FALSE(controller.store().find_temporary_display(0x12345678));
   EXPECT_EQ(backend.unreserved, (std::vector<std::uint64_t> {0x12345678}));
   EXPECT_EQ(backend.events, (std::vector<std::string> {"reserve", "arrive", "unreserve"}));
+
+  backend.fail_arrive = false;
+  const auto retried = controller.create_temporary_display(
+    make_create_request(lease_id(101), 0x87654321),
+    std::chrono::steady_clock::now()
+  );
+  EXPECT_TRUE(retried.status.ok());
+  EXPECT_EQ(retried.result.connector_index, 4u);
 }
 
 TEST(VirtualDisplayDriverController, RemoveTemporaryDisplayDepartsBackend) {
