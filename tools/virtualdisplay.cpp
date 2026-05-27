@@ -375,12 +375,43 @@ namespace {
     return !error && same;
   }
 
-  bool verify_broker_pipe_server(HANDLE pipe) {
+  std::optional<ULONG> broker_pipe_server_pid(HANDLE pipe) {
     ULONG server_pid {};
     if (!GetNamedPipeServerProcessId(pipe, &server_pid) || server_pid == 0) {
+      return std::nullopt;
+    }
+    return server_pid;
+  }
+
+  bool broker_pipe_server_matches_service(const ULONG server_pid) {
+    ServiceHandle manager {OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT)};
+    if (!manager.value) {
       return false;
     }
 
+    ServiceHandle service {OpenServiceW(manager.value, kBrokerServiceName, SERVICE_QUERY_STATUS)};
+    if (!service.value) {
+      return false;
+    }
+
+    SERVICE_STATUS_PROCESS status {};
+    DWORD bytes_needed {};
+    if (!QueryServiceStatusEx(
+          service.value,
+          SC_STATUS_PROCESS_INFO,
+          reinterpret_cast<LPBYTE>(&status),
+          sizeof(status),
+          &bytes_needed
+        )) {
+      return false;
+    }
+
+    return status.dwCurrentState == SERVICE_RUNNING &&
+           status.dwProcessId != 0 &&
+           status.dwProcessId == server_pid;
+  }
+
+  bool broker_pipe_server_has_expected_image(const ULONG server_pid) {
     LocalHandle process {
       OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, server_pid)
     };
@@ -397,6 +428,16 @@ namespace {
 
     const auto expected_path = broker_executable_path();
     return !expected_path.empty() && same_existing_path(std::filesystem::path {server_path}, expected_path);
+  }
+
+  bool verify_broker_pipe_server(HANDLE pipe) {
+    const auto server_pid = broker_pipe_server_pid(pipe);
+    if (!server_pid) {
+      return false;
+    }
+
+    return broker_pipe_server_matches_service(*server_pid) &&
+           broker_pipe_server_has_expected_image(*server_pid);
   }
 
   std::optional<SERVICE_STATUS_PROCESS> query_broker_service_status(
@@ -729,7 +770,17 @@ namespace {
     const auto before = query_broker_service_status(service.value, native_error);
     if (before && before->dwCurrentState != SERVICE_STOPPED) {
       SERVICE_STATUS status {};
-      (void) ControlService(service.value, SERVICE_CONTROL_STOP, &status);
+      if (!ControlService(service.value, SERVICE_CONTROL_STOP, &status)) {
+        const auto error = GetLastError();
+        if (error != ERROR_SERVICE_NOT_ACTIVE) {
+          std::cerr << "stop broker service failed native_error=" << error << '\n';
+          return 1;
+        }
+      }
+
+      if (!wait_for_broker_service_state(service.value, SERVICE_STOPPED)) {
+        return 1;
+      }
     }
 
     if (!DeleteService(service.value)) {
@@ -975,7 +1026,7 @@ namespace {
   }
 
   BrokerResponse request_broker(const std::string_view command) {
-    HANDLE pipe = CreateFileW(
+    LocalHandle pipe {CreateFileW(
       kBrokerPipeName,
       GENERIC_READ | GENERIC_WRITE,
       0,
@@ -983,28 +1034,32 @@ namespace {
       OPEN_EXISTING,
       FILE_ATTRIBUTE_NORMAL | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
       nullptr
-    );
-    if (pipe == INVALID_HANDLE_VALUE) {
+    )};
+    if (pipe.get() == INVALID_HANDLE_VALUE) {
       return {false, false, {}, GetLastError()};
     }
 
-    if (!verify_broker_pipe_server(pipe)) {
+    if (!verify_broker_pipe_server(pipe.get())) {
       const auto error = GetLastError();
-      CloseHandle(pipe);
       return {true, false, "error untrusted_broker_server\n", error == ERROR_SUCCESS ? ERROR_ACCESS_DENIED : error};
     }
 
+    if (command.size() > (std::numeric_limits<DWORD>::max)()) {
+      return {true, false, "error command_too_large\n", ERROR_INVALID_PARAMETER};
+    }
+
     DWORD bytes_written = 0;
+    const auto requested = static_cast<DWORD>(command.size());
     if (!WriteFile(
-          pipe,
+          pipe.get(),
           command.data(),
-          static_cast<DWORD>(command.size()),
+          requested,
           &bytes_written,
           nullptr
-        )) {
+        ) ||
+        bytes_written != requested) {
       const auto error = GetLastError();
-      CloseHandle(pipe);
-      return {true, false, "error write_failed\n", error};
+      return {true, false, "error write_failed\n", error == ERROR_SUCCESS ? ERROR_WRITE_FAULT : error};
     }
 
     std::string text;
@@ -1013,7 +1068,7 @@ namespace {
       DWORD bytes_read = 0;
       bool more_data = false;
       if (!ReadFile(
-            pipe,
+            pipe.get(),
             response.data(),
             static_cast<DWORD>(response.size()),
             &bytes_read,
@@ -1021,7 +1076,6 @@ namespace {
           )) {
         const auto error = GetLastError();
         if (error != ERROR_MORE_DATA) {
-          CloseHandle(pipe);
           return {true, false, "error read_failed\n", error};
         }
         more_data = true;
@@ -1029,7 +1083,6 @@ namespace {
 
       if (bytes_read != 0) {
         if (text.size() + bytes_read > kMaxBrokerResponseBytes) {
-          CloseHandle(pipe);
           return {true, false, "error response_too_large\n", ERROR_MORE_DATA};
         }
         text.append(response.data(), bytes_read);
@@ -1040,7 +1093,6 @@ namespace {
       }
     }
 
-    CloseHandle(pipe);
     return {true, text.starts_with("ok ") || text.starts_with("ok\n"), text, ERROR_SUCCESS};
   }
 
@@ -1146,6 +1198,16 @@ namespace {
     std::memcpy(target, name.data(), (std::min)(name.size(), static_cast<std::size_t>(vdd::kDisplayNameChars - 1)));
   }
 
+  bool is_safe_display_name(const std::string_view value) {
+    if (value.empty() || value.size() >= vdd::kDisplayNameChars) {
+      return false;
+    }
+
+    return std::none_of(value.begin(), value.end(), [](const unsigned char ch) {
+      return ch < 0x20 || ch == 0x7f;
+    });
+  }
+
   std::string display_name(const char (&value)[vdd::kDisplayNameChars]) {
     return std::string {vdd::trim_display_name(value)};
   }
@@ -1184,17 +1246,17 @@ namespace {
       text,
       sizeof(text),
       "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-      guid.data1,
-      guid.data2,
-      guid.data3,
-      guid.data4[0],
-      guid.data4[1],
-      guid.data4[2],
-      guid.data4[3],
-      guid.data4[4],
-      guid.data4[5],
-      guid.data4[6],
-      guid.data4[7]
+      static_cast<unsigned int>(guid.data1),
+      static_cast<unsigned int>(guid.data2),
+      static_cast<unsigned int>(guid.data3),
+      static_cast<unsigned int>(guid.data4[0]),
+      static_cast<unsigned int>(guid.data4[1]),
+      static_cast<unsigned int>(guid.data4[2]),
+      static_cast<unsigned int>(guid.data4[3]),
+      static_cast<unsigned int>(guid.data4[4]),
+      static_cast<unsigned int>(guid.data4[5]),
+      static_cast<unsigned int>(guid.data4[6]),
+      static_cast<unsigned int>(guid.data4[7])
     );
     return text;
   }
@@ -1221,12 +1283,17 @@ namespace {
   }
 
   void print_display_state(const vdd::QueryDisplayStateResult &state) {
+    const auto entry_count = (std::min)(state.entry_count, vdd::kMaxDisplayStateEntries);
     std::cout
       << "permanent_displays=" << state.permanent_display_count << '\n'
       << "temporary_displays=" << state.temporary_display_count << '\n'
-      << "display_entries=" << state.entry_count << '\n';
+      << "display_entries=" << entry_count << '\n';
 
-    for (std::uint32_t index = 0; index < state.entry_count && index < vdd::kMaxDisplayStateEntries; ++index) {
+    if (state.entry_count != entry_count) {
+      std::cout << "display_entries_reported=" << state.entry_count << '\n';
+    }
+
+    for (std::uint32_t index = 0; index < entry_count; ++index) {
       const auto &entry = state.entries[index];
       std::cout
         << "display." << index << ".kind=" << display_kind(entry.kind) << '\n'
@@ -1383,7 +1450,7 @@ namespace {
         }
       } else if (arg == "--name") {
         const auto value = need_value();
-        if (!value || value->empty()) {
+        if (!value || !is_safe_display_name(*value)) {
           std::cerr << "invalid --name value\n";
           return std::nullopt;
         }
@@ -1457,7 +1524,7 @@ namespace {
         }
       } else if (arg == "--name") {
         const auto value = need_value();
-        if (!value || value->empty()) {
+        if (!value || !is_safe_display_name(*value)) {
           std::cerr << "invalid --name value\n";
           return std::nullopt;
         }
