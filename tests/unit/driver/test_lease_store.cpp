@@ -65,6 +65,53 @@ TEST(VirtualDisplayDriverLeaseStore, RejectsDuplicateDisplayId) {
   );
 }
 
+TEST(VirtualDisplayDriverLeaseStore, RejectsDuplicateActiveEdidIdentity) {
+  constexpr std::uint64_t first_display_id = 0x0000000012345000ull;
+  constexpr std::uint64_t colliding_display_id = 0x1234000000005000ull;
+  static_assert(first_display_id != colliding_display_id);
+
+  vdd::DisplayStore store {2, 4};
+  const auto now = std::chrono::steady_clock::now();
+
+  ASSERT_EQ(
+    vdd::product_code_from_display_id(first_display_id),
+    vdd::product_code_from_display_id(colliding_display_id)
+  );
+  ASSERT_EQ(
+    vdd::serial_number_from_display_id(first_display_id),
+    vdd::serial_number_from_display_id(colliding_display_id)
+  );
+
+  ASSERT_EQ(
+    store.create_temporary_display(make_create_request(lease_id(100), first_display_id), now).status.error,
+    vdd::StoreError::None
+  );
+  EXPECT_EQ(
+    store.create_temporary_display(make_create_request(lease_id(101), colliding_display_id), now).status.error,
+    vdd::StoreError::DuplicateDisplayIdentity
+  );
+  EXPECT_EQ(store.temporary_display_count(), 1u);
+}
+
+TEST(VirtualDisplayDriverLeaseStore, EphemeralIdentitySkipsActiveEdidCollision) {
+  vdd::DisplayStore store {2, 4};
+  const auto now = std::chrono::steady_clock::now();
+
+  ASSERT_EQ(
+    store.create_temporary_display(make_create_request(lease_id(100), 0x6000000000000001ull), now).status.error,
+    vdd::StoreError::None
+  );
+  auto request = make_create_request(lease_id(101), 200);
+  request.flags = vdd::kCreateTemporaryDisplayFlagEphemeralIdentity;
+
+  ASSERT_EQ(store.create_temporary_display(request, now).status.error, vdd::StoreError::None);
+
+  const auto record = store.find_temporary_display(200);
+  ASSERT_TRUE(record);
+  EXPECT_FALSE(record->retain_identity);
+  EXPECT_EQ(record->identity_display_id, 0x6000000000000002ull);
+}
+
 TEST(VirtualDisplayDriverLeaseStore, RejectsTemporaryDisplayLimit) {
   vdd::DisplayStore store {2, 1};
   const auto now = std::chrono::steady_clock::now();

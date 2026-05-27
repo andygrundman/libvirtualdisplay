@@ -26,6 +26,17 @@ namespace virtual_display::driver {
     return quoted;
   }
 
+  std::wstring build_windows_command_parameters(const std::span<const std::wstring> arguments) {
+    std::wstring parameters;
+    for (const auto &argument : arguments) {
+      if (!parameters.empty()) {
+        parameters += L' ';
+      }
+      parameters += quote_windows_command_argument(argument);
+    }
+    return parameters;
+  }
+
   DriverInstallInfPathResult parse_driver_install_inf_path(
     const std::span<const std::string> args,
     const std::filesystem::path &default_inf_path

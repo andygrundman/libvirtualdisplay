@@ -21,6 +21,7 @@ namespace virtual_display::driver {
     ValidationFailed,
     TemporaryDisplayLimitReached,
     DisplayAlreadyExists,
+    DuplicateDisplayIdentity,
     LeaseNotFound,
     DisplayNotFound,
     PermanentDisplayCountTooHigh,
@@ -105,6 +106,7 @@ namespace virtual_display::driver {
     bool connector_index_is_active(std::uint32_t connector_index) const;
     bool connector_index_is_reserved(std::uint32_t connector_index) const;
     bool connector_index_is_reserved_for_other_display(std::uint32_t connector_index, std::uint64_t display_id) const;
+    bool edid_identity_is_active(std::uint64_t identity_display_id) const;
     void remove_connector_reservation(std::uint32_t connector_index, std::uint64_t except_display_id);
     std::uint32_t connector_index_for_display(std::uint64_t display_id, bool retain_identity);
     bool lease_has_displays(std::uint64_t lease_id) const;

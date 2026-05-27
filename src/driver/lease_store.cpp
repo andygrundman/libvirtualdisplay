@@ -156,6 +156,18 @@ namespace virtual_display::driver {
       return CreateStoreResult {{StoreError::TemporaryDisplayLimitReached, ValidationError::None}, {}};
     }
 
+    constexpr std::uint64_t kEphemeralDisplayIdBase = 0x6000000000000000ull;
+    auto identity_display_id = request.display_id;
+    if (retain_identity) {
+      if (edid_identity_is_active(identity_display_id)) {
+        return CreateStoreResult {{StoreError::DuplicateDisplayIdentity, ValidationError::None}, {}};
+      }
+    } else {
+      do {
+        identity_display_id = kEphemeralDisplayIdBase | next_ephemeral_identity_++;
+      } while (edid_identity_is_active(identity_display_id));
+    }
+
     if (retain_identity) {
       remove_connector_reservation(connector_index, request.display_id);
       connector_reservations_by_display_id_[request.display_id] = connector_index;
@@ -167,11 +179,6 @@ namespace virtual_display::driver {
       effective_timeout_ms = lease->second.timeout_ms;
       expires_at = lease->second.expires_at;
     }
-
-    constexpr std::uint64_t kEphemeralDisplayIdBase = 0x6000000000000000ull;
-    const auto identity_display_id = retain_identity ?
-      request.display_id :
-      (kEphemeralDisplayIdBase | next_ephemeral_identity_++);
 
     displays_by_id_.emplace(
       request.display_id,
@@ -471,6 +478,22 @@ namespace virtual_display::driver {
     );
   }
 
+  bool DisplayStore::edid_identity_is_active(const std::uint64_t identity_display_id) const {
+    const auto candidate_product_code = product_code_from_display_id(identity_display_id);
+    const auto candidate_serial_number = serial_number_from_display_id(identity_display_id);
+    return std::any_of(
+      displays_by_id_.begin(),
+      displays_by_id_.end(),
+      [&](const auto &entry) {
+        const auto active_identity_display_id = entry.second.identity_display_id == 0 ?
+          entry.second.display_id :
+          entry.second.identity_display_id;
+        return product_code_from_display_id(active_identity_display_id) == candidate_product_code &&
+               serial_number_from_display_id(active_identity_display_id) == candidate_serial_number;
+      }
+    );
+  }
+
   void DisplayStore::remove_connector_reservation(
     const std::uint32_t connector_index,
     const std::uint64_t except_display_id
@@ -544,6 +567,8 @@ namespace virtual_display::driver {
         return "temporary_display_limit_reached";
       case StoreError::DisplayAlreadyExists:
         return "display_already_exists";
+      case StoreError::DuplicateDisplayIdentity:
+        return "duplicate_display_identity";
       case StoreError::LeaseNotFound:
         return "lease_not_found";
       case StoreError::DisplayNotFound:

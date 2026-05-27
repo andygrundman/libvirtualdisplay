@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace vdd = virtual_display::driver;
 
@@ -110,17 +111,37 @@ namespace {
     return std::string_view {inf}.substr(body_begin + 1, body_end - body_begin - 1);
   }
 
-  void expect_section_security_only(
+  std::vector<std::string_view> section_security_lines(const std::string_view section) {
+    std::vector<std::string_view> lines;
+    std::size_t cursor = 0;
+    while (cursor < section.size()) {
+      const auto line_end = section.find('\n', cursor);
+      auto line = section.substr(
+        cursor,
+        line_end == std::string_view::npos ? std::string_view::npos : line_end - cursor
+      );
+      if (!line.empty() && line.back() == '\r') {
+        line.remove_suffix(1);
+      }
+      if (line.starts_with("HKR,,Security,,")) {
+        lines.push_back(line);
+      }
+      if (line_end == std::string_view::npos) {
+        break;
+      }
+      cursor = line_end + 1;
+    }
+    return lines;
+  }
+
+  void expect_exact_section_security(
     const std::string_view section,
     const std::string_view expected_sddl
   ) {
     const auto expected_line = "HKR,,Security,,\"" + std::string {expected_sddl} + "\"";
-    EXPECT_NE(section.find(expected_line), std::string_view::npos);
-    EXPECT_EQ(section.find("(A;;GA;;;BA)"), std::string_view::npos);
-    EXPECT_EQ(section.find("(A;;GRGW;;;AU)"), std::string_view::npos);
-    EXPECT_EQ(section.find("(A;;GRGW;;;WD)"), std::string_view::npos);
-    EXPECT_EQ(section.find("(A;;GA;;;AU)"), std::string_view::npos);
-    EXPECT_EQ(section.find("(A;;GA;;;WD)"), std::string_view::npos);
+    const auto security_lines = section_security_lines(section);
+    ASSERT_EQ(security_lines.size(), 1u);
+    EXPECT_EQ(security_lines[0], expected_line);
   }
 }  // namespace
 
@@ -176,7 +197,7 @@ TEST(VirtualDisplayDriverControlProtocol, InfRegistersControlInterfaceWithServic
     inf.find("AddInterface={5f894d6c-3a69-48a2-86ef-e4c671932d63},,ControlInterface"),
     std::string::npos
   );
-  expect_section_security_only(
+  expect_exact_section_security(
     control_section,
     "D:P(A;;GA;;;SY)(A;;GA;;;S-1-5-80-2333729190-1599198784-3320592948-2337414441-3098439965)"
   );
@@ -186,7 +207,7 @@ TEST(VirtualDisplayDriverControlProtocol, InfRestrictsDeviceSecurityToSystemAndB
   const auto inf = read_driver_inf();
   const auto device_section = inf_section(inf, "Device_Install_Hw_AddReg");
 
-  expect_section_security_only(
+  expect_exact_section_security(
     device_section,
     "D:P(A;;GA;;;SY)(A;;GA;;;S-1-5-80-2333729190-1599198784-3320592948-2337414441-3098439965)"
   );

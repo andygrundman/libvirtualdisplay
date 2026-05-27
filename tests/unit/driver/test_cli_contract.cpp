@@ -163,7 +163,7 @@ TEST(VirtualDisplayCliContract, DriverInstallSelfElevatesAndInstallsRootDevice) 
 
   expect_contains(source, "ShellExecuteExW(&execute)");
   expect_contains(source, "execute.lpVerb = L\"runas\"");
-  expect_contains(source, "vdd::quote_windows_command_argument(widen(arg))");
+  expect_contains(source, "vdd::build_windows_command_parameters(wide_args)");
   expect_contains(source, "vdd::parse_driver_install_inf_path(args, default_driver_inf_path())");
   expect_contains(source, "Root\\\\SunshineVirtualDisplay");
   expect_contains(source, "UpdateDriverForPlugAndPlayDevicesW");
@@ -185,6 +185,21 @@ TEST(VirtualDisplayCliContract, QuotesWindowsArgumentsForElevation) {
   EXPECT_EQ(vdd::quote_windows_command_argument(L"ends\\"), L"\"ends\\\\\"");
   EXPECT_EQ(vdd::quote_windows_command_argument(L"say \"hello\""), L"\"say \\\"hello\\\"\"");
   EXPECT_EQ(vdd::quote_windows_command_argument(L"slash\\\"quote"), L"\"slash\\\\\\\"quote\"");
+}
+
+TEST(VirtualDisplayCliContract, BuildsQuotedElevationParameterList) {
+  const std::vector<std::wstring> args {
+    L"driver",
+    L"install",
+    L"--inf",
+    L"C:\\Path With Spaces\\driver.inf",
+    L"say \"hello\""
+  };
+
+  EXPECT_EQ(
+    vdd::build_windows_command_parameters(args),
+    L"\"driver\" \"install\" \"--inf\" \"C:\\Path With Spaces\\driver.inf\" \"say \\\"hello\\\"\""
+  );
 }
 
 TEST(VirtualDisplayCliContract, ParsesDriverInstallInfPathOptions) {

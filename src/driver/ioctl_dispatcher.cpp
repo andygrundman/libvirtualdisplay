@@ -43,6 +43,7 @@ namespace virtual_display::driver {
         case StoreError::PermanentDisplayCountTooHigh:
           return IoctlStatus::LimitReached;
         case StoreError::DisplayAlreadyExists:
+        case StoreError::DuplicateDisplayIdentity:
           return IoctlStatus::AlreadyExists;
         case StoreError::LeaseNotFound:
         case StoreError::DisplayNotFound:

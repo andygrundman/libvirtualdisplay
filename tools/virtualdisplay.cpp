@@ -193,20 +193,18 @@ namespace {
       return 1;
     }
 
-    std::wostringstream parameters;
+    std::vector<std::wstring> wide_args;
+    wide_args.reserve(args.size());
     for (const auto &arg : args) {
-      if (parameters.tellp() > 0) {
-        parameters << L' ';
-      }
-      parameters << vdd::quote_windows_command_argument(widen(arg));
+      wide_args.push_back(widen(arg));
     }
+    const auto parameter_text = vdd::build_windows_command_parameters(wide_args);
 
     SHELLEXECUTEINFOW execute {};
     execute.cbSize = sizeof(execute);
     execute.fMask = SEE_MASK_NOCLOSEPROCESS;
     execute.lpVerb = L"runas";
     execute.lpFile = executable;
-    const auto parameter_text = parameters.str();
     execute.lpParameters = parameter_text.c_str();
     execute.nShow = SW_SHOWNORMAL;
 
