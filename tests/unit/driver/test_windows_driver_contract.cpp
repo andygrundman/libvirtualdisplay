@@ -419,9 +419,38 @@ TEST(VirtualDisplayWindowsDriverContract, SynchronizesAdapterReadinessPublicatio
   ASSERT_NE(init_finished, std::string::npos);
   const auto lock = source.find("std::lock_guard lock {mutex_};", init_finished);
   ASSERT_NE(lock, std::string::npos);
-  const auto ready = source.find("adapter_ready_ = NT_SUCCESS(args->AdapterInitStatus);", init_finished);
+  const auto status = source.find("adapter_init_status_ = args->AdapterInitStatus;", init_finished);
+  ASSERT_NE(status, std::string::npos);
+  const auto ready = source.find("adapter_ready_ = NT_SUCCESS(adapter_init_status_);", status);
   ASSERT_NE(ready, std::string::npos);
-  EXPECT_LT(lock, ready);
+  EXPECT_LT(lock, status);
+  EXPECT_LT(status, ready);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, AdapterInitFailureIsNotReportedAsReady) {
+  const auto source = read_windows_driver_source();
+
+  const auto initialize_adapter = source.find("NTSTATUS initialize_adapter(WDFDEVICE device)");
+  ASSERT_NE(initialize_adapter, std::string::npos);
+  const auto adapter_ready = source.find("if (adapter_ready_)", initialize_adapter);
+  ASSERT_NE(adapter_ready, std::string::npos);
+  const auto adapter_exists = source.find("if (adapter_)", adapter_ready);
+  ASSERT_NE(adapter_exists, std::string::npos);
+  const std::string failed_or_pending_status =
+    "return NT_SUCCESS(adapter_init_status_) ? STATUS_DEVICE_NOT_READY : adapter_init_status_;";
+  EXPECT_NE(
+    source.find(failed_or_pending_status, adapter_exists),
+    std::string::npos
+  );
+
+  const auto async_init = source.find("IddCxAdapterInitAsync(&adapter_init, &adapter_out)", initialize_adapter);
+  ASSERT_NE(async_init, std::string::npos);
+  const auto missing_adapter_object = source.find("if (!adapter_out.AdapterObject)", async_init);
+  ASSERT_NE(missing_adapter_object, std::string::npos);
+  const auto publish_pending = source.find("adapter_init_status_ = STATUS_PENDING;", missing_adapter_object);
+  ASSERT_NE(publish_pending, std::string::npos);
+  EXPECT_NE(source.find("NTSTATUS adapter_init_status_ {STATUS_DEVICE_NOT_READY};"), std::string::npos);
+  EXPECT_NE(source.find("\"AdapterInitFailed\""), std::string::npos);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, RecoversRenderDeviceBeforeAbandoningSwapChain) {
@@ -453,6 +482,35 @@ TEST(VirtualDisplayWindowsDriverContract, RecoversRenderDeviceBeforeAbandoningSw
     source.substr(assign_swapchain, unassign_swapchain - assign_swapchain).find("return STATUS_UNSUCCESSFUL;"),
     std::string::npos
   );
+}
+
+TEST(VirtualDisplayWindowsDriverContract, SetsReleaseAndAcquireBuffer2MetadataSize) {
+  const auto source = read_windows_driver_source();
+
+  const auto buffer2_call = source.find("IddCxSwapChainReleaseAndAcquireBuffer2(swapchain_, &input, &acquired)");
+  ASSERT_NE(buffer2_call, std::string::npos);
+  const auto acquired = source.rfind("IDARG_OUT_RELEASEANDACQUIREBUFFER2 acquired {}", buffer2_call);
+  ASSERT_NE(acquired, std::string::npos);
+  const auto metadata_size = source.find("acquired.MetaData.Size = sizeof(acquired.MetaData);", acquired);
+  ASSERT_NE(metadata_size, std::string::npos);
+  EXPECT_LT(metadata_size, buffer2_call);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, DeletesSwapChainOnUnexpectedWaitFailure) {
+  const auto source = read_windows_driver_source();
+
+  const auto process_frames = source.find("void process_frames(const LUID render_adapter_luid)");
+  ASSERT_NE(process_frames, std::string::npos);
+  const auto wait_failure = source.find("if (wait_result != WAIT_OBJECT_0)", process_frames);
+  ASSERT_NE(wait_failure, std::string::npos);
+  const auto acquire_loop = source.find("for (;;) {", wait_failure);
+  ASSERT_NE(acquire_loop, std::string::npos);
+  const auto delete_swapchain = source.find("delete_swapchain();", wait_failure);
+  ASSERT_NE(delete_swapchain, std::string::npos);
+  const auto return_statement = source.find("return;", delete_swapchain);
+  ASSERT_NE(return_statement, std::string::npos);
+  EXPECT_LT(delete_swapchain, acquire_loop);
+  EXPECT_LT(return_statement, acquire_loop);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, MonitorCallbacksValidateCurrentHandle) {
@@ -873,6 +931,31 @@ TEST(VirtualDisplayWindowsDriverContract, TargetModesUseRequestedDescriptorTimin
 
   const auto fill_with_requested_shape2 = source.find("fill_target_modes2(input, output, &*requested_shape)", requested_shape2);
   ASSERT_NE(fill_with_requested_shape2, std::string::npos);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, InvalidEdidDescriptionDoesNotCreatePreferredMode) {
+  const auto source = read_windows_driver_source();
+
+  EXPECT_NE(
+    source.find("std::optional<ModeShape> mode_shape_from_description(const IDDCX_MONITOR_DESCRIPTION &description)"),
+    std::string::npos
+  );
+  EXPECT_EQ(
+    source.find("ModeShape mode_shape_from_description(const IDDCX_MONITOR_DESCRIPTION &description)"),
+    std::string::npos
+  );
+  EXPECT_NE(source.find("return std::nullopt;"), std::string::npos);
+
+  const auto target_modes = source.find("NTSTATUS fill_target_modes(");
+  ASSERT_NE(target_modes, std::string::npos);
+  EXPECT_NE(
+    source.find(": mode_shape_from_description(input->MonitorDescription)", target_modes),
+    std::string::npos
+  );
+  EXPECT_EQ(
+    source.find("std::optional<ModeShape> {mode_shape_from_description(input->MonitorDescription)}", target_modes),
+    std::string::npos
+  );
 }
 
 TEST(VirtualDisplayWindowsDriverContract, PermanentDisplaysUseControlPlaneModeSettings) {

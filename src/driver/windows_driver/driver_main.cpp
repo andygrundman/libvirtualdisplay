@@ -687,18 +687,18 @@ namespace {
     return descriptor;
   }
 
-  ModeShape mode_shape_from_description(const IDDCX_MONITOR_DESCRIPTION &description) {
+  std::optional<ModeShape> mode_shape_from_description(const IDDCX_MONITOR_DESCRIPTION &description) {
     if (description.Type != IDDCX_MONITOR_DESCRIPTION_TYPE_EDID ||
         !description.pData ||
         description.DataSize < vdd::kEdidSize) {
-      return {};
+      return std::nullopt;
     }
 
     const auto *edid_data = static_cast<const std::byte *>(description.pData);
     const std::span<const std::byte, vdd::kEdidSize> edid {edid_data, vdd::kEdidSize};
     const auto timing = vdd::read_preferred_timing(edid);
     if (timing.horizontal_active == 0 || timing.vertical_active == 0 || timing.pixel_clock_10khz == 0) {
-      return {};
+      return std::nullopt;
     }
 
     ModeShape shape {
@@ -729,11 +729,7 @@ namespace {
   }
 
   std::optional<ModeShape> preferred_mode_shape_from_description(const IDDCX_MONITOR_DESCRIPTION &description) {
-    const auto edid_shape = mode_shape_from_description(description);
-    if (edid_shape.width == 0 || edid_shape.height == 0 || edid_shape.refresh_rate_millihz == 0) {
-      return std::nullopt;
-    }
-    return edid_shape;
+    return mode_shape_from_description(description);
   }
 
   IDDCX_BITS_PER_COMPONENT supported_hdr_bits_per_component() {
@@ -926,7 +922,7 @@ namespace {
     }
 
     const auto [modes, preferred_index] = build_mode_shapes(
-      requested_shape ? std::optional<ModeShape> {*requested_shape} : std::optional<ModeShape> {mode_shape_from_description(input->MonitorDescription)}
+      requested_shape ? std::optional<ModeShape> {*requested_shape} : mode_shape_from_description(input->MonitorDescription)
     );
     (void) preferred_index;
     output->TargetModeBufferOutputCount = static_cast<UINT>(modes.size());
@@ -953,7 +949,7 @@ namespace {
     }
 
     const auto [modes, preferred_index] = build_mode_shapes(
-      requested_shape ? std::optional<ModeShape> {*requested_shape} : std::optional<ModeShape> {mode_shape_from_description(input->MonitorDescription)}
+      requested_shape ? std::optional<ModeShape> {*requested_shape} : mode_shape_from_description(input->MonitorDescription)
     );
     (void) preferred_index;
     output->TargetModeBufferOutputCount = static_cast<UINT>(modes.size());
@@ -1205,7 +1201,8 @@ namespace {
             TraceLoggingUInt32(wait_result, "WaitResult"),
             TraceLoggingUInt32(GetLastError(), "LastError")
           );
-          break;
+          delete_swapchain();
+          return;
         }
 
         for (;;) {
@@ -1215,6 +1212,7 @@ namespace {
             IDARG_IN_RELEASEANDACQUIREBUFFER2 input {};
             input.Size = sizeof(input);
             IDARG_OUT_RELEASEANDACQUIREBUFFER2 acquired {};
+            acquired.MetaData.Size = sizeof(acquired.MetaData);
             acquire_result = IddCxSwapChainReleaseAndAcquireBuffer2(swapchain_, &input, &acquired);
             surface_ptr = acquired.MetaData.pSurface;
           } else {
@@ -1319,8 +1317,14 @@ namespace {
     }
 
     NTSTATUS initialize_adapter(WDFDEVICE device) {
-      if (adapter_) {
-        return STATUS_SUCCESS;
+      {
+        std::lock_guard lock {mutex_};
+        if (adapter_ready_) {
+          return STATUS_SUCCESS;
+        }
+        if (adapter_) {
+          return NT_SUCCESS(adapter_init_status_) ? STATUS_DEVICE_NOT_READY : adapter_init_status_;
+        }
       }
 
       IDDCX_ENDPOINT_VERSION endpoint_version {};
@@ -1358,13 +1362,20 @@ namespace {
 
       IDARG_OUT_ADAPTER_INIT adapter_out {};
       const auto status = IddCxAdapterInitAsync(&adapter_init, &adapter_out);
-      if (NT_SUCCESS(status) && adapter_out.AdapterObject) {
-        adapter_ = adapter_out.AdapterObject;
-        auto *context = GetAdapterContext(adapter_);
-        context->backend = this;
-      }
       if (!NT_SUCCESS(status)) {
         return status;
+      }
+      if (!adapter_out.AdapterObject) {
+        return STATUS_DEVICE_NOT_READY;
+      }
+
+      auto *context = GetAdapterContext(adapter_out.AdapterObject);
+      context->backend = this;
+      {
+        std::lock_guard lock {mutex_};
+        adapter_ = adapter_out.AdapterObject;
+        adapter_ready_ = false;
+        adapter_init_status_ = STATUS_PENDING;
       }
 
       return STATUS_SUCCESS;
@@ -1449,7 +1460,15 @@ namespace {
       // The async callback status is the point where IddCx says monitor arrival
       // is legal. Keep DeviceAdd successful, but block display creation until then.
       std::lock_guard lock {mutex_};
-      adapter_ready_ = NT_SUCCESS(args->AdapterInitStatus);
+      adapter_init_status_ = args->AdapterInitStatus;
+      adapter_ready_ = NT_SUCCESS(adapter_init_status_);
+      if (!adapter_ready_) {
+        TraceLoggingWrite(
+          g_trace_provider,
+          "AdapterInitFailed",
+          TraceLoggingInt32(adapter_init_status_, "Status")
+        );
+      }
       return STATUS_SUCCESS;
     }
 
@@ -1895,6 +1914,7 @@ namespace {
     WDFDEVICE device_ {};
     IDDCX_ADAPTER adapter_ {};
     bool adapter_ready_ {};
+    NTSTATUS adapter_init_status_ {STATUS_DEVICE_NOT_READY};
     std::uint32_t permanent_display_count_ {};
     std::map<std::uint64_t, MonitorRecord> monitors_ {};
   };
