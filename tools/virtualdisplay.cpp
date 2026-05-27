@@ -842,6 +842,9 @@ namespace {
       case vdd::DriverInstallInfPathStatus::MissingInfValue:
         std::cerr << "--inf requires a value\n";
         return std::nullopt;
+      case vdd::DriverInstallInfPathStatus::InvalidInfPath:
+        std::cerr << "invalid --inf path: " << result.option << '\n';
+        return std::nullopt;
       case vdd::DriverInstallInfPathStatus::EmptyDefaultPath:
         break;
     }

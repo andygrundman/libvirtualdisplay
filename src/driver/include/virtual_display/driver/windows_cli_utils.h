@@ -10,6 +10,7 @@ namespace virtual_display::driver {
     Ok,
     UnknownOption,
     MissingInfValue,
+    InvalidInfPath,
     EmptyDefaultPath,
   };
 

@@ -1,5 +1,7 @@
 #include "virtual_display/driver/windows_cli_utils.h"
 
+#include <system_error>
+
 namespace virtual_display::driver {
   std::wstring quote_windows_command_argument(const std::wstring_view argument) {
     std::wstring quoted {L"\""};
@@ -52,7 +54,12 @@ namespace virtual_display::driver {
       if (index + 1 >= args.size()) {
         return {DriverInstallInfPathStatus::MissingInfValue, {}, arg};
       }
-      inf_path = std::filesystem::absolute(args[++index]);
+      const auto &inf_value = args[++index];
+      std::error_code path_error;
+      inf_path = std::filesystem::absolute(inf_value, path_error);
+      if (path_error || inf_path.empty()) {
+        return {DriverInstallInfPathStatus::InvalidInfPath, {}, inf_value};
+      }
     }
 
     if (inf_path.empty()) {

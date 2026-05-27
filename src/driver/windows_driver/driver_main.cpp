@@ -202,17 +202,28 @@ namespace {
     return active_mode_shape(spec.width, spec.height, spec.refresh_rate_millihz);
   }
 
+  std::uint32_t default_preferred_mode_index(const std::vector<ModeShape> &modes) {
+    for (std::size_t index = 0; index < modes.size(); ++index) {
+      const auto &mode = modes[index];
+      if (mode.width == 1920 && mode.height == 1080 && mode.refresh_rate_millihz == 60'000) {
+        return static_cast<std::uint32_t>(index);
+      }
+    }
+
+    return 0;
+  }
+
   std::pair<std::vector<ModeShape>, std::uint32_t> build_mode_shapes(
     const std::optional<ModeShape> &preferred
   ) {
     std::vector<ModeShape> modes;
     modes.reserve(kDefaultModes.size() + (preferred ? 1u : 0u));
-    std::uint32_t preferred_index = 1;
 
     for (const auto &spec: kDefaultModes) {
       modes.push_back(mode_shape_from_spec(spec));
     }
 
+    std::uint32_t preferred_index = default_preferred_mode_index(modes);
     if (preferred) {
       preferred_index = static_cast<std::uint32_t>(modes.size());
       modes.push_back(*preferred);

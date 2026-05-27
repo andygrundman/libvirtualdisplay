@@ -633,6 +633,45 @@ TEST(VirtualDisplayWindowsDriverContract, ResolvesSdkByRequiredWdkFiles) {
   EXPECT_NE(cmake.find("Unable to find a WDK/SDK version with required WDF and IddCx files"), std::string::npos);
 }
 
+TEST(VirtualDisplayWindowsDriverContract, PackagesCatalogFromCompleteDriverDirectory) {
+  const auto cmake = read_windows_driver_cmake();
+
+  EXPECT_NE(cmake.find("set(SUNSHINE_DRIVER_PACKAGE_DIR"), std::string::npos);
+  EXPECT_NE(cmake.find("set(SUNSHINE_DRIVER_PACKAGED_DLL"), std::string::npos);
+  EXPECT_NE(cmake.find("sunshinevirtualdisplaydriver.cat"), std::string::npos);
+  EXPECT_NE(cmake.find("$<TARGET_FILE:${SUNSHINE_DRIVER_TARGET}>"), std::string::npos);
+  EXPECT_NE(cmake.find("\"/driver:${SUNSHINE_DRIVER_PACKAGE_DIR}\""), std::string::npos);
+  EXPECT_NE(
+    cmake.find("DEPENDS \"${SUNSHINE_DRIVER_PACKAGED_INF}\" \"${SUNSHINE_DRIVER_PACKAGED_DLL}\""),
+    std::string::npos
+  );
+  EXPECT_NE(cmake.find("VERBATIM"), std::string::npos);
+  EXPECT_EQ(cmake.find("/driver:\"${CMAKE_CURRENT_BINARY_DIR}\""), std::string::npos);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, RestrictsDriverPackageToAmd64InfSection) {
+  const auto cmake = read_windows_driver_cmake();
+  const auto inf = read_windows_driver_inf();
+
+  EXPECT_NE(cmake.find("set(SUNSHINE_DRIVER_PLATFORM"), std::string::npos);
+  EXPECT_NE(cmake.find("set(SUNSHINE_DRIVER_WDK_ARCH \"x64\")"), std::string::npos);
+  EXPECT_NE(cmake.find("supports only x64/amd64"), std::string::npos);
+  EXPECT_EQ(cmake.find("10_ARM64"), std::string::npos);
+  EXPECT_EQ(cmake.find("10_X86"), std::string::npos);
+  EXPECT_NE(inf.find("%ManufacturerName%=Standard,NTamd64"), std::string::npos);
+  EXPECT_EQ(inf.find("Standard.NTarm64"), std::string::npos);
+  EXPECT_EQ(inf.find("Standard.NTx86"), std::string::npos);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, DefaultsPreferredModeToFullHdSixtyHertz) {
+  const auto source = read_windows_driver_source();
+
+  EXPECT_NE(source.find("std::uint32_t default_preferred_mode_index"), std::string::npos);
+  EXPECT_NE(source.find("mode.width == 1920 && mode.height == 1080 && mode.refresh_rate_millihz == 60'000"), std::string::npos);
+  EXPECT_NE(source.find("std::uint32_t preferred_index = default_preferred_mode_index(modes);"), std::string::npos);
+  EXPECT_EQ(source.find("std::uint32_t preferred_index = 1;"), std::string::npos);
+}
+
 TEST(VirtualDisplayWindowsDriverContract, DocumentsSupportDiagnosticsCapture) {
   const auto readme = read_readme();
   const auto docs = read_support_diagnostics();

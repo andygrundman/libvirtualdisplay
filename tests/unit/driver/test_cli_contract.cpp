@@ -24,6 +24,19 @@ namespace {
     return buffer.str();
   }
 
+  std::string read_driver_cli_utils_source() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} / "src/driver/windows_cli_utils.cpp";
+    std::ifstream file {path, std::ios::binary};
+    if (!file) {
+      ADD_FAILURE() << "Failed to open " << path.string();
+      return {};
+    }
+
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+  }
+
   void expect_contains(const std::string &content, const std::string &needle) {
     EXPECT_NE(content.find(needle), std::string::npos) << "missing: " << needle;
   }
@@ -259,4 +272,15 @@ TEST(VirtualDisplayCliContract, ParsesDriverInstallInfPathOptions) {
 
   const auto empty_default_result = vdd::parse_driver_install_inf_path(default_args, {});
   EXPECT_EQ(empty_default_result.status, vdd::DriverInstallInfPathStatus::EmptyDefaultPath);
+}
+
+TEST(VirtualDisplayCliContract, DriverInstallInfPathParsingUsesNonThrowingAbsolutePath) {
+  const auto cli_source = read_cli_source();
+  const auto utility_source = read_driver_cli_utils_source();
+
+  expect_contains(utility_source, "std::error_code path_error;");
+  expect_contains(utility_source, "std::filesystem::absolute(inf_value, path_error)");
+  expect_contains(utility_source, "DriverInstallInfPathStatus::InvalidInfPath");
+  expect_contains(cli_source, "case vdd::DriverInstallInfPathStatus::InvalidInfPath:");
+  expect_contains(cli_source, "invalid --inf path:");
 }

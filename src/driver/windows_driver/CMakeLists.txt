@@ -5,25 +5,22 @@ endif()
 set(SUNSHINE_DRIVER_TARGET SunshineVirtualDisplayDriver)
 set(SUNSHINE_DRIVER_WDF_VERSION "2.25" CACHE STRING "UMDF version for the Sunshine virtual display driver" FORCE)
 set(SUNSHINE_DRIVER_IDDCX_VERSION "1.10" CACHE STRING "IddCx include/library version for the Sunshine virtual display driver" FORCE)
-set(SUNSHINE_DRIVER_ARCH "${CMAKE_VS_PLATFORM_NAME}")
+set(SUNSHINE_DRIVER_PLATFORM "${CMAKE_VS_PLATFORM_NAME}")
 set(SUNSHINE_DRIVER_INF "${CMAKE_CURRENT_SOURCE_DIR}/SunshineVirtualDisplayDriver.inf")
 
-if(NOT SUNSHINE_DRIVER_ARCH)
+if(NOT SUNSHINE_DRIVER_PLATFORM)
     if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-        set(SUNSHINE_DRIVER_ARCH "x64")
+        set(SUNSHINE_DRIVER_PLATFORM "x64")
     else()
-        set(SUNSHINE_DRIVER_ARCH "x86")
+        set(SUNSHINE_DRIVER_PLATFORM "x86")
     endif()
 endif()
 
-if(SUNSHINE_DRIVER_ARCH MATCHES "^[Xx]64$|^[Aa][Mm][Dd]64$")
+if(SUNSHINE_DRIVER_PLATFORM MATCHES "^[Xx]64$|^[Aa][Mm][Dd]64$")
+    set(SUNSHINE_DRIVER_WDK_ARCH "x64")
     set(SUNSHINE_DRIVER_INF2CAT_OS "10_X64")
-elseif(SUNSHINE_DRIVER_ARCH MATCHES "^[Aa][Rr][Mm]64$")
-    set(SUNSHINE_DRIVER_INF2CAT_OS "10_ARM64")
-elseif(SUNSHINE_DRIVER_ARCH MATCHES "^[Xx]86$|^[Ww][Ii][Nn]32$")
-    set(SUNSHINE_DRIVER_INF2CAT_OS "10_X86")
 else()
-    message(FATAL_ERROR "Unsupported driver architecture for Inf2Cat: ${SUNSHINE_DRIVER_ARCH}")
+    message(FATAL_ERROR "Sunshine virtual display driver packaging currently supports only x64/amd64; got ${SUNSHINE_DRIVER_PLATFORM}")
 endif()
 
 set(_SUNSHINE_DRIVER_DEFAULT_WDK_ROOT "C:/Program Files (x86)/Windows Kits/10")
@@ -34,8 +31,8 @@ function(_sunshine_driver_sdk_is_usable result root version)
         string(REGEX REPLACE "\\\\$" "" _root "${root}")
         string(REGEX REPLACE "\\\\$" "" _version "${version}")
         if(EXISTS "${_root}/Include/wdf/umdf/${SUNSHINE_DRIVER_WDF_VERSION}" AND
-                EXISTS "${_root}/Lib/wdf/umdf/${SUNSHINE_DRIVER_ARCH}/${SUNSHINE_DRIVER_WDF_VERSION}/WdfDriverStubUm.lib" AND
-                EXISTS "${_root}/Lib/${_version}/um/${SUNSHINE_DRIVER_ARCH}/iddcx/${SUNSHINE_DRIVER_IDDCX_VERSION}/IddCxStub.lib")
+                EXISTS "${_root}/Lib/wdf/umdf/${SUNSHINE_DRIVER_WDK_ARCH}/${SUNSHINE_DRIVER_WDF_VERSION}/WdfDriverStubUm.lib" AND
+                EXISTS "${_root}/Lib/${_version}/um/${SUNSHINE_DRIVER_WDK_ARCH}/iddcx/${SUNSHINE_DRIVER_IDDCX_VERSION}/IddCxStub.lib")
             set(_usable TRUE)
         endif()
     endif()
@@ -110,7 +107,7 @@ if(NOT SUNSHINE_DRIVER_WDK_ROOT)
 endif()
 
 cmake_path(ABSOLUTE_PATH SUNSHINE_DRIVER_WDK_ROOT NORMALIZE OUTPUT_VARIABLE SUNSHINE_DRIVER_WDK_ROOT)
-set(_SUNSHINE_DRIVER_IDDCX_LIB "${SUNSHINE_DRIVER_WDK_ROOT}/Lib/${SUNSHINE_DRIVER_SDK_VERSION}/um/${SUNSHINE_DRIVER_ARCH}/iddcx/${SUNSHINE_DRIVER_IDDCX_VERSION}/IddCxStub.lib")
+set(_SUNSHINE_DRIVER_IDDCX_LIB "${SUNSHINE_DRIVER_WDK_ROOT}/Lib/${SUNSHINE_DRIVER_SDK_VERSION}/um/${SUNSHINE_DRIVER_WDK_ARCH}/iddcx/${SUNSHINE_DRIVER_IDDCX_VERSION}/IddCxStub.lib")
 if(NOT EXISTS "${_SUNSHINE_DRIVER_IDDCX_LIB}")
     message(FATAL_ERROR "Unable to find IddCxStub.lib under SUNSHINE_DRIVER_WDK_ROOT=${SUNSHINE_DRIVER_WDK_ROOT}")
 endif()
@@ -162,10 +159,10 @@ target_link_libraries(${SUNSHINE_DRIVER_TARGET}
         avrt
         d3d11
         dxgi
-        "${SUNSHINE_DRIVER_WDK_ROOT}/Lib/${SUNSHINE_DRIVER_SDK_VERSION}/um/${SUNSHINE_DRIVER_ARCH}/iddcx/${SUNSHINE_DRIVER_IDDCX_VERSION}/IddCxStub.lib"
-        "${SUNSHINE_DRIVER_WDK_ROOT}/Lib/wdf/umdf/${SUNSHINE_DRIVER_ARCH}/${SUNSHINE_DRIVER_WDF_VERSION}/WdfDriverStubUm.lib"
-        "${SUNSHINE_DRIVER_WDK_ROOT}/Lib/${SUNSHINE_DRIVER_SDK_VERSION}/um/${SUNSHINE_DRIVER_ARCH}/wpprecorderum.lib"
-        "${SUNSHINE_DRIVER_WDK_ROOT}/Lib/${SUNSHINE_DRIVER_SDK_VERSION}/um/${SUNSHINE_DRIVER_ARCH}/ntdll.lib")
+        "${SUNSHINE_DRIVER_WDK_ROOT}/Lib/${SUNSHINE_DRIVER_SDK_VERSION}/um/${SUNSHINE_DRIVER_WDK_ARCH}/iddcx/${SUNSHINE_DRIVER_IDDCX_VERSION}/IddCxStub.lib"
+        "${SUNSHINE_DRIVER_WDK_ROOT}/Lib/wdf/umdf/${SUNSHINE_DRIVER_WDK_ARCH}/${SUNSHINE_DRIVER_WDF_VERSION}/WdfDriverStubUm.lib"
+        "${SUNSHINE_DRIVER_WDK_ROOT}/Lib/${SUNSHINE_DRIVER_SDK_VERSION}/um/${SUNSHINE_DRIVER_WDK_ARCH}/wpprecorderum.lib"
+        "${SUNSHINE_DRIVER_WDK_ROOT}/Lib/${SUNSHINE_DRIVER_SDK_VERSION}/um/${SUNSHINE_DRIVER_WDK_ARCH}/ntdll.lib")
 
 target_include_directories(${SUNSHINE_DRIVER_TARGET}
         PRIVATE
@@ -198,16 +195,21 @@ set_target_properties(${SUNSHINE_DRIVER_TARGET}
         OUTPUT_NAME "SunshineVirtualDisplayDriver"
         SUFFIX ".dll")
 
-# Keep the packaged INF as a real build output. A POST_BUILD-only copy does not
+# Keep the package inputs as real build outputs. A POST_BUILD-only copy does not
 # run when only the INF changes, which can leave pnputil installing a stale driver package.
-set(SUNSHINE_DRIVER_PACKAGED_INF "${CMAKE_CURRENT_BINARY_DIR}/SunshineVirtualDisplayDriver.inf")
-add_custom_command(OUTPUT "${SUNSHINE_DRIVER_PACKAGED_INF}"
+set(SUNSHINE_DRIVER_PACKAGE_DIR "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/driver-package")
+set(SUNSHINE_DRIVER_PACKAGED_INF "${SUNSHINE_DRIVER_PACKAGE_DIR}/SunshineVirtualDisplayDriver.inf")
+set(SUNSHINE_DRIVER_PACKAGED_DLL "${SUNSHINE_DRIVER_PACKAGE_DIR}/SunshineVirtualDisplayDriver.dll")
+add_custom_command(OUTPUT "${SUNSHINE_DRIVER_PACKAGED_INF}" "${SUNSHINE_DRIVER_PACKAGED_DLL}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${SUNSHINE_DRIVER_PACKAGE_DIR}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${SUNSHINE_DRIVER_INF}"
-        "${SUNSHINE_DRIVER_PACKAGED_INF}"
-        DEPENDS "${SUNSHINE_DRIVER_INF}")
-add_custom_target(${SUNSHINE_DRIVER_TARGET}InfFile DEPENDS "${SUNSHINE_DRIVER_PACKAGED_INF}")
-add_dependencies(${SUNSHINE_DRIVER_TARGET} ${SUNSHINE_DRIVER_TARGET}InfFile)
+                "${SUNSHINE_DRIVER_INF}"
+                "${SUNSHINE_DRIVER_PACKAGED_INF}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:${SUNSHINE_DRIVER_TARGET}>"
+                "${SUNSHINE_DRIVER_PACKAGED_DLL}"
+        DEPENDS ${SUNSHINE_DRIVER_TARGET} "${SUNSHINE_DRIVER_INF}"
+        VERBATIM)
 
 find_program(SUNSHINE_DRIVER_INF2CAT
         NAMES Inf2Cat.exe
@@ -220,10 +222,11 @@ if(NOT SUNSHINE_DRIVER_INF2CAT)
     message(FATAL_ERROR "Inf2Cat.exe is required to package ${SUNSHINE_DRIVER_TARGET}")
 endif()
 
-set(SUNSHINE_DRIVER_PACKAGED_CAT "${CMAKE_CURRENT_BINARY_DIR}/sunshinevirtualdisplaydriver.cat")
+set(SUNSHINE_DRIVER_PACKAGED_CAT "${SUNSHINE_DRIVER_PACKAGE_DIR}/sunshinevirtualdisplaydriver.cat")
 add_custom_command(OUTPUT "${SUNSHINE_DRIVER_PACKAGED_CAT}"
-        COMMAND "${SUNSHINE_DRIVER_INF2CAT}" /driver:"${CMAKE_CURRENT_BINARY_DIR}" /os:${SUNSHINE_DRIVER_INF2CAT_OS}
-        DEPENDS ${SUNSHINE_DRIVER_TARGET} "${SUNSHINE_DRIVER_PACKAGED_INF}")
+        COMMAND "${SUNSHINE_DRIVER_INF2CAT}" "/driver:${SUNSHINE_DRIVER_PACKAGE_DIR}" /os:${SUNSHINE_DRIVER_INF2CAT_OS}
+        DEPENDS "${SUNSHINE_DRIVER_PACKAGED_INF}" "${SUNSHINE_DRIVER_PACKAGED_DLL}"
+        VERBATIM)
 add_custom_target(${SUNSHINE_DRIVER_TARGET}PackageFiles ALL DEPENDS "${SUNSHINE_DRIVER_PACKAGED_CAT}")
 
 install(TARGETS ${SUNSHINE_DRIVER_TARGET} RUNTIME DESTINATION driver)
