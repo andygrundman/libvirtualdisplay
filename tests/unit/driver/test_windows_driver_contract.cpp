@@ -652,12 +652,26 @@ TEST(VirtualDisplayWindowsDriverContract, ReleaseWorkflowPublishesSelfSignedPack
 
   EXPECT_NE(workflow.find("Release version must be a v-prefixed semantic version tag"), std::string::npos);
   EXPECT_NE(workflow.find("git checkout --detach $version"), std::string::npos);
+  EXPECT_NE(workflow.find("Import release signing certificate"), std::string::npos);
+  EXPECT_NE(workflow.find("VDD_SIGNING_CERT_PFX_BASE64 is required for release driver catalog signing."), std::string::npos);
+  EXPECT_NE(workflow.find("Cert:\\CurrentUser\\Root"), std::string::npos);
+  EXPECT_NE(workflow.find("Cert:\\CurrentUser\\TrustedPublisher"), std::string::npos);
+  EXPECT_NE(workflow.find("cert_path=$cerPath"), std::string::npos);
+  EXPECT_NE(workflow.find("Build driver package files"), std::string::npos);
+  EXPECT_NE(workflow.find("SunshineVirtualDisplayDriverPackageFiles"), std::string::npos);
+  EXPECT_NE(workflow.find("Sign driver catalog"), std::string::npos);
+  EXPECT_NE(workflow.find("signtool.FullName sign /fd SHA256 /sha1"), std::string::npos);
+  EXPECT_NE(workflow.find("signtool.FullName verify /pa"), std::string::npos);
+  EXPECT_NE(workflow.find("Add signing certificate to release package"), std::string::npos);
+  EXPECT_NE(workflow.find("SunshineVirtualDisplayDriver.cer"), std::string::npos);
   EXPECT_NE(workflow.find("Generate package evidence"), std::string::npos);
   EXPECT_NE(workflow.find("Get-FileHash -LiteralPath $package[0].FullName -Algorithm SHA256"), std::string::npos);
   EXPECT_NE(workflow.find("package_sha256"), std::string::npos);
-  EXPECT_NE(workflow.find("signing = 'self-signed'"), std::string::npos);
+  EXPECT_NE(workflow.find("channel = 'self-signed'"), std::string::npos);
+  EXPECT_NE(workflow.find("certificate_thumbprint"), std::string::npos);
   EXPECT_NE(workflow.find("no EV, HLK, WHQL, or Windows certification claim"), std::string::npos);
   EXPECT_NE(workflow.find("prerelease: false"), std::string::npos);
+  EXPECT_NE(workflow.find("overwrite_files: true"), std::string::npos);
   EXPECT_NE(workflow.find("body_path: build-driver/release-notes.md"), std::string::npos);
   EXPECT_NE(workflow.find("build-driver/libvirtualdisplay-*-evidence.json"), std::string::npos);
   EXPECT_EQ(workflow.find("release_evidence_json"), std::string::npos);

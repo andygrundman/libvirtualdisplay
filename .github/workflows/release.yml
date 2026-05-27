@@ -90,6 +90,41 @@ jobs:
             }
           }
 
+      - name: Import release signing certificate
+        id: signing_cert
+        shell: pwsh
+        env:
+          VDD_SIGNING_CERT_PFX_BASE64: ${{ secrets.VDD_SIGNING_CERT_PFX_BASE64 }}
+          VDD_SIGNING_CERT_PASSWORD: ${{ secrets.VDD_SIGNING_CERT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if ([string]::IsNullOrWhiteSpace($env:VDD_SIGNING_CERT_PFX_BASE64)) {
+            throw 'VDD_SIGNING_CERT_PFX_BASE64 is required for release driver catalog signing.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:VDD_SIGNING_CERT_PASSWORD)) {
+            throw 'VDD_SIGNING_CERT_PASSWORD is required for release driver catalog signing.'
+          }
+
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'sunshine-virtual-display-driver-release-signing.pfx'
+          [System.IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:VDD_SIGNING_CERT_PFX_BASE64))
+
+          $password = ConvertTo-SecureString $env:VDD_SIGNING_CERT_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Remove-Item -LiteralPath $pfxPath -Force
+
+          if (-not $cert.HasPrivateKey) {
+            throw 'Imported release signing certificate does not include a private key.'
+          }
+
+          $cerPath = Join-Path $env:RUNNER_TEMP 'sunshine-virtual-display-driver-release-signing.cer'
+          Export-Certificate -Cert $cert -FilePath $cerPath | Out-Null
+          Import-Certificate -FilePath $cerPath -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
+          Import-Certificate -FilePath $cerPath -CertStoreLocation Cert:\CurrentUser\TrustedPublisher | Out-Null
+
+          "thumbprint=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
+          "cert_path=$cerPath" >> $env:GITHUB_OUTPUT
+
       - name: Configure
         run: >
           cmake -S . -B build-driver -G Ninja
@@ -98,8 +133,61 @@ jobs:
           -DBUILD_VIRTUALDISPLAY_PROBE=ON
           '-DLIBVIRTUALDISPLAY_PACKAGE_VERSION=${{ steps.version.outputs.package_version }}'
 
+      - name: Build driver package files
+        run: cmake --build build-driver --target SunshineVirtualDisplayDriverPackageFiles --parallel
+
+      - name: Sign driver catalog
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $kitsRoot = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' -Name KitsRoot10).KitsRoot10
+          $signtool = Get-ChildItem -LiteralPath (Join-Path $kitsRoot 'bin') -Recurse -Filter signtool.exe -File -ErrorAction SilentlyContinue |
+            Sort-Object -Property FullName -Descending |
+            Select-Object -First 1
+          if (-not $signtool) {
+            throw "signtool.exe was not found under $kitsRoot."
+          }
+
+          $catalog = Resolve-Path -LiteralPath 'build-driver/src/driver/windows_driver/sunshinevirtualdisplaydriver.cat'
+          & $signtool.FullName sign /fd SHA256 /sha1 '${{ steps.signing_cert.outputs.thumbprint }}' $catalog.Path
+          if ($LASTEXITCODE -ne 0) {
+            throw "signtool sign failed with exit code $LASTEXITCODE"
+          }
+
+          & $signtool.FullName verify /pa $catalog.Path
+          if ($LASTEXITCODE -ne 0) {
+            throw "signtool verify failed with exit code $LASTEXITCODE"
+          }
+
       - name: Build release package
         run: cmake --build build-driver --target package --parallel
+
+      - name: Add signing certificate to release package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $package = @(Get-ChildItem -Path 'build-driver/libvirtualdisplay-*-windows-x64.zip' -File)
+          if ($package.Count -ne 1) {
+            throw "Expected exactly one release package, found $($package.Count)."
+          }
+
+          $extractRoot = Join-Path $env:RUNNER_TEMP 'libvirtualdisplay-release-package'
+          if (Test-Path -LiteralPath $extractRoot) {
+            Remove-Item -LiteralPath $extractRoot -Recurse -Force
+          }
+
+          Expand-Archive -LiteralPath $package[0].FullName -DestinationPath $extractRoot
+          $driverDirectory = Get-ChildItem -LiteralPath $extractRoot -Recurse -Directory -Filter driver |
+            Select-Object -First 1
+          if (-not $driverDirectory) {
+            throw 'Release package driver directory was not found.'
+          }
+
+          Copy-Item -LiteralPath '${{ steps.signing_cert.outputs.cert_path }}' -Destination (Join-Path $driverDirectory.FullName 'SunshineVirtualDisplayDriver.cer') -Force
+          Remove-Item -LiteralPath $package[0].FullName -Force
+          Compress-Archive -Path (Join-Path $extractRoot '*') -DestinationPath $package[0].FullName -Force
 
       - name: Generate package evidence
         shell: pwsh
@@ -118,7 +206,10 @@ jobs:
             package_size = $package[0].Length
             windows_sdk_version = $env:WindowsSDKVersion
             wdk_umdf_version = '2.25'
-            signing = 'self-signed'
+            signing = [ordered] @{
+              channel = 'self-signed'
+              certificate_thumbprint = '${{ steps.signing_cert.outputs.thumbprint }}'
+            }
             certification = 'Self-signed CI package; no EV, HLK, WHQL, or Windows certification claim'
           }
           $evidencePath = Join-Path 'build-driver' "libvirtualdisplay-${{ steps.version.outputs.package_version }}-evidence.json"
@@ -132,6 +223,8 @@ jobs:
             ''
             'Driver package signing model: self-signed. This release does not claim EV, HLK, WHQL, or Windows certification.'
             ''
+            'Driver catalog certificate thumbprint: `${{ steps.signing_cert.outputs.thumbprint }}`.'
+            ''
             "Package SHA256: $hash"
           )
           $releaseNotes | Set-Content -LiteralPath $releaseNotesPath -Encoding utf8
@@ -143,6 +236,7 @@ jobs:
           name: libvirtualdisplay ${{ steps.version.outputs.version }}
           body_path: build-driver/release-notes.md
           prerelease: false
+          overwrite_files: true
           files: |
             build-driver/libvirtualdisplay-*-windows-x64.zip
             build-driver/libvirtualdisplay-*-evidence.json
