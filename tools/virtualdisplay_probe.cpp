@@ -229,6 +229,14 @@ namespace {
     return true;
   }
 
+  bool require_arg_count(const int argc, const int minimum, const int maximum) {
+    if (argc < minimum || argc > maximum) {
+      print_usage();
+      return false;
+    }
+    return true;
+  }
+
 #ifdef _WIN32
   struct AdvancedColorInfo {
     bool v2 = false;
@@ -1778,10 +1786,16 @@ int main(const int argc, char **argv) {
 
   const std::string command {argv[1]};
   if (command == "--diagnose") {
+    if (!require_arg_count(argc, 2, 2)) {
+      return 2;
+    }
     return diagnose_control_devices();
   }
 
   if (command == "--apply-extended-topology") {
+    if (!require_arg_count(argc, 2, 2)) {
+      return 2;
+    }
     if (const int session_status = require_active_console_session(command); session_status != 0) {
       return session_status;
     }
@@ -1797,6 +1811,9 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--query-color-profiles") {
+    if (!require_arg_count(argc, 2, 2)) {
+      return 2;
+    }
     if (const int session_status = require_active_console_session(command); session_status != 0) {
       return session_status;
     }
@@ -1852,6 +1869,9 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--check") {
+    if (!require_arg_count(argc, 2, 2)) {
+      return 2;
+    }
     std::cout << "protocol=" << protocol.value.major << '.'
               << protocol.value.minor << '.' << protocol.value.patch << '\n';
     return 0;
@@ -1864,6 +1884,9 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--query-permanent") {
+    if (!require_arg_count(argc, 2, 2)) {
+      return 2;
+    }
     const auto result = client.query_permanent_display_count();
     if (!result.ok()) {
       return fail("query permanent count failed", result);
@@ -1875,12 +1898,14 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--apply-manifest-topology") {
+    if (!require_arg_count(argc, 2, 2)) {
+      return 2;
+    }
     return apply_manifest_topology(client);
   }
 
   if (command == "--set-permanent") {
-    if (argc < 3) {
-      print_usage();
+    if (!require_arg_count(argc, 3, 3)) {
       return 2;
     }
     vdd::PermanentDisplayCountRequest request {};
@@ -1898,6 +1923,9 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--self-test-permanent") {
+    if (!require_arg_count(argc, 2, 3)) {
+      return 2;
+    }
     const auto before = client.query_permanent_display_count();
     if (!before.ok()) {
       return fail("query permanent count failed", before);
@@ -1929,6 +1957,17 @@ int main(const int argc, char **argv) {
 
     bool restore_needed = true;
     const auto restore_previous_count = [&]() {
+      const auto current = client.query_permanent_display_count();
+      if (!current.ok()) {
+        return current;
+      }
+      if (current.value.current_display_count != requested) {
+        std::cerr << "not restoring permanent count because another client changed it"
+                  << " current=" << current.value.current_display_count
+                  << " expected=" << requested << '\n';
+        return current;
+      }
+
       vdd::PermanentDisplayCountRequest restore {};
       restore.display_count = before.value.current_display_count;
       return client.set_permanent_display_count(restore);
@@ -1954,6 +1993,7 @@ int main(const int argc, char **argv) {
       return fail("restore permanent count failed", restored);
     }
     if (restored.value.current_display_count != before.value.current_display_count) {
+      restore_needed = false;
       std::cerr << "restore permanent count returned " << restored.value.current_display_count
                 << " after requesting " << before.value.current_display_count << '\n';
       return 1;
@@ -1968,6 +2008,9 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--self-test-temp") {
+    if (!require_arg_count(argc, 2, 5)) {
+      return 2;
+    }
     std::uint32_t width {};
     std::uint32_t height {};
     std::uint32_t refresh_hz {};
@@ -2011,6 +2054,9 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--self-test-4k240") {
+    if (!require_arg_count(argc, 2, 3)) {
+      return 2;
+    }
     std::uint32_t timeout_ms {};
     if (!read_u32_arg(argc, argv, 2, 10'000u, "timeout_ms", timeout_ms)) {
       return 2;
@@ -2019,6 +2065,9 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--self-test-hdr") {
+    if (!require_arg_count(argc, 2, 5)) {
+      return 2;
+    }
     std::uint32_t width {};
     std::uint32_t height {};
     std::uint32_t refresh_hz {};
@@ -2103,6 +2152,9 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--self-test-lease-expiry") {
+    if (!require_arg_count(argc, 2, 6)) {
+      return 2;
+    }
     std::uint32_t width {};
     std::uint32_t height {};
     std::uint32_t refresh_hz {};
@@ -2165,6 +2217,9 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--qa-multi-temp-lease") {
+    if (!require_arg_count(argc, 2, 4)) {
+      return 2;
+    }
     std::uint32_t count {};
     std::uint32_t timeout_ms {};
     if (!read_u32_arg(argc, argv, 2, 3u, "count", count) ||
@@ -2184,6 +2239,8 @@ int main(const int argc, char **argv) {
     const auto lease_id = transient_id(0x717a0000);
     std::vector<vdd::CreateTemporaryDisplayResult> created_displays;
     std::vector<std::uint32_t> connector_indexes;
+    created_displays.reserve(count);
+    connector_indexes.reserve(count);
     for (std::uint32_t index = 0; index < count; ++index) {
       constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 4> kSizes {{
         {1280u, 720u},
@@ -2266,6 +2323,9 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--qa-temp-identity-retention") {
+    if (!require_arg_count(argc, 2, 6)) {
+      return 2;
+    }
     std::uint32_t width {};
     std::uint32_t height {};
     std::uint32_t refresh_hz {};
@@ -2369,7 +2429,10 @@ int main(const int argc, char **argv) {
     if (!removed_first.ok()) {
       return fail("remove retained identity display failed", removed_first);
     }
-    (void) wait_for_display_path(first.value.os_adapter_luid, first.value.target_id, false);
+    if (wait_for_display_path(first.value.os_adapter_luid, first.value.target_id, false)) {
+      std::cerr << "retained identity display path did not depart after removal\n";
+      return 1;
+    }
 
     const auto filler_lease_id = transient_id(0x717e2000);
     const vdd::LeaseRequest filler_lease {
@@ -2379,6 +2442,7 @@ int main(const int argc, char **argv) {
       0
     };
     std::vector<vdd::CreateTemporaryDisplayResult> fillers;
+    fillers.reserve(2);
     for (std::uint32_t index = 0; index < 2; ++index) {
       auto filler_request = make_temporary_request(index == 0 ? 1280u : 2560u, index == 0 ? 720u : 1440u, index == 0 ? 60u : 120u);
       filler_request.lease_id = filler_lease_id;
@@ -2500,6 +2564,9 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--debug-temp-config") {
+    if (!require_arg_count(argc, 2, 6)) {
+      return 2;
+    }
     std::uint32_t width {};
     std::uint32_t height {};
     std::uint32_t refresh_hz {};
@@ -2525,6 +2592,18 @@ int main(const int argc, char **argv) {
               << ':' << vdd::to_windows_luid(created.value.os_adapter_luid).LowPart << '\n';
 
     dump_display_config_paths(created.value.os_adapter_luid, created.value.target_id);
+
+    const vdd::LeaseRequest lease_request {
+      vdd::kApiNamespaceGuid,
+      request.lease_id,
+      request.requested_timeout_ms,
+      0
+    };
+    const auto feed_debug_lease = [&]() {
+      (void) client.feed_lease(lease_request);
+    };
+
+    feed_debug_lease();
     const auto activate_result = activate_target_path_result(
       created.value.os_adapter_luid,
       created.value.target_id,
@@ -2541,7 +2620,8 @@ int main(const int argc, char **argv) {
       created.value.target_id,
       width,
       height,
-      refresh_hz
+      refresh_hz,
+      feed_debug_lease
     );
     dump_active_paths_for_adapter(created.value.os_adapter_luid);
     const auto active_path = query_display_path(created.value.os_adapter_luid, created.value.target_id);
@@ -2572,6 +2652,9 @@ int main(const int argc, char **argv) {
   }
 
   if (command == "--qa-temp-lease") {
+    if (!require_arg_count(argc, 2, 6)) {
+      return 2;
+    }
     std::uint32_t width {};
     std::uint32_t height {};
     std::uint32_t refresh_hz {};

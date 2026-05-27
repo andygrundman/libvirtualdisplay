@@ -243,8 +243,23 @@ TEST(VirtualDisplayProbeContract, PermanentSelfTestRestoresOriginalCount) {
   expect_contains(source, "const auto changed = client.set_permanent_display_count(request)");
   expect_contains(source, "RestorePermanentCountOnExit");
   expect_contains(source, "restore_on_exit");
+  expect_contains(source, "const auto current = client.query_permanent_display_count()");
+  expect_contains(source, "current.value.current_display_count != requested");
+  expect_contains(source, "not restoring permanent count because another client changed it");
   expect_contains(source, "restore.display_count = before.value.current_display_count");
   expect_contains(source, "const auto restored = restore_previous_count();");
+}
+
+TEST(VirtualDisplayProbeContract, RejectsUnexpectedTrailingCommandArguments) {
+  const auto source = read_probe_source();
+
+  expect_contains(source, "bool require_arg_count(const int argc, const int minimum, const int maximum)");
+  expect_contains(source, "require_arg_count(argc, 2, 2)");
+  expect_contains(source, "require_arg_count(argc, 3, 3)");
+  expect_contains(source, "require_arg_count(argc, 2, 3)");
+  expect_contains(source, "require_arg_count(argc, 2, 5)");
+  expect_contains(source, "require_arg_count(argc, 2, 6)");
+  expect_contains(source, "require_arg_count(argc, 2, 4)");
 }
 
 TEST(VirtualDisplayProbeContract, HdrSelfTestVerifiesWindowsAdvancedColorState) {
@@ -301,6 +316,7 @@ TEST(VirtualDisplayProbeContract, ActiveDisplayChecksApplyRequestedResolution) {
   expect_contains(source, "return run_temporary_mode_probe(client, 3840u, 2160u, 240u");
   expect_contains(source, "Windows can reuse the previous mode on a recycled target id");
   expect_contains(source, "debug display resolution mismatch");
+  expect_contains(source, "const auto feed_debug_lease = [&]() {");
   expect_contains(source, "QA display resolution mismatch after activation");
   expect_contains(source, "make_active_signal_info(width, height, refresh_hz)");
   expect_contains(source, "requested_target.sourceInfo.sourceModeInfoIdx = source_mode_index");
@@ -360,6 +376,8 @@ TEST(VirtualDisplayProbeContract, MultiTemporaryLeaseQaCreatesAndExpiresSeveralD
   expect_contains(source, "if (command == \"--qa-multi-temp-lease\")");
   expect_contains(source, "multi-temp QA reused connector index");
   expect_contains(source, "read_u32_arg(argc, argv, 2, 3u, \"count\", count)");
+  expect_contains(source, "created_displays.reserve(count)");
+  expect_contains(source, "connector_indexes.reserve(count)");
   expect_contains(source, "active.value.temporary_display_count != count");
   expect_contains(source, "std::chrono::milliseconds(active.value.effective_timeout_ms + 2'000u)");
   expect_contains(source, "multi-temp QA lease did not expire cleanly");
@@ -375,6 +393,8 @@ TEST(VirtualDisplayProbeContract, TemporaryIdentityRetentionQaRequiresRestoredHd
   expect_contains(source, "second.value.connector_index != first.value.connector_index");
   expect_contains(source, "second.value.target_id != first.value.target_id");
   expect_contains(source, "filler display reused retained identity connector");
+  expect_contains(source, "fillers.reserve(2)");
+  expect_contains(source, "retained identity display path did not depart after removal");
   expect_contains(source, "HDR profile was not retained for recreated temporary display");
   expect_contains(source, "qa_temp_identity_retention=1");
 }
