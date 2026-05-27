@@ -30,6 +30,10 @@ namespace virtual_display::driver {
         return IoctlStatus::BackendFailed;
       }
 
+      if (status.validation_error == ValidationError::PermanentDisplayCountTooHigh) {
+        return IoctlStatus::LimitReached;
+      }
+
       if (status.validation_error != ValidationError::None) {
         return IoctlStatus::InvalidRequest;
       }

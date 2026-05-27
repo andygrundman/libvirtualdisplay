@@ -427,6 +427,27 @@ TEST(VirtualDisplayDriverIoctlDispatcher, SetAndQueryPermanentDisplayCountUsePer
   EXPECT_EQ(output.physical_width_mm, 590u);
 }
 
+TEST(VirtualDisplayDriverIoctlDispatcher, SetPermanentDisplayCountMapsLimitValidation) {
+  Harness harness;
+  vdd::PermanentDisplayCountRequest request {};
+  request.display_count = 5;
+  vdd::PermanentDisplayCountResult output {};
+
+  const auto result = harness.dispatcher.dispatch(
+    vdd::kIoctlSetPermanentDisplayCount,
+    &request,
+    sizeof(request),
+    &output,
+    sizeof(output),
+    std::chrono::steady_clock::now()
+  );
+
+  EXPECT_EQ(result.status, vdd::IoctlStatus::LimitReached);
+  EXPECT_EQ(result.bytes_returned, 0u);
+  EXPECT_EQ(result.controller_status.validation_error, vdd::ValidationError::PermanentDisplayCountTooHigh);
+  EXPECT_TRUE(harness.backend.permanent_counts.empty());
+}
+
 TEST(VirtualDisplayDriverIoctlDispatcher, QueryDisplayStateReturnsActiveIdentities) {
   Harness harness;
   vdd::PermanentDisplayCountRequest permanent {};
