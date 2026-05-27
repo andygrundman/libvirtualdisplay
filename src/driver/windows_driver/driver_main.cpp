@@ -255,8 +255,12 @@ namespace {
     blob.insert(blob.end(), std::begin(value.Data4), std::end(value.Data4));
   }
 
+  bool has_bytes(const std::vector<std::uint8_t> &blob, const std::size_t offset, const std::size_t count) {
+    return offset <= blob.size() && count <= blob.size() - offset;
+  }
+
   bool read_u32(const std::vector<std::uint8_t> &blob, std::size_t &offset, std::uint32_t &value) {
-    if (blob.size() - offset < sizeof(std::uint32_t)) {
+    if (!has_bytes(blob, offset, sizeof(std::uint32_t))) {
       return false;
     }
 
@@ -281,7 +285,7 @@ namespace {
   }
 
   bool read_guid(const std::vector<std::uint8_t> &blob, std::size_t &offset, GUID &value) {
-    if (blob.size() - offset < sizeof(GUID)) {
+    if (!has_bytes(blob, offset, sizeof(GUID))) {
       return false;
     }
 
@@ -291,7 +295,7 @@ namespace {
     if (!read_u32(blob, offset, data1)) {
       return false;
     }
-    if (blob.size() - offset < 12) {
+    if (!has_bytes(blob, offset, 12)) {
       return false;
     }
 
@@ -374,22 +378,10 @@ namespace {
     );
   }
 
-  template <typename T>
-  bool query_registry_value(
-    WDFKEY key,
-    const wchar_t *value_name,
-    const ULONG expected_type,
-    T &value
-  ) {
-    auto name = unicode_string(value_name);
-    ULONG value_length {};
-    ULONG value_type {};
-    const auto status = WdfRegistryQueryValue(key, &name, sizeof(value), &value, &value_length, &value_type);
-    return NT_SUCCESS(status) && value_type == expected_type && value_length == sizeof(value);
-  }
-
   bool valid_temporary_profile(const std::uint64_t display_id, const std::uint32_t connector_index) {
-    return display_id != 0 && connector_index < kMaxPermanentDisplays + kMaxTemporaryDisplays;
+    return display_id != 0 &&
+           connector_index >= kMaxPermanentDisplays &&
+           connector_index < kMaxPermanentDisplays + kMaxTemporaryDisplays;
   }
 
   std::vector<TemporaryDisplayProfile> load_temporary_display_profiles(WDFDRIVER driver, WDFDEVICE device) {

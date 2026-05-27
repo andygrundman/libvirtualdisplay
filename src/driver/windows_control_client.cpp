@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <utility>
 #include <vector>
 
 namespace virtual_display::driver {
@@ -25,6 +26,27 @@ namespace virtual_display::driver {
 
       DevInfoSet(const DevInfoSet &) = delete;
       DevInfoSet &operator=(const DevInfoSet &) = delete;
+    };
+
+    struct UniqueHandle {
+      HANDLE value {INVALID_HANDLE_VALUE};
+
+      explicit UniqueHandle(HANDLE handle):
+          value {handle} {
+      }
+
+      ~UniqueHandle() {
+        if (value != INVALID_HANDLE_VALUE) {
+          CloseHandle(value);
+        }
+      }
+
+      UniqueHandle(const UniqueHandle &) = delete;
+      UniqueHandle &operator=(const UniqueHandle &) = delete;
+
+      HANDLE release() {
+        return std::exchange(value, INVALID_HANDLE_VALUE);
+      }
     };
 
     HANDLE invalid_handle() {
@@ -48,14 +70,24 @@ namespace virtual_display::driver {
 
       std::vector<std::wstring> paths;
       native_error = ERROR_FILE_NOT_FOUND;
-      SP_DEVICE_INTERFACE_DATA interface_data {};
-      interface_data.cbSize = sizeof(interface_data);
 
-      for (DWORD index = 0; SetupDiEnumDeviceInterfaces(device_info_set.value, nullptr, &interface_guid, index, &interface_data); ++index) {
+      for (DWORD index = 0;; ++index) {
+        SP_DEVICE_INTERFACE_DATA interface_data {};
+        interface_data.cbSize = sizeof(interface_data);
+        if (!SetupDiEnumDeviceInterfaces(device_info_set.value, nullptr, &interface_guid, index, &interface_data)) {
+          const auto error = GetLastError();
+          if (error == ERROR_NO_MORE_ITEMS) {
+            native_error = paths.empty() ? ERROR_FILE_NOT_FOUND : ERROR_SUCCESS;
+          } else {
+            native_error = error;
+          }
+          break;
+        }
+
         DWORD detail_size = 0;
         (void) SetupDiGetDeviceInterfaceDetailW(device_info_set.value, &interface_data, nullptr, 0, &detail_size, nullptr);
-        if (detail_size == 0) {
-          native_error = GetLastError();
+        if (detail_size < sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W)) {
+          native_error = detail_size == 0 ? GetLastError() : ERROR_INVALID_DATA;
           continue;
         }
 
@@ -71,9 +103,6 @@ namespace virtual_display::driver {
         native_error = ERROR_SUCCESS;
       }
 
-      if (paths.empty() && native_error == ERROR_NO_MORE_ITEMS) {
-        native_error = ERROR_FILE_NOT_FOUND;
-      }
       return paths;
     }
   }  // namespace
@@ -184,19 +213,22 @@ namespace virtual_display::driver {
     const auto paths = enumerate_control_device_paths(last_error);
 
     for (const auto &path : paths) {
-      HANDLE handle = CreateFileW(
-        path.c_str(),
-        GENERIC_READ | GENERIC_WRITE,
-        FILE_SHARE_READ | FILE_SHARE_WRITE,
-        nullptr,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        nullptr
-      );
-      if (handle != INVALID_HANDLE_VALUE) {
+      UniqueHandle handle {
+        CreateFileW(
+          path.c_str(),
+          GENERIC_READ | GENERIC_WRITE,
+          FILE_SHARE_READ | FILE_SHARE_WRITE,
+          nullptr,
+          OPEN_EXISTING,
+          FILE_ATTRIBUTE_NORMAL,
+          nullptr
+        )
+      };
+      if (handle.value != INVALID_HANDLE_VALUE) {
+        auto transport = std::make_unique<WindowsControlTransport>(handle.release());
         return {
           ControlStatus::Success,
-          std::make_unique<WindowsControlTransport>(handle),
+          std::move(transport),
           0,
           path
         };

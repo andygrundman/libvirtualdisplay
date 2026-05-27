@@ -48,6 +48,34 @@ namespace {
     return buffer.str();
   }
 
+  std::string read_windows_control_client_source() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
+                      "src/driver/windows_control_client.cpp";
+    std::ifstream file {path, std::ios::binary};
+    if (!file) {
+      ADD_FAILURE() << "Failed to open " << path.string();
+      return {};
+    }
+
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+  }
+
+  std::string read_driver_cmake() {
+    const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
+                      "src/driver/CMakeLists.txt";
+    std::ifstream file {path, std::ios::binary};
+    if (!file) {
+      ADD_FAILURE() << "Failed to open " << path.string();
+      return {};
+    }
+
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+  }
+
   std::string read_readme() {
     const auto path = std::filesystem::path {LIBVIRTUALDISPLAY_SOURCE_DIR} /
                       "README.md";
@@ -208,6 +236,19 @@ TEST(VirtualDisplayWindowsDriverContract, StoresTemporaryIdentityInWdfPersistent
   EXPECT_EQ(source.find("SOFTWARE\\\\Sunshine\\\\VirtualDisplayDriver"), std::string::npos);
   EXPECT_EQ(source.find("RegCreateKeyExW"), std::string::npos);
   EXPECT_NE(inf.find("HKR,,\"ConfigVersion\",0x00010001,1"), std::string::npos);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, ValidatesTemporaryProfileConnectorRange) {
+  const auto source = read_windows_driver_source();
+
+  EXPECT_NE(source.find("bool has_bytes(const std::vector<std::uint8_t> &blob"), std::string::npos);
+  EXPECT_NE(source.find("if (!has_bytes(blob, offset, sizeof(std::uint32_t)))"), std::string::npos);
+  EXPECT_NE(source.find("if (!has_bytes(blob, offset, sizeof(GUID)))"), std::string::npos);
+  EXPECT_NE(source.find("if (!has_bytes(blob, offset, 12))"), std::string::npos);
+  EXPECT_NE(source.find("connector_index >= kMaxPermanentDisplays"), std::string::npos);
+  EXPECT_NE(source.find("connector_index < kMaxPermanentDisplays + kMaxTemporaryDisplays"), std::string::npos);
+  EXPECT_EQ(source.find("blob.size() - offset <"), std::string::npos);
+  EXPECT_EQ(source.find("query_registry_value"), std::string::npos);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, LeavesPermanentPolicyPersistenceToBroker) {
@@ -376,10 +417,24 @@ TEST(VirtualDisplayWindowsDriverContract, EnablesWppInflightRecorder) {
   EXPECT_NE(cmake.find("TraceWPP.exe"), std::string::npos);
   EXPECT_NE(cmake.find("ENABLE_WPP_RECORDER=1"), std::string::npos);
   EXPECT_NE(cmake.find("WPP_MACRO_USE_KM_VERSION_FOR_UM=1"), std::string::npos);
+  EXPECT_NE(cmake.find("NO_DEFAULT_PATH"), std::string::npos);
+  EXPECT_NE(cmake.find("SUNSHINE_DRIVER_WDK_ROOT"), std::string::npos);
+  EXPECT_EQ(cmake.find("HINTS"), std::string::npos);
 
   EXPECT_NE(docs.find("WPP provider GUID: `{b0dcb744-045b-463b-9c2f-6a3c897d3458}`"), std::string::npos);
   EXPECT_NE(docs.find("Inflight Trace Recorder"), std::string::npos);
   EXPECT_NE(docs.find("!wdfkd.wdflogdump"), std::string::npos);
+}
+
+TEST(VirtualDisplayWindowsDriverContract, ControlClientHandlesSetupApiAndHandleFailuresDefensively) {
+  const auto source = read_windows_control_client_source();
+
+  EXPECT_NE(source.find("struct UniqueHandle"), std::string::npos);
+  EXPECT_NE(source.find("std::exchange(value, INVALID_HANDLE_VALUE)"), std::string::npos);
+  EXPECT_NE(source.find("auto transport = std::make_unique<WindowsControlTransport>(handle.release());"), std::string::npos);
+  EXPECT_NE(source.find("detail_size < sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W)"), std::string::npos);
+  EXPECT_NE(source.find("native_error = paths.empty() ? ERROR_FILE_NOT_FOUND : ERROR_SUCCESS;"), std::string::npos);
+  EXPECT_NE(source.find("native_error = detail_size == 0 ? GetLastError() : ERROR_INVALID_DATA;"), std::string::npos);
 }
 
 TEST(VirtualDisplayWindowsDriverContract, RecordsAdvancedColorCallbacksPerMonitor) {
