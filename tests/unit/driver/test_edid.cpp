@@ -36,6 +36,30 @@ namespace {
     );
   }
 
+  std::uint32_t byte_value(const std::byte value) {
+    return static_cast<std::uint8_t>(value);
+  }
+
+  std::uint64_t pixel_clock_hz(const vdd::PreferredTiming &timing) {
+    return static_cast<std::uint64_t>(timing.pixel_clock_10khz) * 10'000ull;
+  }
+
+  std::uint32_t horizontal_scan_khz(const vdd::PreferredTiming &timing) {
+    const auto horizontal_total =
+      static_cast<std::uint64_t>(timing.horizontal_active) + timing.horizontal_blanking;
+    return static_cast<std::uint32_t>(
+      (pixel_clock_hz(timing) + horizontal_total * 1000ull - 1ull) /
+      (horizontal_total * 1000ull)
+    );
+  }
+
+  std::uint32_t vertical_rate_hz(const vdd::PreferredTiming &timing) {
+    const auto total_pixels =
+      (static_cast<std::uint64_t>(timing.horizontal_active) + timing.horizontal_blanking) *
+      (static_cast<std::uint64_t>(timing.vertical_active) + timing.vertical_blanking);
+    return static_cast<std::uint32_t>((pixel_clock_hz(timing) + total_pixels - 1ull) / total_pixels);
+  }
+
   double decode_hdr_static_metadata_luminance_nits(const std::byte value) {
     return 50.0 * std::pow(2.0, static_cast<std::uint8_t>(value) / 32.0);
   }
@@ -133,17 +157,45 @@ TEST(VirtualDisplayDriverEdid, HdrEdidDoesNotEncodeRequestedHighRefreshInBaseTim
   EXPECT_NEAR(static_cast<double>(effective_millihz), 60'000.0, 10.0);
 }
 
-TEST(VirtualDisplayDriverEdid, HdrEdidUsesRequestedRangeDescriptor) {
+TEST(VirtualDisplayDriverEdid, RangeDescriptorIncludesEmittedPreferredTiming) {
+  const auto edid = vdd::create_edid(default_options());
+  const auto timing = vdd::read_preferred_timing(edid);
+  const auto preferred_vertical_hz = vertical_rate_hz(timing);
+  const auto preferred_horizontal_khz = horizontal_scan_khz(timing);
+
+  EXPECT_EQ(edid[108 + 3], std::byte {0xfd});
+  EXPECT_LE(byte_value(edid[108 + 5]), preferred_vertical_hz);
+  EXPECT_GE(byte_value(edid[108 + 6]), preferred_vertical_hz);
+  EXPECT_GE(byte_value(edid[108 + 8]), preferred_horizontal_khz);
+  EXPECT_GT(byte_value(edid[108 + 8]), 160u);
+  EXPECT_GE(byte_value(edid[108 + 9]) * 10'000'000ull, pixel_clock_hz(timing));
+}
+
+TEST(VirtualDisplayDriverEdid, RangeDescriptorTracksFallbackPreferredTiming) {
   auto options = default_options();
   options.width = 3840;
   options.height = 2160;
   options.refresh_rate_millihz = 240'000;
 
   const auto edid = vdd::create_edid(options);
+  const auto timing = vdd::read_preferred_timing(edid);
 
   EXPECT_EQ(edid[108 + 3], std::byte {0xfd});
-  EXPECT_EQ(edid[108 + 6], std::byte {240});
-  EXPECT_EQ(edid[108 + 9], std::byte {251});
+  EXPECT_EQ(byte_value(edid[108 + 6]), vertical_rate_hz(timing));
+  EXPECT_EQ(byte_value(edid[108 + 8]), horizontal_scan_khz(timing));
+  EXPECT_EQ(byte_value(edid[108 + 9]) * 10'000'000ull, 630'000'000ull);
+}
+
+TEST(VirtualDisplayDriverEdid, RangeDescriptorAllowsLowRefreshPreferredTiming) {
+  auto options = default_options();
+  options.refresh_rate_millihz = 24'000;
+
+  const auto edid = vdd::create_edid(options);
+  const auto timing = vdd::read_preferred_timing(edid);
+
+  EXPECT_EQ(vertical_rate_hz(timing), 24u);
+  EXPECT_EQ(byte_value(edid[108 + 5]), 24u);
+  EXPECT_GE(byte_value(edid[108 + 6]), 60u);
 }
 
 TEST(VirtualDisplayDriverEdid, ClampsTimingInputsBeforeEncoding) {
@@ -159,6 +211,7 @@ TEST(VirtualDisplayDriverEdid, ClampsTimingInputsBeforeEncoding) {
 
   EXPECT_EQ(timing.horizontal_active, 4095u);
   EXPECT_EQ(timing.vertical_active, 4095u);
+  EXPECT_NE(timing.pixel_clock_10khz, 0xffffu);
   EXPECT_EQ(read_detailed_physical_width_mm(edid), 4095u);
   EXPECT_EQ(read_detailed_physical_height_mm(edid), 4095u);
   EXPECT_TRUE(vdd::has_valid_edid_checksums(edid));

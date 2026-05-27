@@ -297,10 +297,14 @@ namespace virtual_display::driver {
       if (profile.display_id == 0) {
         return ValidationError::MissingDisplayId;
       }
-      if (is_zero_guid(profile.container_id) ||
-          profile.product_code == 0 ||
-          profile.serial_number == 0) {
-        return ValidationError::DuplicateManifestIdentity;
+      if (is_zero_guid(profile.container_id)) {
+        return ValidationError::InvalidContainerId;
+      }
+      if (profile.product_code == 0) {
+        return ValidationError::InvalidProductCode;
+      }
+      if (profile.serial_number == 0) {
+        return ValidationError::InvalidSerialNumber;
       }
       if (profile.product_code > 0xffffu) {
         return ValidationError::InvalidProductCode;
@@ -401,6 +405,10 @@ namespace virtual_display::driver {
         return "duplicate_manifest_identity";
       case ValidationError::InvalidReservedField:
         return "invalid_reserved_field";
+      case ValidationError::InvalidContainerId:
+        return "invalid_container_id";
+      case ValidationError::InvalidSerialNumber:
+        return "invalid_serial_number";
     }
 
     return "unknown";

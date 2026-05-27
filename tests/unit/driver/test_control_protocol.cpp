@@ -558,13 +558,16 @@ TEST(VirtualDisplayDriverControlProtocol, RejectsDuplicateManifestIdentities) {
 TEST(VirtualDisplayDriverControlProtocol, RejectsMissingManifestIdentityFields) {
   auto manifest = valid_display_manifest();
   manifest.profiles[0].container_id = {};
-  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::DuplicateManifestIdentity);
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidContainerId);
 
   manifest = valid_display_manifest();
   manifest.profiles[0].product_code = 0;
-  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::DuplicateManifestIdentity);
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidProductCode);
 
   manifest = valid_display_manifest();
   manifest.profiles[0].serial_number = 0;
-  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::DuplicateManifestIdentity);
+  EXPECT_EQ(vdd::validate_display_manifest(manifest, 2), vdd::ValidationError::InvalidSerialNumber);
+
+  EXPECT_STREQ(vdd::to_string(vdd::ValidationError::InvalidContainerId), "invalid_container_id");
+  EXPECT_STREQ(vdd::to_string(vdd::ValidationError::InvalidSerialNumber), "invalid_serial_number");
 }
