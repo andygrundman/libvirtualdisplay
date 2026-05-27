@@ -355,7 +355,10 @@ namespace virtual_display::driver {
 
       if (tag == 0x07 && length >= 3 && extension[offset + 1] == std::byte {0x06}) {
         const auto eotf = to_u8(extension[offset + 2]);
-        return (eotf & 0x04u) != 0;
+        const auto metadata = to_u8(extension[offset + 3]);
+        if ((eotf & 0x04u) != 0 && (metadata & 0x01u) != 0) {
+          return true;
+        }
       }
 
       offset += length + 1;

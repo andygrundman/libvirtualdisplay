@@ -232,6 +232,22 @@ TEST(VirtualDisplayDriverEdid, EmbedsHdrStaticMetadataWhenRequested) {
   EXPECT_TRUE(vdd::has_hdr_static_metadata(edid));
 }
 
+TEST(VirtualDisplayDriverEdid, RejectsHdrStaticMetadataWithoutDescriptorType) {
+  auto edid = vdd::create_edid(default_options());
+  constexpr auto cta = vdd::kEdidBlockSize;
+  edid[cta + 64] = std::byte {0x00};
+
+  EXPECT_FALSE(vdd::has_hdr_static_metadata(edid));
+}
+
+TEST(VirtualDisplayDriverEdid, RejectsHdrStaticMetadataWithoutPqEotf) {
+  auto edid = vdd::create_edid(default_options());
+  constexpr auto cta = vdd::kEdidBlockSize;
+  edid[cta + 63] = std::byte {0x00};
+
+  EXPECT_FALSE(vdd::has_hdr_static_metadata(edid));
+}
+
 TEST(VirtualDisplayDriverEdid, EmbedsBt2020ColorimetryWhenHdrRequested) {
   const auto edid = vdd::create_edid(default_options());
 

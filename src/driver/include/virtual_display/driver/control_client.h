@@ -71,6 +71,7 @@ namespace virtual_display::driver {
     template<class T>
     ControlResult<T> ioctl_out(std::uint32_t ioctl_code, const void *input, std::size_t input_size) {
       T output {};
+      output.api_namespace = Guid {};
       std::size_t bytes_returned = 0;
       std::uint32_t native_error = 0;
       if (!transport_.ioctl(ioctl_code, input, input_size, &output, sizeof(output), bytes_returned, native_error)) {

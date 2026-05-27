@@ -39,10 +39,12 @@ namespace {
       bytes_returned = 0;
       if (!next_output.empty()) {
         const auto copy_size = std::min(output_size, next_output.size());
-        if (copy_size > 0 && output) {
+        if (copy_size > 0 && output && !suppress_output_copy) {
           std::memcpy(output, next_output.data(), copy_size);
         }
         bytes_returned = forced_bytes_returned ? forced_bytes_returned : copy_size;
+      } else if (forced_bytes_returned != 0) {
+        bytes_returned = forced_bytes_returned;
       }
       return true;
     }
@@ -57,6 +59,7 @@ namespace {
     std::vector<IoctlCall> calls {};
     std::vector<std::byte> next_output {};
     bool next_success {true};
+    bool suppress_output_copy {false};
     std::size_t forced_bytes_returned {};
     std::uint32_t next_native_error {};
   };
@@ -285,6 +288,18 @@ TEST(VirtualDisplayDriverControlClient, DetectsOversizedOutput) {
 
   EXPECT_FALSE(result.ok());
   EXPECT_EQ(result.status, vdd::ControlStatus::InvalidOutput);
+}
+
+TEST(VirtualDisplayDriverControlClient, DetectsUnwrittenOutputNamespace) {
+  FakeTransport transport;
+  transport.set_output(vdd::ProtocolVersion {});
+  transport.suppress_output_copy = true;
+  vdd::ControlClient client {transport};
+
+  const auto result = client.query_protocol_version();
+
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(result.status, vdd::ControlStatus::ProtocolIncompatible);
 }
 
 TEST(VirtualDisplayDriverControlClient, DetectsUnexpectedNoOutputBytes) {

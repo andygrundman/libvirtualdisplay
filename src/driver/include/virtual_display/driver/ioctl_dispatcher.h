@@ -2,6 +2,7 @@
 
 #include "virtual_display/driver/driver_controller.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 
