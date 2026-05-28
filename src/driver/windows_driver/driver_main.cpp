@@ -35,6 +35,12 @@
 #include <utility>
 #include <vector>
 
+static inline UINT64 QpcNow() {
+	LARGE_INTEGER li{};
+	QueryPerformanceCounter(&li);
+	return static_cast<UINT64>(li.QuadPart);
+}
+
 namespace vdd = virtual_display::driver;
 
 TRACELOGGING_DEFINE_PROVIDER(
@@ -1206,6 +1212,12 @@ namespace {
         }
 
         for (;;) {
+          UINT64 acquireQPCTime = 0;
+          UINT64 sendStartQPCTime = 0;
+          UINT64 sendStopQPCTime = 0;
+          UINT presentationFrameNumber = 0;
+          UINT64 presentDisplayQPCTime = 0;
+
           IDXGIResource *surface_ptr = nullptr;
           HRESULT acquire_result = E_FAIL;
           if (IDD_IS_FUNCTION_AVAILABLE(IddCxSwapChainReleaseAndAcquireBuffer2)) {
@@ -1214,11 +1226,18 @@ namespace {
             IDARG_OUT_RELEASEANDACQUIREBUFFER2 acquired {};
             acquired.MetaData.Size = sizeof(acquired.MetaData);
             acquire_result = IddCxSwapChainReleaseAndAcquireBuffer2(swapchain_, &input, &acquired);
+            acquireQPCTime = QpcNow();
             surface_ptr = acquired.MetaData.pSurface;
+            // XXX I guess this will work but it's a bit weird to set these without checking acquire_result first
+            presentationFrameNumber = acquired.MetaData.PresentationFrameNumber;
+            presentDisplayQPCTime = acquired.MetaData.PresentDisplayQPCTime;
           } else {
             IDARG_OUT_RELEASEANDACQUIREBUFFER acquired {};
             acquire_result = IddCxSwapChainReleaseAndAcquireBuffer(swapchain_, &acquired);
             surface_ptr = acquired.MetaData.pSurface;
+            // XXX maybe remove old version API calls?
+            presentationFrameNumber = acquired.MetaData.PresentationFrameNumber;
+            presentDisplayQPCTime = acquired.MetaData.PresentDisplayQPCTime;
           }
           if (acquire_result == E_PENDING) {
             break;
@@ -1251,7 +1270,9 @@ namespace {
           // Drop the acquired surface before reporting the frame complete so
           // IddCx can reclaim the buffer during unassign/departure.
           surface.Reset();
+          sendStartQPCTime = QpcNow();
           const HRESULT finished_result = IddCxSwapChainFinishedProcessingFrame(swapchain_);
+          sendStopQPCTime = QpcNow();
           if (FAILED(finished_result)) {
             TraceLoggingWrite(
               g_trace_provider,
@@ -1260,6 +1281,53 @@ namespace {
             );
             delete_swapchain();
             return;
+          }
+
+          {
+            // Investigating how presentDisplayQPCTime works
+            INT64 diff = static_cast<INT64>(presentDisplayQPCTime) - QpcNow();
+              TraceLoggingWrite(
+                g_trace_provider,
+                "QPCTimeUntilPresentDisplay",
+                TraceLoggingInt64(static_cast<std::int64_t>(diff), "diff")
+              );
+              TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_SWAPCHAIN, "QPCTimeUntilPresentDisplay");
+          }
+
+          {
+            IDDCX_FRAME_STATISTICS frame_stats {};
+            frame_stats.Size = sizeof(frame_stats);
+            frame_stats.PresentationFrameNumber = presentationFrameNumber;
+            frame_stats.FrameStatus = IDDCX_FRAME_STATUS_COMPLETED;
+
+            // report the number of times we've processed the same frame
+            static UINT lastFrameNumber = 0;
+            static UINT reEncodeNumber = 0;
+            reEncodeNumber = (lastFrameNumber == presentationFrameNumber) ? reEncodeNumber + 1 : 0;
+            lastFrameNumber = presentationFrameNumber;
+            frame_stats.ReEncodeNumber = reEncodeNumber;
+
+            frame_stats.FrameSliceTotal = 1;
+            frame_stats.CurrentSlice = 0;
+            frame_stats.FrameAcquireQpcTime = acquireQPCTime;
+            frame_stats.FrameProcessingStepsCount = 0;
+            frame_stats.SendStartQpcTime = sendStartQPCTime;
+            frame_stats.SendStopQpcTime = sendStopQPCTime;
+            frame_stats.SendCompleteQpcTime = 0; // 0 because we don't do any async processing here
+            frame_stats.Flags = IDDCX_FRAME_STATISTICS_FLAGS_NONE;
+            frame_stats.ProcessedPixelCount = 3840 * 2160; // FIXME
+            frame_stats.FrameSizeInBytes = frame_stats.ProcessedPixelCount * 4; // FIXME
+
+            IDARG_IN_REPORTFRAMESTATISTICS stats {};
+            stats.FrameStatistics = frame_stats;
+            const HRESULT stats_result = IddCxSwapChainReportFrameStatistics(swapchain_, &stats);
+            if (FAILED(stats_result)) {
+              TraceLoggingWrite(
+                g_trace_provider,
+                "SwapChainReportFrameStatisticsFailed",
+                TraceLoggingUInt32(static_cast<std::uint32_t>(stats_result), "HResult")
+              );
+            }
           }
 
           if (stop_requested_.load(std::memory_order_acquire)) {
