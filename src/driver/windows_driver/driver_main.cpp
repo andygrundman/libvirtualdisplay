@@ -130,12 +130,13 @@ namespace {
     std::uint32_t refresh_rate_millihz;
   };
 
-  constexpr std::array<ModeSpec, 47> kDefaultModes {{
+  constexpr std::array<ModeSpec, 53> kDefaultModes {{
     {800, 600, 30'000},
     {800, 600, 59'940},
     {800, 600, 60'000},
     {800, 600, 72'000},
     {800, 600, 90'000},
+    {800, 600, 119'880},
     {800, 600, 120'000},
     {800, 600, 144'000},
     {800, 600, 240'000},
@@ -144,6 +145,7 @@ namespace {
     {1280, 720, 60'000},
     {1280, 720, 72'000},
     {1280, 720, 90'000},
+    {1280, 720, 119'880},
     {1280, 720, 120'000},
     {1280, 720, 144'000},
     {1366, 768, 30'000},
@@ -151,6 +153,7 @@ namespace {
     {1366, 768, 60'000},
     {1366, 768, 72'000},
     {1366, 768, 90'000},
+    {1366, 768, 119'880},
     {1366, 768, 120'000},
     {1366, 768, 144'000},
     {1366, 768, 240'000},
@@ -159,6 +162,7 @@ namespace {
     {1920, 1080, 60'000},
     {1920, 1080, 72'000},
     {1920, 1080, 90'000},
+    {1920, 1080, 119'880},
     {1920, 1080, 120'000},
     {1920, 1080, 144'000},
     {1920, 1080, 240'000},
@@ -167,6 +171,7 @@ namespace {
     {2560, 1440, 60'000},
     {2560, 1440, 72'000},
     {2560, 1440, 90'000},
+    {2560, 1440, 119'880},
     {2560, 1440, 120'000},
     {2560, 1440, 144'000},
     {2560, 1440, 240'000},
@@ -175,6 +180,7 @@ namespace {
     {3840, 2160, 60'000},
     {3840, 2160, 72'000},
     {3840, 2160, 90'000},
+    {3840, 2160, 119'880},
     {3840, 2160, 120'000},
     {3840, 2160, 144'000},
     {3840, 2160, 240'000}
@@ -795,6 +801,11 @@ namespace {
     signal.totalSize.cy = (std::max)(shape.total_height, shape.height);
     signal.vSyncFreq.Numerator = (std::max)(shape.refresh_rate_millihz, 1u);
     signal.vSyncFreq.Denominator = 1000;
+    if (signal.vSyncFreq.Numerator % 29'970 == 0) {
+      // correct NTSC rates to use the true ratio
+      signal.vSyncFreq.Numerator = (signal.vSyncFreq.Numerator / 29'970) * 30000;
+      signal.vSyncFreq.Denominator = 1001;
+    }
     signal.hSyncFreq.Numerator = clamp_u32(
       static_cast<std::uint64_t>(signal.vSyncFreq.Numerator) *
       static_cast<std::uint64_t>((std::max)(signal.totalSize.cy, 1u))
