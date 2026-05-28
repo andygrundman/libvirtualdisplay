@@ -186,13 +186,22 @@ jobs:
             throw "signtool.exe was not found under $kitsRoot."
           }
 
-          $catalog = Resolve-Path -LiteralPath 'build-driver/src/driver/windows_driver/sunshinevirtualdisplaydriver.cat'
-          & $signtool.FullName sign /fd SHA256 /sha1 '${{ steps.signing_cert.outputs.thumbprint }}' $catalog.Path
+          # The catalog is generated under the per-config package directory
+          # (e.g. .../windows_driver/Release/driver-package/), so locate it by
+          # search rather than a fixed path that breaks when the layout changes.
+          $catalogFile = Get-ChildItem -Path 'build-driver/src/driver/windows_driver' -Recurse -Filter 'sunshinevirtualdisplaydriver.cat' -File |
+            Sort-Object -Property LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $catalogFile) {
+            throw 'Driver catalog sunshinevirtualdisplaydriver.cat was not found under build-driver/src/driver/windows_driver.'
+          }
+          $catalog = $catalogFile.FullName
+          & $signtool.FullName sign /fd SHA256 /sha1 '${{ steps.signing_cert.outputs.thumbprint }}' $catalog
           if ($LASTEXITCODE -ne 0) {
             throw "signtool sign failed with exit code $LASTEXITCODE"
           }
 
-          $verifyOutput = & $signtool.FullName verify /pa $catalog.Path 2>&1
+          $verifyOutput = & $signtool.FullName verify /pa $catalog 2>&1
           $verifyExitCode = $LASTEXITCODE
           $verifyText = ($verifyOutput | ForEach-Object { [string]$_ }) -join "`n"
           if ($verifyExitCode -ne 0 -and $verifyText -notmatch 'terminated in a root\s+certificate which is not trusted') {
