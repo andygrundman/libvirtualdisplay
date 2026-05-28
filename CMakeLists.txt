@@ -11,6 +11,21 @@ set(LIBVIRTUALDISPLAY_PACKAGE_VERSION "${PROJECT_VERSION}" CACHE STRING "Version
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(MSVC)
+    # Statically link the C/C++ runtime (/MT) instead of the default dynamic CRT (/MD).
+    #
+    # The UMDF/IddCx driver DLL is loaded by the WUDF host process. On a clean
+    # end-user machine without the Visual C++ redistributable, a /MD driver
+    # imports MSVCP140.dll / VCRUNTIME140.dll, which are absent, so the DLL fails
+    # to load and the device reports "device cannot start" (Code 31). It works on
+    # developer machines only because Visual Studio installs the redist there.
+    #
+    # Applied project-wide (relies on CMP0091 NEW, the default at our
+    # cmake_minimum) so the static libvirtualdisplay_driver objects linked into
+    # the driver DLL use the same CRT and don't trigger a defaultlib conflict.
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
 endif()
