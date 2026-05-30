@@ -915,6 +915,8 @@ TEST(VirtualDisplayWindowsDriverContract, TargetModesUseRequestedDescriptorTimin
   EXPECT_NE(source.find("descriptor.refresh_rate_millihz"), std::string::npos);
   EXPECT_EQ(source.find("caps.MaxDisplayPipelineRate = kMaxDisplayPipelineRate;"), std::string::npos);
   EXPECT_EQ(source.find("mode.RequiredBandwidth = shape.pixel_rate;"), std::string::npos);
+  EXPECT_NE(source.find("{5120, 1440, 240'000}"), std::string::npos);
+  EXPECT_NE(source.find("{5120, 1440, 480'000}"), std::string::npos);
 
   const auto query_target_modes = source.find("NTSTATUS query_target_modes(");
   ASSERT_NE(query_target_modes, std::string::npos);

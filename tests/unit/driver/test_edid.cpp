@@ -157,6 +157,21 @@ TEST(VirtualDisplayDriverEdid, HdrEdidDoesNotEncodeRequestedHighRefreshInBaseTim
   EXPECT_NEAR(static_cast<double>(effective_millihz), 60'000.0, 10.0);
 }
 
+TEST(VirtualDisplayDriverEdid, UltrawideModesUseSafeBaseDetailedTiming) {
+  auto options = default_options();
+  options.width = 5120;
+  options.height = 1440;
+  options.refresh_rate_millihz = 240'000;
+
+  const auto edid = vdd::create_edid(options);
+  const auto timing = vdd::read_preferred_timing(edid);
+
+  EXPECT_TRUE(vdd::has_valid_edid_checksums(edid));
+  EXPECT_EQ(timing.horizontal_active, 4095u);
+  EXPECT_EQ(timing.vertical_active, 1440u);
+  EXPECT_NE(timing.pixel_clock_10khz, 0xffffu);
+}
+
 TEST(VirtualDisplayDriverEdid, RangeDescriptorIncludesEmittedPreferredTiming) {
   const auto edid = vdd::create_edid(default_options());
   const auto timing = vdd::read_preferred_timing(edid);

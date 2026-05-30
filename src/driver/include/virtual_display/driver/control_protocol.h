@@ -43,8 +43,8 @@ namespace virtual_display::driver {
 
   inline constexpr std::uint32_t kMinWidth = 320;
   inline constexpr std::uint32_t kMinHeight = 200;
-  inline constexpr std::uint32_t kMaxWidth = 4095;
-  inline constexpr std::uint32_t kMaxHeight = 4095;
+  inline constexpr std::uint32_t kMaxWidth = 7680;
+  inline constexpr std::uint32_t kMaxHeight = 4320;
   inline constexpr std::uint32_t kMinRefreshRateMilliHz = 23'000;
   inline constexpr std::uint32_t kMaxRefreshRateMilliHz = 480'000;
   inline constexpr std::uint32_t kDefaultPhysicalWidthMillimeters = 600;
